@@ -1,0 +1,10 @@
+{
+  "end_date": "2026-02-20",
+  "format": "parquet",
+  "n_bars": 4088,
+  "saved_at_utc": "2026-02-22T20:56:49.669856+00:00",
+  "source": "ibkr",
+  "start_date": "2009-11-18",
+  "ticker": "FTNT",
+  "timeframe": "daily"
+}

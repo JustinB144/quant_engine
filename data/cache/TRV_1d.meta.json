@@ -1,0 +1,10 @@
+{
+  "end_date": "2026-02-20",
+  "format": "parquet",
+  "n_bars": 4777,
+  "saved_at_utc": "2026-02-22T20:55:27.659116+00:00",
+  "source": "wrds+ibkr",
+  "start_date": "2007-02-27",
+  "ticker": "TRV",
+  "timeframe": "daily"
+}

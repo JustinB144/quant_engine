@@ -1,0 +1,10 @@
+{
+  "end_date": "2026-02-20",
+  "format": "parquet",
+  "n_bars": 2095,
+  "saved_at_utc": "2026-02-22T20:56:45.514895+00:00",
+  "source": "ibkr",
+  "start_date": "2017-10-19",
+  "ticker": "MDB",
+  "timeframe": "daily"
+}

@@ -1,0 +1,10 @@
+{
+  "end_date": "2026-02-20",
+  "format": "parquet",
+  "n_bars": 694,
+  "saved_at_utc": "2026-02-22T20:55:16.504717+00:00",
+  "source": "wrds+ibkr",
+  "start_date": "2023-05-16",
+  "ticker": "RVTY",
+  "timeframe": "daily"
+}

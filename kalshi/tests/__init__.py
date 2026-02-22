@@ -1,0 +1,1 @@
+"""Kalshi package-local tests."""

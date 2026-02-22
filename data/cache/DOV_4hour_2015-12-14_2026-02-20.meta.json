@@ -1,0 +1,11 @@
+{
+  "end_date": "2026-02-20",
+  "format": "parquet",
+  "n_bars": 6011,
+  "rehydrated": true,
+  "saved_at_utc": "2026-02-22T02:33:15.834413+00:00",
+  "source": "ibkr",
+  "start_date": "2015-12-14",
+  "ticker": "DOV",
+  "timeframe": "4h"
+}

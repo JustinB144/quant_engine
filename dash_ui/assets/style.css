@@ -1,0 +1,519 @@
+/* ── Quant Engine Bloomberg Dark Theme ─────────────────────────────── */
+/* Professional quantitative trading dashboard stylesheet              */
+
+/* Reset & Base */
+* { box-sizing: border-box; }
+
+body {
+    background-color: #0d1117;
+    color: #ffffff;
+    font-family: Menlo, "SF Mono", "Fira Code", "Cascadia Code",
+                 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    line-height: 1.5;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #0d1117; }
+::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #484f58; }
+
+/* Firefox scrollbar */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #30363d #0d1117;
+}
+
+/* ── Sidebar ───────────────────────────────────────────────────────── */
+.sidebar {
+    background-color: #010409;
+    width: 240px;
+    min-height: 100vh;
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 200;
+    border-right: 1px solid #21262d;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+
+.nav-item {
+    padding: 9px 16px;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    transition: all 0.15s ease;
+    color: #8b949e;
+    display: flex;
+    align-items: center;
+    font-size: 13px;
+    letter-spacing: 0.01em;
+    margin: 1px 0;
+}
+
+.nav-item:hover {
+    background-color: #161b22;
+    color: #e6edf3;
+    border-left-color: #30363d;
+}
+
+.nav-item.active {
+    background-color: rgba(88, 166, 255, 0.08);
+    border-left-color: #58a6ff;
+    color: #58a6ff;
+    font-weight: 600;
+}
+
+.nav-item.active i {
+    opacity: 1 !important;
+}
+
+/* ── Main Content ──────────────────────────────────────────────────── */
+.main-content {
+    margin-left: 240px;
+    min-height: 100vh;
+    padding: 24px 28px 48px;
+    background-color: #0d1117;
+}
+
+/* ── Metric Cards ──────────────────────────────────────────────────── */
+.metric-card {
+    background-color: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 8px;
+    padding: 16px 18px;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease,
+                transform 0.15s ease;
+    height: 100%;
+    position: relative;
+    overflow: hidden;
+}
+
+.metric-card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, #58a6ff, transparent);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.metric-card:hover {
+    border-color: #30363d;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    transform: translateY(-1px);
+}
+
+.metric-card:hover::before {
+    opacity: 0.5;
+}
+
+/* ── Cards & Panels ────────────────────────────────────────────────── */
+.card-panel {
+    background-color: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 16px;
+    transition: border-color 0.2s ease;
+}
+
+.card-panel:hover {
+    border-color: #30363d;
+}
+
+.card-panel-header {
+    font-size: 13px;
+    font-weight: 600;
+    color: #e6edf3;
+    margin-bottom: 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #21262d;
+    letter-spacing: 0.02em;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+/* ── Tabs ──────────────────────────────────────────────────────────── */
+.custom-tabs {
+    border-bottom: 1px solid #21262d !important;
+    padding: 0 4px !important;
+}
+
+.custom-tab {
+    background-color: transparent !important;
+    border: none !important;
+    color: #8b949e !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    padding: 10px 16px !important;
+    cursor: pointer;
+    transition: color 0.15s ease;
+    border-bottom: 2px solid transparent !important;
+    letter-spacing: 0.01em;
+}
+
+.custom-tab:hover {
+    color: #c9d1d9 !important;
+}
+
+.custom-tab--selected {
+    color: #58a6ff !important;
+    border-bottom: 2px solid #58a6ff !important;
+    background-color: transparent !important;
+    font-weight: 600 !important;
+}
+
+/* ── DataTable Overrides ───────────────────────────────────────────── */
+.dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner {
+    background-color: #161b22 !important;
+}
+
+.dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner td {
+    background-color: #161b22 !important;
+    color: #c9d1d9 !important;
+    border-color: #21262d !important;
+    font-family: Menlo, "SF Mono", monospace !important;
+    font-size: 11px !important;
+    padding: 7px 10px !important;
+    transition: background-color 0.1s ease;
+}
+
+.dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner th {
+    background-color: #1c2028 !important;
+    color: #e6edf3 !important;
+    border-color: #30363d !important;
+    font-weight: 600 !important;
+    font-size: 11px !important;
+    padding: 8px 10px !important;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner tr:hover td {
+    background-color: #1f2937 !important;
+}
+
+.dash-table-container .previous-next-container .page-number {
+    color: #c9d1d9 !important;
+}
+
+.dash-table-container .previous-next-container button {
+    color: #58a6ff !important;
+    background-color: transparent !important;
+    border: 1px solid #30363d !important;
+    border-radius: 4px !important;
+    padding: 4px 8px !important;
+    transition: all 0.15s ease;
+}
+
+.dash-table-container .previous-next-container button:hover {
+    background-color: #161b22 !important;
+    border-color: #58a6ff !important;
+}
+
+/* DataTable filter row */
+.dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner input {
+    background-color: #0d1117 !important;
+    color: #c9d1d9 !important;
+    border-color: #30363d !important;
+    font-size: 11px !important;
+    padding: 4px 6px !important;
+}
+
+.dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner input:focus {
+    border-color: #58a6ff !important;
+    outline: none !important;
+    box-shadow: 0 0 0 1px rgba(88, 166, 255, 0.2) !important;
+}
+
+/* ── Buttons ───────────────────────────────────────────────────────── */
+.btn-primary, button.btn-primary {
+    background-color: #1f6feb !important;
+    border-color: #1f6feb !important;
+    color: #ffffff !important;
+    font-weight: 600;
+    font-size: 12px;
+    transition: all 0.15s ease;
+    border-radius: 6px;
+    letter-spacing: 0.02em;
+}
+
+.btn-primary:hover, button.btn-primary:hover {
+    background-color: #388bfd !important;
+    border-color: #388bfd !important;
+    box-shadow: 0 1px 4px rgba(31, 111, 235, 0.3);
+}
+
+.btn-secondary, button.btn-secondary {
+    background-color: #21262d !important;
+    border-color: #30363d !important;
+    color: #c9d1d9 !important;
+    font-size: 12px;
+    transition: all 0.15s ease;
+    border-radius: 6px;
+}
+
+.btn-secondary:hover, button.btn-secondary:hover {
+    background-color: #30363d !important;
+    color: #e6edf3 !important;
+    border-color: #484f58 !important;
+}
+
+/* ── Inputs & Dropdowns ────────────────────────────────────────────── */
+.form-control, .form-select {
+    background-color: #0d1117 !important;
+    border-color: #30363d !important;
+    color: #c9d1d9 !important;
+    font-size: 12px !important;
+    font-family: Menlo, "SF Mono", monospace !important;
+    border-radius: 6px !important;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.form-control:focus, .form-select:focus {
+    border-color: #58a6ff !important;
+    box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.12) !important;
+    color: #e6edf3 !important;
+}
+
+/* Dash dropdowns */
+.Select-control {
+    background-color: #0d1117 !important;
+    border-color: #30363d !important;
+    border-radius: 6px !important;
+}
+
+.Select-control:hover {
+    border-color: #484f58 !important;
+}
+
+.Select-value-label, .Select-placeholder {
+    color: #c9d1d9 !important;
+    font-size: 12px !important;
+}
+
+.Select-menu-outer {
+    background-color: #161b22 !important;
+    border-color: #30363d !important;
+    border-radius: 6px !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4) !important;
+}
+
+.VirtualizedSelectOption {
+    background-color: #161b22 !important;
+    color: #c9d1d9 !important;
+    font-size: 12px !important;
+    padding: 8px 12px !important;
+}
+
+.VirtualizedSelectFocusedOption {
+    background-color: #1f2937 !important;
+    color: #ffffff !important;
+}
+
+/* ── Loading Spinner ───────────────────────────────────────────────── */
+.dash-loading {
+    color: #58a6ff !important;
+}
+
+._dash-loading-callback {
+    background-color: rgba(13, 17, 23, 0.7) !important;
+}
+
+/* ── Page Title ────────────────────────────────────────────────────── */
+.page-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #e6edf3;
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #21262d;
+    letter-spacing: 0.02em;
+}
+
+/* ── Status Badge ──────────────────────────────────────────────────── */
+.status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 10px;
+    font-weight: 600;
+    font-family: Menlo, "SF Mono", monospace;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.status-pass { background-color: rgba(63, 185, 80, 0.12); color: #3fb950; border: 1px solid rgba(63, 185, 80, 0.2); }
+.status-warn { background-color: rgba(210, 153, 34, 0.12); color: #d29922; border: 1px solid rgba(210, 153, 34, 0.2); }
+.status-fail { background-color: rgba(248, 81, 73, 0.12); color: #f85149; border: 1px solid rgba(248, 81, 73, 0.2); }
+.status-info { background-color: rgba(88, 166, 255, 0.12); color: #58a6ff; border: 1px solid rgba(88, 166, 255, 0.2); }
+
+/* ── Bootstrap/DBC Alert Overrides ─────────────────────────────────── */
+.alert {
+    border-radius: 6px !important;
+    font-size: 13px !important;
+}
+
+/* ── Modal Overrides ───────────────────────────────────────────────── */
+.modal-content {
+    background-color: #161b22 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 8px !important;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
+}
+
+.modal-header {
+    border-bottom-color: #21262d !important;
+}
+
+.modal-footer {
+    border-top-color: #21262d !important;
+}
+
+/* ── Plotly Chart Container ────────────────────────────────────────── */
+.js-plotly-plot .plotly .modebar {
+    background-color: transparent !important;
+}
+
+.js-plotly-plot .plotly .modebar-btn path {
+    fill: #484f58 !important;
+}
+
+.js-plotly-plot .plotly .modebar-btn:hover path {
+    fill: #58a6ff !important;
+}
+
+/* ── ListGroup Overrides ───────────────────────────────────────────── */
+.list-group-item {
+    background-color: #161b22 !important;
+    border-color: #21262d !important;
+    transition: background-color 0.1s ease;
+}
+
+.list-group-item:hover {
+    background-color: #1c2028 !important;
+}
+
+.list-group-item.active {
+    background-color: rgba(88, 166, 255, 0.08) !important;
+    border-color: #58a6ff !important;
+}
+
+/* ── Tooltip ───────────────────────────────────────────────────────── */
+.dash-tooltip {
+    background-color: #1c2028 !important;
+    color: #c9d1d9 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 4px !important;
+    font-size: 11px !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* ── Responsive ────────────────────────────────────────────────────── */
+@media (max-width: 1440px) {
+    .main-content {
+        padding: 20px 24px 48px;
+    }
+}
+
+@media (max-width: 1280px) {
+    .main-content {
+        padding: 16px 20px 48px;
+    }
+}
+
+@media (max-width: 1024px) {
+    .sidebar {
+        width: 200px;
+    }
+    .main-content {
+        margin-left: 200px;
+        padding: 16px 16px 48px;
+    }
+}
+
+/* ── Selection & Focus ─────────────────────────────────────────────── */
+::selection {
+    background-color: rgba(88, 166, 255, 0.3);
+    color: #ffffff;
+}
+
+*:focus-visible {
+    outline: 2px solid rgba(88, 166, 255, 0.5);
+    outline-offset: 2px;
+}
+
+/* ── Mobile Responsive ────────────────────────────────────────────── */
+@media (max-width: 768px) {
+    .sidebar {
+        display: none;
+    }
+    .main-content {
+        margin-left: 0 !important;
+        padding: 12px 12px 48px !important;
+    }
+    .metric-card {
+        padding: 12px 14px;
+    }
+    .page-title {
+        font-size: 16px;
+    }
+}
+
+@media (max-width: 480px) {
+    .main-content {
+        padding: 8px 8px 40px !important;
+    }
+    .card-panel {
+        padding: 12px;
+    }
+}
+
+/* ── Demo Data Banner ─────────────────────────────────────────────── */
+.demo-data-banner {
+    background-color: rgba(210, 153, 34, 0.12);
+    border: 1px solid rgba(210, 153, 34, 0.3);
+    border-left: 4px solid #d29922;
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin-bottom: 12px;
+    font-size: 12px;
+    color: #d29922;
+    font-family: Menlo, "SF Mono", monospace;
+}
+
+/* ── Export Button ────────────────────────────────────────────────── */
+.btn-export {
+    background-color: #21262d !important;
+    border: 1px solid #30363d !important;
+    color: #c9d1d9 !important;
+    font-size: 11px !important;
+    padding: 4px 10px !important;
+    border-radius: 4px !important;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-family: Menlo, "SF Mono", monospace;
+}
+
+.btn-export:hover {
+    background-color: #30363d !important;
+    border-color: #484f58 !important;
+    color: #e6edf3 !important;
+}
+
+/* ── Animations ────────────────────────────────────────────────────── */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}

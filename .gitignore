@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# DuckDB databases
+*.duckdb
+*.duckdb.wal
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.venv/
+env/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+
+# Claude Code local settings
+.claude/
+
+# Audit reports and one-off docs (not part of source)
+*.docx
+ADAPTED_MIGRATION_AUDIT_2026-02-22.md
+WRDS_DAILY_REDOWNLOAD_REPORT.md
+
+# Separate nested repo
+QUANT DEMON/

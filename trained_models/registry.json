@@ -1,0 +1,22 @@
+{
+  "latest": "20260220_015422",
+  "versions": [
+    {
+      "version_id": "20260220_015422",
+      "training_date": "2026-02-20T01:54:22",
+      "horizon": 10,
+      "universe_size": 0,
+      "n_samples": 10012,
+      "n_features": 125,
+      "oos_spearman": 0.033035109553233674,
+      "cv_gap": 0.6583349487143871,
+      "holdout_r2": -0.1280908553415101,
+      "holdout_spearman": 0.09895603686934974,
+      "survivorship_mode": false,
+      "universe_as_of": null,
+      "delisted_included": 0,
+      "notes": "",
+      "tags": []
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "end_date": "2026-02-20",
+  "format": "parquet",
+  "n_bars": 3940,
+  "saved_at_utc": "2026-02-22T20:55:00.491595+00:00",
+  "source": "wrds+ibkr",
+  "start_date": "2010-06-23",
+  "ticker": "NEE",
+  "timeframe": "daily"
+}

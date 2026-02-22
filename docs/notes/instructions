@@ -1,0 +1,67 @@
+What you’re doing right (big signals you’re on-track)
+1) You’re treating leakage like an engineering problem (good)
+Targets are forward returns (close.shift(-h)/close - 1) and your CV uses purge_gap = horizon with an embargo, which is exactly the right defense against label leakage in time series.
+You explicitly enter on next bar open in the backtester (not signal-bar close), which kills a super common subtle lookahead.
+2) You’re building a real validation “gate,” not just backtests
+You included advanced concepts like:
+Deflated Sharpe
+PBO/CSCV
+Reality-check style bootstraps
+Capacity / impact constraints
+That’s the correct philosophy: “assume it’s overfit until proven otherwise.”
+3) You’re modeling execution and capacity (most people don’t)
+You have an execution model with:
+spread
+participation limit
+impact coefficient
+minimum fill ratio
+Even if the parameters aren’t perfect yet, the fact that it exists is a huge step in the right direction.
+4) Your system has the right lifecycle shape
+Discovery → validate → promote → paper-trade is the right loop. The “autopilot” structure is exactly how you avoid getting stuck in endless tinkering.
+Where your system is still vulnerable (the parts that can fool you)
+1) Data realism is still the #1 make-or-break
+Even the best validation code won’t save you if your inputs aren’t truly tradeable.
+Watch-outs:
+Survivorship: you have a universe_history.db path, but unless it’s populated with real constituent histories + delistings, you still get optimistic bias.
+Corporate actions (splits/dividends) and symbol changes can silently create fake alpha if not handled consistently.
+WRDS_ENABLED = True is fine, but if you’re actually falling back to yfinance a lot, you may be mixing data quality regimes.
+If you fix only one thing next: make the data pipeline “institution-grade consistent.”
+2) “Autopilot search” creates multiple-testing risk by default
+Even with good intentions, if you run enough variants, one will look amazing.
+You’ve included Deflated Sharpe/PBO tools, which is good — but the key question is:
+Are you using those tests as hard promotion requirements every cycle?
+If not, your “discovery engine” can still promote noise.
+3) Cross-asset factors can leak timing subtly
+If you compute cross-asset features (SPY, sector ETFs, etc.), you must ensure:
+timestamps align exactly
+no forward-filled values accidentally incorporate future information
+you don’t use “today’s close” features to trade “today’s close”
+This is a common “quiet leak” even in serious systems.
+4) Your slippage/cost parameters might be “too clean”
+20 bps round-trip + a basic impact model is a solid starting assumption, but real costs vary massively by:
+liquidity
+volatility regime
+entry timing (open/close)
+concentration (if many signals cluster on the same day)
+You’re on the right path — but you’ll want costs to be conditional on liquidity/volatility, not a mostly fixed constant.
+The clearest “yes/no” answer
+If your goal is:
+“A research engine that doesn’t lie to me” → Yes, you’re going in the right direction.
+If your goal is:
+“This should already be producing a real market edge soon” → Maybe, but only if you now aggressively reduce degrees of freedom and harden the data/execution realism. Otherwise it’ll look great in-sim and disappoint live.
+The 5 highest-impact next steps (in order)
+Make survivorship real
+Populate and enforce a universe-by-date (constituents + delistings), and make backtests draw the universe from that for each date.
+Add a strict “promotion contract”
+A strategy cannot be promoted unless it passes:
+Deflated Sharpe significance
+PBO below a threshold (ex: < 0.5)
+capacity not constrained
+stable OOS across folds/regimes
+Enforce a true walk-forward pipeline
+No “train on all history then test.”
+Instead: rolling train windows, rolling OOS forward. That’s the closest proxy to live.
+Make cost/impact conditional
+Tie costs to dollar volume / volatility regime / gap risk. Your execution model is already structured for this.
+Kill complexity until proven necessary
+You have a very rich feature set. That’s fine after you demonstrate robust signal. Until then, fewer features + fewer knobs = less self-deception.

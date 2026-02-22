@@ -1,0 +1,10 @@
+{
+  "end_date": "2026-02-20",
+  "format": "parquet",
+  "n_bars": 5028,
+  "saved_at_utc": "2026-02-22T20:57:48.360499+00:00",
+  "source": "ibkr",
+  "start_date": "2006-02-27",
+  "ticker": "COST",
+  "timeframe": "daily"
+}

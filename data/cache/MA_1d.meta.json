@@ -1,0 +1,10 @@
+{
+  "end_date": "2026-02-20",
+  "format": "parquet",
+  "n_bars": 4965,
+  "saved_at_utc": "2026-02-22T20:58:42.251674+00:00",
+  "source": "ibkr",
+  "start_date": "2006-05-25",
+  "ticker": "MA",
+  "timeframe": "daily"
+}

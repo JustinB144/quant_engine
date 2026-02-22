@@ -1,0 +1,433 @@
+{
+  "horizon": 10,
+  "years": 15,
+  "feature_mode": "core",
+  "strict_oos": true,
+  "survivorship_mode": true,
+  "n_candidates": 36,
+  "n_passed": 0,
+  "n_promoted": 0,
+  "n_active": 0,
+  "top_decisions": [
+    {
+      "candidate": {
+        "strategy_id": "h10_e40_c50_r1_m10",
+        "horizon": 10,
+        "entry_threshold": 0.004,
+        "confidence_threshold": 0.5,
+        "use_risk_management": true,
+        "max_positions": 10,
+        "position_size_pct": 0.05
+      },
+      "passed": false,
+      "score": 36.467045875673136,
+      "reasons": [
+        "win_rate<0.50",
+        "sharpe<0.75",
+        "profit_factor<1.10",
+        "annualized_return<0.05",
+        "dsr_not_significant(p=1.0000)",
+        "wf_oos_corr<0.010",
+        "wf_positive_fold_fraction<0.60",
+        "regime_positive_fraction<0.50"
+      ],
+      "metrics": {
+        "total_trades": 3660.0,
+        "win_rate": 0.4385245901639344,
+        "sharpe": -0.1887050538107612,
+        "profit_factor": 0.9816773133706126,
+        "max_drawdown": -0.06091754189664707,
+        "annualized_return": -0.33088664436893256,
+        "trades_per_year": 340.5030565461029,
+        "dsr_significant": false,
+        "dsr_p_value": 0.9999971676837183,
+        "pbo": 0.4142857142857143,
+        "capacity_constrained": false,
+        "capacity_utilization": 0.0005117493117842989,
+        "wf_oos_corr": -0.03201769945587582,
+        "wf_positive_fold_fraction": 0.2,
+        "wf_is_oos_gap": 0.016954546910355788,
+        "regime_positive_fraction": 0.25
+      }
+    },
+    {
+      "candidate": {
+        "strategy_id": "h10_e40_c50_r1_m20",
+        "horizon": 10,
+        "entry_threshold": 0.004,
+        "confidence_threshold": 0.5,
+        "use_risk_management": true,
+        "max_positions": 20,
+        "position_size_pct": 0.05
+      },
+      "passed": false,
+      "score": 36.34519206950677,
+      "reasons": [
+        "win_rate<0.50",
+        "sharpe<0.75",
+        "profit_factor<1.10",
+        "annualized_return<0.05",
+        "dsr_not_significant(p=1.0000)",
+        "wf_oos_corr<0.010",
+        "wf_positive_fold_fraction<0.60",
+        "regime_positive_fraction<0.50"
+      ],
+      "metrics": {
+        "total_trades": 3656.0,
+        "win_rate": 0.43900437636761486,
+        "sharpe": -0.18861310295969327,
+        "profit_factor": 0.9694620876106766,
+        "max_drawdown": -0.06790999126058019,
+        "annualized_return": -0.4235169728700763,
+        "trades_per_year": 340.13092205807436,
+        "dsr_significant": false,
+        "dsr_p_value": 0.9999971428671898,
+        "pbo": 0.4142857142857143,
+        "capacity_constrained": false,
+        "capacity_utilization": 0.0005203511873431868,
+        "wf_oos_corr": -0.03201769945587582,
+        "wf_positive_fold_fraction": 0.2,
+        "wf_is_oos_gap": 0.016954546910355788,
+        "regime_positive_fraction": 0.25
+      }
+    },
+    {
+      "candidate": {
+        "strategy_id": "h10_e40_c60_r1_m10",
+        "horizon": 10,
+        "entry_threshold": 0.004,
+        "confidence_threshold": 0.6,
+        "use_risk_management": true,
+        "max_positions": 10,
+        "position_size_pct": 0.05
+      },
+      "passed": false,
+      "score": 36.251167311138566,
+      "reasons": [
+        "win_rate<0.50",
+        "sharpe<0.75",
+        "profit_factor<1.10",
+        "annualized_return<0.05",
+        "dsr_not_significant(p=1.0000)",
+        "wf_oos_corr<0.010",
+        "wf_positive_fold_fraction<0.60",
+        "regime_positive_fraction<0.50"
+      ],
+      "metrics": {
+        "total_trades": 3624.0,
+        "win_rate": 0.44564017660044153,
+        "sharpe": -0.1454235327156414,
+        "profit_factor": 1.0177518143825857,
+        "max_drawdown": -0.05851483617843115,
+        "annualized_return": -0.23490889998528575,
+        "trades_per_year": 337.15384615384613,
+        "dsr_significant": false,
+        "dsr_p_value": 0.9999771272999428,
+        "pbo": 0.4142857142857143,
+        "capacity_constrained": false,
+        "capacity_utilization": 0.0005069872638247647,
+        "wf_oos_corr": -0.0327567094490625,
+        "wf_positive_fold_fraction": 0.2,
+        "wf_is_oos_gap": 0.01692148728736428,
+        "regime_positive_fraction": 0.25
+      }
+    },
+    {
+      "candidate": {
+        "strategy_id": "h10_e40_c60_r1_m20",
+        "horizon": 10,
+        "entry_threshold": 0.004,
+        "confidence_threshold": 0.6,
+        "use_risk_management": true,
+        "max_positions": 20,
+        "position_size_pct": 0.05
+      },
+      "passed": false,
+      "score": 36.16800127539248,
+      "reasons": [
+        "win_rate<0.50",
+        "sharpe<0.75",
+        "profit_factor<1.10",
+        "annualized_return<0.05",
+        "dsr_not_significant(p=1.0000)",
+        "wf_oos_corr<0.010",
+        "wf_positive_fold_fraction<0.60",
+        "regime_positive_fraction<0.50"
+      ],
+      "metrics": {
+        "total_trades": 3624.0,
+        "win_rate": 0.4461920529801324,
+        "sharpe": -0.1463843637898008,
+        "profit_factor": 1.0033053569252626,
+        "max_drawdown": -0.06496841620519438,
+        "annualized_return": -0.3274813456974124,
+        "trades_per_year": 337.15384615384613,
+        "dsr_significant": false,
+        "dsr_p_value": 0.9999780633273972,
+        "pbo": 0.4142857142857143,
+        "capacity_constrained": false,
+        "capacity_utilization": 0.0005171780427838806,
+        "wf_oos_corr": -0.0327567094490625,
+        "wf_positive_fold_fraction": 0.2,
+        "wf_is_oos_gap": 0.01692148728736428,
+        "regime_positive_fraction": 0.25
+      }
+    },
+    {
+      "candidate": {
+        "strategy_id": "h10_e40_c70_r1_m10",
+        "horizon": 10,
+        "entry_threshold": 0.004,
+        "confidence_threshold": 0.7,
+        "use_risk_management": true,
+        "max_positions": 10,
+        "position_size_pct": 0.05
+      },
+      "passed": false,
+      "score": 35.24575347252556,
+      "reasons": [
+        "win_rate<0.50",
+        "sharpe<0.75",
+        "profit_factor<1.10",
+        "annualized_return<0.05",
+        "dsr_not_significant(p=1.0000)",
+        "wf_oos_corr<0.010",
+        "wf_positive_fold_fraction<0.60",
+        "regime_positive_fraction<0.50"
+      ],
+      "metrics": {
+        "total_trades": 3521.0,
+        "win_rate": 0.44532803180914515,
+        "sharpe": -0.1423007456956391,
+        "profit_factor": 1.0222943540413583,
+        "max_drawdown": -0.0542536299975062,
+        "annualized_return": -0.21377013988877658,
+        "trades_per_year": 327.57138308711154,
+        "dsr_significant": false,
+        "dsr_p_value": 0.99997220226006,
+        "pbo": 0.4142857142857143,
+        "capacity_constrained": false,
+        "capacity_utilization": 0.0004963014483119163,
+        "wf_oos_corr": -0.033546965470074644,
+        "wf_positive_fold_fraction": 0.2,
+        "wf_is_oos_gap": 0.017912029129318705,
+        "regime_positive_fraction": 0.25
+      }
+    },
+    {
+      "candidate": {
+        "strategy_id": "h10_e40_c70_r1_m20",
+        "horizon": 10,
+        "entry_threshold": 0.004,
+        "confidence_threshold": 0.7,
+        "use_risk_management": true,
+        "max_positions": 20,
+        "position_size_pct": 0.05
+      },
+      "passed": false,
+      "score": 35.15209502059549,
+      "reasons": [
+        "win_rate<0.50",
+        "sharpe<0.75",
+        "profit_factor<1.10",
+        "annualized_return<0.05",
+        "dsr_not_significant(p=1.0000)",
+        "wf_oos_corr<0.010",
+        "wf_positive_fold_fraction<0.60",
+        "regime_positive_fraction<0.50"
+      ],
+      "metrics": {
+        "total_trades": 3518.0,
+        "win_rate": 0.4459920409323479,
+        "sharpe": -0.13590938873723052,
+        "profit_factor": 1.0122723246613177,
+        "max_drawdown": -0.0620555860375973,
+        "annualized_return": -0.29371220046507207,
+        "trades_per_year": 327.29228222109015,
+        "dsr_significant": false,
+        "dsr_p_value": 0.9999632259697497,
+        "pbo": 0.4142857142857143,
+        "capacity_constrained": false,
+        "capacity_utilization": 0.000505844023276654,
+        "wf_oos_corr": -0.033546965470074644,
+        "wf_positive_fold_fraction": 0.2,
+        "wf_is_oos_gap": 0.017912029129318705,
+        "regime_positive_fraction": 0.25
+      }
+    },
+    {
+      "candidate": {
+        "strategy_id": "h10_e50_c50_r1_m10",
+        "horizon": 10,
+        "entry_threshold": 0.005,
+        "confidence_threshold": 0.5,
+        "use_risk_management": true,
+        "max_positions": 10,
+        "position_size_pct": 0.05
+      },
+      "passed": false,
+      "score": 35.12138963485525,
+      "reasons": [
+        "win_rate<0.50",
+        "sharpe<0.75",
+        "profit_factor<1.10",
+        "annualized_return<0.05",
+        "dsr_not_significant(p=1.0000)",
+        "wf_oos_corr<0.010",
+        "wf_positive_fold_fraction<0.60",
+        "regime_positive_fraction<0.50"
+      ],
+      "metrics": {
+        "total_trades": 3524.0,
+        "win_rate": 0.43530079455164583,
+        "sharpe": -0.18900089018888572,
+        "profit_factor": 0.9820262192351757,
+        "max_drawdown": -0.05528904560217001,
+        "annualized_return": -0.3167815234570851,
+        "trades_per_year": 327.7669977081742,
+        "dsr_significant": false,
+        "dsr_p_value": 0.9999961124822943,
+        "pbo": 0.4142857142857143,
+        "capacity_constrained": false,
+        "capacity_utilization": 0.0005046261253468779,
+        "wf_oos_corr": -0.03201769945587582,
+        "wf_positive_fold_fraction": 0.2,
+        "wf_is_oos_gap": 0.016954546910355788,
+        "regime_positive_fraction": 0.25
+      }
+    },
+    {
+      "candidate": {
+        "strategy_id": "h10_e50_c50_r1_m20",
+        "horizon": 10,
+        "entry_threshold": 0.005,
+        "confidence_threshold": 0.5,
+        "use_risk_management": true,
+        "max_positions": 20,
+        "position_size_pct": 0.05
+      },
+      "passed": false,
+      "score": 35.00334013015965,
+      "reasons": [
+        "win_rate<0.50",
+        "sharpe<0.75",
+        "profit_factor<1.10",
+        "annualized_return<0.05",
+        "dsr_not_significant(p=1.0000)",
+        "wf_oos_corr<0.010",
+        "wf_positive_fold_fraction<0.60",
+        "regime_positive_fraction<0.50"
+      ],
+      "metrics": {
+        "total_trades": 3524.0,
+        "win_rate": 0.43473325766174803,
+        "sharpe": -0.20000256511781261,
+        "profit_factor": 0.9606667730852949,
+        "max_drawdown": -0.06495267376678023,
+        "annualized_return": -0.4312138954756657,
+        "trades_per_year": 327.7669977081742,
+        "dsr_significant": false,
+        "dsr_p_value": 0.9999976275882011,
+        "pbo": 0.4142857142857143,
+        "capacity_constrained": false,
+        "capacity_utilization": 0.0005153279930225391,
+        "wf_oos_corr": -0.03201769945587582,
+        "wf_positive_fold_fraction": 0.2,
+        "wf_is_oos_gap": 0.016954546910355788,
+        "regime_positive_fraction": 0.25
+      }
+    },
+    {
+      "candidate": {
+        "strategy_id": "h10_e50_c60_r1_m10",
+        "horizon": 10,
+        "entry_threshold": 0.005,
+        "confidence_threshold": 0.6,
+        "use_risk_management": true,
+        "max_positions": 10,
+        "position_size_pct": 0.05
+      },
+      "passed": false,
+      "score": 34.819679849684555,
+      "reasons": [
+        "win_rate<0.50",
+        "sharpe<0.75",
+        "profit_factor<1.10",
+        "annualized_return<0.05",
+        "dsr_not_significant(p=1.0000)",
+        "wf_oos_corr<0.010",
+        "wf_positive_fold_fraction<0.60",
+        "regime_positive_fraction<0.50"
+      ],
+      "metrics": {
+        "total_trades": 3489.0,
+        "win_rate": 0.4402407566638005,
+        "sharpe": -0.17499118915849932,
+        "profit_factor": 0.9947536309430682,
+        "max_drawdown": -0.05865902947740474,
+        "annualized_return": -0.28046479970202665,
+        "trades_per_year": 324.5116501145913,
+        "dsr_significant": false,
+        "dsr_p_value": 0.9999924646553441,
+        "pbo": 0.4142857142857143,
+        "capacity_constrained": false,
+        "capacity_utilization": 0.0004993403200553619,
+        "wf_oos_corr": -0.0327567094490625,
+        "wf_positive_fold_fraction": 0.2,
+        "wf_is_oos_gap": 0.01692148728736428,
+        "regime_positive_fraction": 0.25
+      }
+    },
+    {
+      "candidate": {
+        "strategy_id": "h10_e50_c60_r1_m20",
+        "horizon": 10,
+        "entry_threshold": 0.005,
+        "confidence_threshold": 0.6,
+        "use_risk_management": true,
+        "max_positions": 20,
+        "position_size_pct": 0.05
+      },
+      "passed": false,
+      "score": 34.728339596351816,
+      "reasons": [
+        "win_rate<0.50",
+        "sharpe<0.75",
+        "profit_factor<1.10",
+        "annualized_return<0.05",
+        "dsr_not_significant(p=1.0000)",
+        "wf_oos_corr<0.010",
+        "wf_positive_fold_fraction<0.60",
+        "regime_positive_fraction<0.50"
+      ],
+      "metrics": {
+        "total_trades": 3489.0,
+        "win_rate": 0.4399541415878475,
+        "sharpe": -0.1763272768141309,
+        "profit_factor": 0.9796285239633723,
+        "max_drawdown": -0.06773594188390479,
+        "annualized_return": -0.3794853906803902,
+        "trades_per_year": 324.5116501145913,
+        "dsr_significant": false,
+        "dsr_p_value": 0.9999928919606154,
+        "pbo": 0.4142857142857143,
+        "capacity_constrained": false,
+        "capacity_utilization": 0.0005099299354802045,
+        "wf_oos_corr": -0.0327567094490625,
+        "wf_positive_fold_fraction": 0.2,
+        "wf_is_oos_gap": 0.01692148728736428,
+        "regime_positive_fraction": 0.25
+      }
+    }
+  ],
+  "paper_report": {
+    "as_of": "2025-12-30",
+    "entries": 0,
+    "exits": 0,
+    "cash": 1000000.0,
+    "equity": 1000000.0,
+    "realized_pnl": 0.0,
+    "open_positions": 0,
+    "active_strategies": 0
+  }
+}

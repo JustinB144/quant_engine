@@ -1,0 +1,10 @@
+{
+  "end_date": "2026-02-20",
+  "format": "parquet",
+  "n_bars": 673,
+  "saved_at_utc": "2026-02-22T20:58:45.144683+00:00",
+  "source": "ibkr",
+  "start_date": "2023-06-15",
+  "ticker": "CAVA",
+  "timeframe": "daily"
+}

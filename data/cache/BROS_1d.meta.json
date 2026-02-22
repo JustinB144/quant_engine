@@ -1,0 +1,10 @@
+{
+  "end_date": "2026-02-20",
+  "format": "parquet",
+  "n_bars": 1113,
+  "saved_at_utc": "2026-02-22T20:58:46.068902+00:00",
+  "source": "ibkr",
+  "start_date": "2021-09-15",
+  "ticker": "BROS",
+  "timeframe": "daily"
+}

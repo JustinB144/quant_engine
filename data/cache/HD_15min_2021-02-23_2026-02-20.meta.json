@@ -1,0 +1,11 @@
+{
+  "end_date": "2026-02-20",
+  "format": "parquet",
+  "n_bars": 32510,
+  "rehydrated": true,
+  "saved_at_utc": "2026-02-22T20:24:20.570261+00:00",
+  "source": "ibkr",
+  "start_date": "2021-02-23",
+  "ticker": "HD",
+  "timeframe": "15m"
+}

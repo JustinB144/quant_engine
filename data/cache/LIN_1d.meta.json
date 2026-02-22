@@ -1,0 +1,10 @@
+{
+  "end_date": "2026-02-20",
+  "format": "parquet",
+  "n_bars": 2187,
+  "saved_at_utc": "2026-02-22T20:54:48.773764+00:00",
+  "source": "wrds+ibkr",
+  "start_date": "2013-07-31",
+  "ticker": "LIN",
+  "timeframe": "daily"
+}
