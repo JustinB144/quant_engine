@@ -4,7 +4,7 @@ build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
 name = "quant_engine"
-version = "0.1.0"
+version = "2.0.0"
 description = "Continuous Feature ML Trading System"
 requires-python = ">=3.10"
 dependencies = [
@@ -24,15 +24,60 @@ api = [
     "sse-starlette>=2.0",
     "aiosqlite>=0.20",
 ]
+ml = [
+    "xgboost>=2.0",
+    "lightgbm>=4.0",
+    "optuna>=3.4",
+    "hmmlearn>=0.3",
+]
+data = [
+    "yfinance>=0.2.30",
+    "pyarrow>=14.0",
+    "requests>=2.31",
+]
+charts = [
+    "plotly>=5.18",
+    "dash>=2.14",
+]
+full = [
+    "quant_engine[api,ml,data,charts]",
+]
 dev = [
+    "quant_engine[full]",
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "httpx>=0.27",
+    "ruff>=0.4",
+    "mypy>=1.8",
+    "pre-commit>=3.6",
 ]
 
+[project.scripts]
+qe-server = "api.main:run_server"
+
 [tool.setuptools.packages.find]
-include = ["quant_engine*"]
+include = ["quant_engine*", "api*", "models*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (deselect with -m 'not slow')",
+    "integration: marks integration tests requiring engine modules",
+    "api: marks API endpoint tests",
+    "unit: marks fast unit tests",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false

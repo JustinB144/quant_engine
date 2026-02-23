@@ -6,6 +6,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,7 +27,11 @@ class ResultsService:
         return data
 
     def get_latest_predictions(self, horizon: int = 10) -> Dict[str, Any]:
-        """Read the latest prediction CSV for a horizon."""
+        """Read the latest prediction CSV for a horizon.
+
+        Computes cs_zscore (cross-sectional z-score) on the fly if not
+        already present, and includes regime_suppressed flag.
+        """
         from quant_engine.config import RESULTS_DIR
 
         import pandas as pd
@@ -34,6 +40,30 @@ class ResultsService:
         if not path.exists():
             return {"available": False, "horizon": horizon}
         df = pd.read_csv(path)
+
+        # Compute cs_zscore if not in the CSV
+        if "cs_zscore" not in df.columns and "predicted_return" in df.columns:
+            pred_vals = pd.to_numeric(df["predicted_return"], errors="coerce")
+            mean_val = pred_vals.mean()
+            std_val = pred_vals.std()
+            if std_val > 1e-12:
+                df["cs_zscore"] = ((pred_vals - mean_val) / std_val).round(4)
+            else:
+                df["cs_zscore"] = 0.0
+
+        # Add regime_suppressed flag based on config
+        if "regime_suppressed" not in df.columns and "regime" in df.columns:
+            try:
+                from quant_engine.config import REGIME_2_TRADE_ENABLED
+                regime_col = df["regime"]
+                # Regime can be int (2) or string ("mean_reverting")
+                is_regime_2 = regime_col.isin([2, "2", "mean_reverting"])
+                df["regime_suppressed"] = (~REGIME_2_TRADE_ENABLED) & is_regime_2
+            except (ImportError, AttributeError):
+                df["regime_suppressed"] = False
+
+        # Replace NaN with None for JSON
+        df = df.replace({np.nan: None})
         records = df.head(200).to_dict(orient="records")
         return {"available": True, "horizon": horizon, "signals": records, "total": len(df)}
 

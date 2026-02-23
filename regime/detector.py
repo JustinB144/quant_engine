@@ -275,7 +275,7 @@ def detect_regimes_batch(
     for permno, feats in features_by_id.items():
         regime_df = det.regime_features(feats)
         regime_df["permno"] = permno
-        regime_df = regime_df.set_index("permno", append=True).swaplevel()
+        regime_df = regime_df.set_index("permno", append=True).reorder_levels([1, 0])
         regime_dfs.append(regime_df)
         prob_cols = [c for c in regime_df.columns if c.startswith("regime_prob_")]
         if prob_cols:

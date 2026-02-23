@@ -17,6 +17,11 @@ export interface BacktestResult {
     sharpe: number
   }>
   available: boolean
+  model_staleness_days: number | null
+  retrain_overdue: boolean
+  model_version: string | null
+  sizing_method: string
+  walk_forward_mode: string
 }
 
 /** Matches actual /api/backtests/latest/trades response.data */

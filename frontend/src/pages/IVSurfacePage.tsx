@@ -4,10 +4,12 @@ import PageHeader from '@/components/ui/PageHeader'
 import TabGroup from '@/components/ui/TabGroup'
 import SVISurfaceTab from './IVSurfacePage/SVISurfaceTab'
 import HestonSurfaceTab from './IVSurfacePage/HestonSurfaceTab'
+import ArbAwareSVITab from './IVSurfacePage/ArbAwareSVITab'
 
 const TABS = [
   { key: 'svi', label: 'SVI Surface' },
   { key: 'heston', label: 'Heston Surface' },
+  { key: 'arb-svi', label: 'Arb-Aware SVI' },
 ]
 
 export default function IVSurfacePage() {
@@ -19,6 +21,7 @@ export default function IVSurfacePage() {
       <TabGroup tabs={TABS} activeKey={tab} onChange={setTab} />
       {tab === 'svi' && <SVISurfaceTab />}
       {tab === 'heston' && <HestonSurfaceTab />}
+      {tab === 'arb-svi' && <ArbAwareSVITab />}
     </PageContainer>
   )
 }

@@ -18,6 +18,18 @@ from ..services.backtest_service import BacktestService
 router = APIRouter(prefix="/api/backtests", tags=["backtests"])
 
 
+def _extract_backtest_meta(data: dict) -> dict:
+    """Extract transparency fields from backtest data for ResponseMeta."""
+    meta_fields: dict = {}
+    if "sizing_method" in data:
+        meta_fields["sizing_method"] = data["sizing_method"]
+    if "walk_forward_mode" in data:
+        meta_fields["walk_forward_mode"] = data["walk_forward_mode"]
+    if "model_version" in data:
+        meta_fields["model_version"] = data["model_version"]
+    return meta_fields
+
+
 @router.get("/latest")
 async def latest_backtest(
     horizon: int = 10,
@@ -32,7 +44,8 @@ async def latest_backtest(
     data = await asyncio.to_thread(svc.get_latest_results, horizon)
     elapsed = (time.monotonic() - t0) * 1000
     cache.set(cache_key, data)
-    return ApiResponse.success(data, elapsed_ms=elapsed)
+    meta_fields = _extract_backtest_meta(data)
+    return ApiResponse.success(data, elapsed_ms=elapsed, **meta_fields)
 
 
 @router.get("/latest/trades")

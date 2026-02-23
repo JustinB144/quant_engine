@@ -229,7 +229,7 @@ class AutopilotEngine:
             permno_feats = features.loc[permno]
             regime_df = detector.regime_features(permno_feats)
             regime_df["permno"] = permno
-            regime_df = regime_df.set_index("permno", append=True).swaplevel()
+            regime_df = regime_df.set_index("permno", append=True).reorder_levels([1, 0])
             regime_parts.append(regime_df["regime"])
             prob_cols = [c for c in regime_df.columns if c.startswith("regime_prob_")]
             if prob_cols:
@@ -335,7 +335,7 @@ class AutopilotEngine:
                 regime_probabilities=regime_probs,
             )
             preds["permno"] = permno
-            preds_idx = preds.set_index("permno", append=True).swaplevel()
+            preds_idx = preds.set_index("permno", append=True).reorder_levels([1, 0])
             all_preds.append(preds_idx)
 
             latest = preds.iloc[-1].copy()
@@ -496,7 +496,7 @@ class AutopilotEngine:
                         regime_probabilities=r_probs,
                     )
                     preds["permno"] = permno
-                    preds_idx = preds.set_index("permno", append=True).swaplevel()
+                    preds_idx = preds.set_index("permno", append=True).reorder_levels([1, 0])
                     all_oos_preds.append(preds_idx)
                 except (ValueError, KeyError, RuntimeError):
                     continue
@@ -643,7 +643,7 @@ class AutopilotEngine:
             actual.name = "actual_forward"
             actual = actual.to_frame()
             actual["permno"] = str(permno)
-            actual = actual.set_index("permno", append=True).swaplevel()
+            actual = actual.set_index("permno", append=True).reorder_levels([1, 0])
             actual_parts.append(actual["actual_forward"])
         actual_forward = pd.concat(actual_parts).sort_index() if actual_parts else pd.Series(dtype=float)
 

@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { get } from '@/api/client'
-import { MODELS_VERSIONS, MODELS_HEALTH, MODELS_FEATURES } from '@/api/endpoints'
+import { MODELS_VERSIONS, MODELS_HEALTH, MODELS_FEATURES, MODELS_FEATURE_CORRELATIONS } from '@/api/endpoints'
 import type { ModelVersionInfo, ModelHealth, FeatureImportance } from '@/types/models'
 
 export function useModelVersions() {
@@ -23,6 +23,20 @@ export function useFeatureImportance() {
   return useQuery({
     queryKey: ['models', 'features'],
     queryFn: () => get<FeatureImportance>(MODELS_FEATURES),
+    staleTime: 120_000,
+  })
+}
+
+export interface FeatureCorrelations {
+  feature_names: string[]
+  correlations: number[][]
+  n_features: number
+}
+
+export function useFeatureCorrelations() {
+  return useQuery({
+    queryKey: ['models', 'features', 'correlations'],
+    queryFn: () => get<FeatureCorrelations>(MODELS_FEATURE_CORRELATIONS),
     staleTime: 120_000,
   })
 }

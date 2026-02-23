@@ -2,7 +2,7 @@ import React from 'react'
 import { createColumnHelper } from '@tanstack/react-table'
 import DataTable from './DataTable'
 import RegimeBadge from '@/components/ui/RegimeBadge'
-import { formatSignedPercent, formatPercent, colorForReturn } from './tableUtils'
+import { formatSignedPercent, formatPercent, formatNumber, colorForReturn } from './tableUtils'
 import type { SignalRow } from '@/types/signals'
 
 const col = createColumnHelper<SignalRow>()
@@ -16,6 +16,25 @@ const columns = [
         {formatSignedPercent(info.getValue(), 4)}
       </span>
     ),
+  }),
+  col.accessor('cs_zscore', {
+    header: 'CS Z-Score',
+    size: 90,
+    cell: (info) => {
+      const val = info.getValue()
+      if (val == null) return <span style={{ color: 'var(--text-tertiary)' }}>—</span>
+      const absVal = Math.abs(val)
+      const color = absVal >= 2.0
+        ? 'var(--accent-green)'
+        : absVal >= 1.0
+          ? 'var(--accent-blue)'
+          : 'var(--text-secondary)'
+      return (
+        <span className="font-mono" style={{ color, fontWeight: absVal >= 1.5 ? 600 : 400 }}>
+          {val >= 0 ? '+' : ''}{formatNumber(val, 2)}
+        </span>
+      )
+    },
   }),
   col.accessor('confidence', {
     header: 'Confidence',
@@ -44,6 +63,31 @@ const columns = [
   col.accessor('regime', {
     header: 'Regime',
     cell: (info) => <RegimeBadge regime={info.getValue()} />,
+  }),
+  col.accessor('regime_suppressed', {
+    header: 'Status',
+    size: 90,
+    cell: (info) => {
+      const suppressed = info.getValue()
+      if (suppressed) {
+        return (
+          <span
+            className="font-mono uppercase"
+            style={{ fontSize: 10, color: 'var(--accent-amber)', fontWeight: 600 }}
+          >
+            SUPPRESSED
+          </span>
+        )
+      }
+      return (
+        <span
+          className="font-mono uppercase"
+          style={{ fontSize: 10, color: 'var(--accent-green)' }}
+        >
+          ACTIVE
+        </span>
+      )
+    },
   }),
 ]
 

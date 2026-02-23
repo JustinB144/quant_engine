@@ -81,7 +81,7 @@ class PipelineOrchestrator:
             permno_feats = state.features.loc[permno]
             regime_df = detector.regime_features(permno_feats)
             regime_df["permno"] = permno
-            regime_df = regime_df.set_index("permno", append=True).swaplevel()
+            regime_df = regime_df.set_index("permno", append=True).reorder_levels([1, 0])
             regime_dfs.append(regime_df)
             prob_cols = [c for c in regime_df.columns if c.startswith("regime_prob_")]
             if prob_cols:
@@ -258,7 +258,7 @@ class PipelineOrchestrator:
             try:
                 preds = predictor.predict(features, regimes, confidence, regime_probabilities=regime_probs)
                 preds["permno"] = permno
-                preds = preds.set_index("permno", append=True).swaplevel()
+                preds = preds.set_index("permno", append=True).reorder_levels([1, 0])
                 all_preds.append(preds)
             except (ValueError, KeyError, TypeError):
                 pass

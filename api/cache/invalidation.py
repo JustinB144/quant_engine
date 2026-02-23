@@ -24,6 +24,7 @@ def invalidate_on_data_refresh(cache: CacheManager) -> None:
     cache.invalidate_pattern("signals*")
     cache.invalidate_pattern("regime*")
     cache.invalidate_pattern("health*")
+    cache.invalidate_pattern("benchmark*")
 
 
 def invalidate_on_config_change(cache: CacheManager) -> None:

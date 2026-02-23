@@ -104,7 +104,7 @@ class TestFullPipelineSynthetic:
             permno_feats = features.loc[permno]
             regime_df = detector.regime_features(permno_feats)
             regime_df["permno"] = permno
-            regime_df = regime_df.set_index("permno", append=True).swaplevel()
+            regime_df = regime_df.set_index("permno", append=True).reorder_levels([1, 0])
             regime_dfs.append(regime_df)
             prob_cols = [c for c in regime_df.columns if c.startswith("regime_prob_")]
             if prob_cols:
@@ -256,7 +256,7 @@ class TestCvGapHardBlock:
             permno_feats = features.loc[permno]
             regime_df = detector.regime_features(permno_feats)
             regime_df["permno"] = permno
-            regime_df = regime_df.set_index("permno", append=True).swaplevel()
+            regime_df = regime_df.set_index("permno", append=True).reorder_levels([1, 0])
             regime_dfs.append(regime_df)
         regime_data = pd.concat(regime_dfs)
         regimes = regime_data["regime"]

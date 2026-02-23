@@ -53,6 +53,15 @@ async def feature_importance(cache: CacheManager = Depends(get_cache)) -> ApiRes
     return ApiResponse.success(data, elapsed_ms=elapsed)
 
 
+@router.get("/features/correlations")
+async def feature_correlations() -> ApiResponse:
+    t0 = time.monotonic()
+    svc = ModelService()
+    data = await asyncio.to_thread(svc.get_feature_correlations)
+    elapsed = (time.monotonic() - t0) * 1000
+    return ApiResponse.success(data, elapsed_ms=elapsed)
+
+
 @router.post("/train")
 async def train_model(
     req: TrainRequest,

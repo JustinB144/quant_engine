@@ -232,7 +232,7 @@ def compute_harx_spillovers(
         )
         f.index.name = "date"
         f["permno"] = name
-        f = f.set_index("permno", append=True).swaplevel()
+        f = f.set_index("permno", append=True).reorder_levels([1, 0])
         panel.append(f)
 
     if not panel:

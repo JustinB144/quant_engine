@@ -14,6 +14,25 @@ from ..services.results_service import ResultsService
 router = APIRouter(prefix="/api/signals", tags=["signals"])
 
 
+def _get_signal_meta_fields() -> dict:
+    """Collect transparency metadata for signal responses."""
+    meta_fields: dict = {}
+    try:
+        from quant_engine.config import REGIME_2_TRADE_ENABLED
+        meta_fields["regime_suppressed"] = not REGIME_2_TRADE_ENABLED
+    except (ImportError, AttributeError):
+        pass
+    try:
+        from quant_engine.models.versioning import ModelRegistry
+        registry = ModelRegistry()
+        latest = registry.get_latest()
+        if latest:
+            meta_fields["model_version"] = latest.version_id
+    except (ImportError, OSError):
+        pass
+    return meta_fields
+
+
 @router.get("/latest")
 async def latest_signals(
     horizon: int = 10,
@@ -28,4 +47,5 @@ async def latest_signals(
     data = await asyncio.to_thread(svc.get_latest_predictions, horizon)
     elapsed = (time.monotonic() - t0) * 1000
     cache.set(cache_key, data)
-    return ApiResponse.success(data, elapsed_ms=elapsed)
+    meta_fields = await asyncio.to_thread(_get_signal_meta_fields)
+    return ApiResponse.success(data, elapsed_ms=elapsed, **meta_fields)

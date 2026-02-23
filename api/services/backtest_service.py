@@ -15,7 +15,7 @@ class BacktestService:
     """Reads backtest result files from the results/ directory."""
 
     def get_latest_results(self, horizon: int = 10) -> Dict[str, Any]:
-        """Read latest backtest summary JSON."""
+        """Read latest backtest summary JSON with transparency fields."""
         from quant_engine.config import RESULTS_DIR
 
         summary_path = RESULTS_DIR / f"backtest_{horizon}d_summary.json"
@@ -24,6 +24,19 @@ class BacktestService:
         with open(summary_path) as f:
             summary = json.load(f)
         summary["available"] = True
+
+        # Add model staleness info
+        staleness = self._compute_model_staleness()
+        summary["model_staleness_days"] = staleness["days"]
+        summary["retrain_overdue"] = staleness["overdue"]
+        summary["model_version"] = staleness["version_id"]
+
+        # Add sizing method
+        summary["sizing_method"] = self._get_sizing_method()
+
+        # Add walk-forward mode
+        summary["walk_forward_mode"] = self._get_walk_forward_mode()
+
         return summary
 
     def get_latest_trades(self, horizon: int = 10, limit: int = 200, offset: int = 0) -> Dict[str, Any]:
@@ -63,3 +76,64 @@ class BacktestService:
             for ts, v in equity.items()
         ]
         return {"available": True, "points": points}
+
+    def _compute_model_staleness(self) -> Dict[str, Any]:
+        """Compute days since last model training."""
+        from datetime import datetime, timezone
+
+        try:
+            from quant_engine.config import MODEL_DIR
+            registry_path = MODEL_DIR / "registry.json"
+            if not registry_path.exists():
+                return {"days": None, "overdue": False, "version_id": None}
+            with open(registry_path) as f:
+                reg = json.load(f)
+            versions = reg.get("versions", [])
+            if not versions:
+                return {"days": None, "overdue": False, "version_id": None}
+            latest = versions[-1]
+            version_id = latest.get("version_id")
+            training_date_str = latest.get("training_date")
+            if not training_date_str:
+                return {"days": None, "overdue": False, "version_id": version_id}
+            training_date = datetime.fromisoformat(training_date_str)
+            if training_date.tzinfo is None:
+                training_date = training_date.replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            days = (now - training_date).days
+            # Default retrain threshold: 30 days
+            try:
+                from quant_engine.models.retrain_trigger import RETRAIN_MAX_DAYS
+                overdue = days > RETRAIN_MAX_DAYS
+            except (ImportError, AttributeError):
+                overdue = days > 30
+            return {"days": days, "overdue": overdue, "version_id": version_id}
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            logger.warning("Failed to compute model staleness: %s", exc)
+            return {"days": None, "overdue": False, "version_id": None}
+
+    def _get_sizing_method(self) -> str:
+        """Determine the current sizing method from config."""
+        try:
+            from quant_engine.config import PAPER_USE_KELLY_SIZING
+            if PAPER_USE_KELLY_SIZING:
+                return "kelly"
+        except (ImportError, AttributeError):
+            pass
+        try:
+            from quant_engine.config import EXEC_DYNAMIC_COSTS
+            if EXEC_DYNAMIC_COSTS:
+                return "dynamic"
+        except (ImportError, AttributeError):
+            pass
+        return "static"
+
+    def _get_walk_forward_mode(self) -> str:
+        """Determine the walk-forward mode from config."""
+        try:
+            from quant_engine.config import WF_MAX_TRAIN_DATES
+            if WF_MAX_TRAIN_DATES > 0:
+                return "full"
+        except (ImportError, AttributeError):
+            pass
+        return "single_split"

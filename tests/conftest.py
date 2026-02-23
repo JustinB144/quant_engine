@@ -1,11 +1,15 @@
 """Shared test fixtures for the quant_engine test suite."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
+
+
+# ── Data fixtures ────────────────────────────────────────────────────
 
 
 @pytest.fixture
@@ -35,6 +39,68 @@ def synthetic_ohlcv_data():
 
 
 @pytest.fixture
+def synthetic_trades_csv(tmp_path):
+    """Generate a synthetic backtest trades CSV and return its path."""
+    rng = np.random.default_rng(99)
+    n = 200
+    tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "META"]
+    rows = []
+    for i in range(n):
+        entry_date = pd.Timestamp("2023-01-03") + pd.Timedelta(days=i * 2)
+        exit_date = entry_date + pd.Timedelta(days=rng.integers(1, 15))
+        ret = float(rng.normal(0.002, 0.03))
+        rows.append({
+            "ticker": rng.choice(tickers),
+            "entry_date": str(entry_date.date()),
+            "exit_date": str(exit_date.date()),
+            "entry_price": round(float(100 + rng.normal(0, 20)), 2),
+            "exit_price": round(float(100 + rng.normal(0, 20)), 2),
+            "predicted_return": round(ret + rng.normal(0, 0.01), 6),
+            "actual_return": round(ret, 6),
+            "net_return": round(ret, 6),
+            "regime": rng.choice(["Trending Bull", "Trending Bear", "Mean Reverting", "High Volatility"]),
+            "confidence": round(float(rng.uniform(0.4, 0.9)), 4),
+            "holding_days": int(rng.integers(1, 15)),
+            "position_size": round(float(rng.uniform(0.02, 0.10)), 4),
+            "exit_reason": rng.choice(["horizon", "stop_loss", "target"]),
+        })
+    df = pd.DataFrame(rows)
+    path = tmp_path / "backtest_10d_trades.csv"
+    df.to_csv(path, index=False)
+    return path
+
+
+@pytest.fixture
+def synthetic_model_meta(tmp_model_dir):
+    """Write a synthetic model metadata JSON and return the model dir."""
+    meta = {
+        "version_id": "abc12345",
+        "training_date": "2024-01-15",
+        "horizon": 10,
+        "n_samples": 5000,
+        "n_features": 45,
+        "oos_spearman": 0.08,
+        "cv_gap": 0.02,
+        "holdout_r2": 0.04,
+        "holdout_spearman": 0.07,
+        "global_feature_importance": {
+            f"feat_{i}": float(np.random.default_rng(i).uniform(0, 0.1))
+            for i in range(30)
+        },
+        "regime_models": {
+            "0": {"name": "Trending Bull", "feature_importance": {f"feat_{i}": float(np.random.default_rng(i + 100).uniform(0, 0.1)) for i in range(20)}},
+            "1": {"name": "Trending Bear", "feature_importance": {f"feat_{i}": float(np.random.default_rng(i + 200).uniform(0, 0.1)) for i in range(20)}},
+            "2": {"name": "Mean Reverting", "feature_importance": {f"feat_{i}": float(np.random.default_rng(i + 300).uniform(0, 0.1)) for i in range(20)}},
+            "3": {"name": "High Volatility", "feature_importance": {f"feat_{i}": float(np.random.default_rng(i + 400).uniform(0, 0.1)) for i in range(20)}},
+        },
+    }
+    meta_path = tmp_model_dir / "model_20240115_meta.json"
+    with open(meta_path, "w") as f:
+        json.dump(meta, f)
+    return tmp_model_dir
+
+
+@pytest.fixture
 def tmp_results_dir(tmp_path):
     """Temporary results directory."""
     d = tmp_path / "results"
@@ -50,16 +116,25 @@ def tmp_model_dir(tmp_path):
     return d
 
 
+@pytest.fixture
+def tmp_data_cache_dir(tmp_path):
+    """Temporary data cache directory."""
+    d = tmp_path / "data_cache"
+    d.mkdir()
+    return d
+
+
 # ── API fixtures ─────────────────────────────────────────────────────
+
 
 @pytest.fixture
 async def app(tmp_path):
     """Create a test FastAPI app with a fresh per-test job store."""
-    import quant_engine.api.deps.providers as _prov
-    from quant_engine.api.config import ApiSettings
-    from quant_engine.api.jobs.store import JobStore
-    from quant_engine.api.jobs.runner import JobRunner
-    from quant_engine.api.main import create_app
+    import api.deps.providers as _prov
+    from api.config import ApiSettings
+    from api.jobs.store import JobStore
+    from api.jobs.runner import JobRunner
+    from api.main import create_app
 
     db_path = str(tmp_path / "test_jobs.db")
     settings = ApiSettings(job_db_path=db_path)

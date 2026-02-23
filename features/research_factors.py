@@ -631,7 +631,7 @@ def compute_cross_asset_research_factors(
             # Enforce causal usage of cross-asset context by lagging the full block.
             f = f.shift(lag)
         f["permno"] = permno
-        f = f.set_index("permno", append=True).swaplevel()
+        f = f.set_index("permno", append=True).reorder_levels([1, 0])
         panel.append(f)
 
     out = pd.concat(panel).sort_index()
@@ -835,7 +835,7 @@ def compute_dtw_lead_lag(
         )
         f.index.name = "date"
         f["permno"] = name
-        f = f.set_index("permno", append=True).swaplevel()
+        f = f.set_index("permno", append=True).reorder_levels([1, 0])
         panel.append(f)
 
     if not panel:

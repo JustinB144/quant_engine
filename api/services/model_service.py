@@ -50,6 +50,42 @@ class ModelService:
             result["regime_heatmap"] = regime_heat.to_dict()
         return result
 
+    def get_feature_correlations(self, top_n: int = 15) -> Dict[str, Any]:
+        """Compute pairwise Pearson correlation between top features using regime importance vectors."""
+        from quant_engine.config import MODEL_DIR
+        from api.services.data_helpers import load_feature_importance
+
+        empty: Dict[str, Any] = {"feature_names": [], "correlations": [], "n_features": 0}
+
+        global_imp, regime_heat = load_feature_importance(MODEL_DIR)
+
+        if global_imp is None or len(global_imp) == 0:
+            return empty
+        if regime_heat is None or not hasattr(regime_heat, "corr") or len(regime_heat) == 0:
+            return empty
+
+        # regime_heat is features x regimes DataFrame
+        # Select top_n features by global importance
+        top_features = global_imp.sort_values(ascending=False).head(top_n).index.tolist()
+
+        # Keep only features that exist in the regime heatmap index
+        available = [f for f in top_features if f in regime_heat.index]
+        if len(available) < 2:
+            return empty
+
+        # Subset the regime heatmap to top features and compute correlation
+        subset = regime_heat.loc[available]
+        corr_matrix = subset.T.corr()
+
+        # Reorder to match the importance ranking
+        corr_matrix = corr_matrix.loc[available, available]
+
+        return {
+            "feature_names": available,
+            "correlations": corr_matrix.values.tolist(),
+            "n_features": len(available),
+        }
+
     def get_champion_info(self, horizon: int = 10) -> Dict[str, Any]:
         """Return champion model info for a given horizon."""
         from quant_engine.models.governance import ModelGovernance

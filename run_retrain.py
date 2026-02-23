@@ -213,13 +213,13 @@ def main():
         regime_series = regime_df["regime"]
         regime_series = regime_series.to_frame()
         regime_series["permno"] = permno
-        regime_series = regime_series.set_index("permno", append=True).swaplevel()
+        regime_series = regime_series.set_index("permno", append=True).reorder_levels([1, 0])
         all_regimes.append(regime_series["regime"])
         prob_cols = [c for c in regime_df.columns if c.startswith("regime_prob_")]
         if prob_cols:
             rp = regime_df[prob_cols].copy()
             rp["permno"] = permno
-            rp = rp.set_index("permno", append=True).swaplevel()
+            rp = rp.set_index("permno", append=True).reorder_levels([1, 0])
             all_regime_probs.append(rp)
 
     regimes = pd.concat(all_regimes)

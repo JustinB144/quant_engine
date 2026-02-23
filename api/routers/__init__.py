@@ -21,6 +21,7 @@ _ROUTER_MODULES = [
     "quant_engine.api.routers.logs",
     "quant_engine.api.routers.autopilot",
     "quant_engine.api.routers.config_mgmt",
+    "quant_engine.api.routers.iv_surface",
 ]
 
 

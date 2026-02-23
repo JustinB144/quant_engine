@@ -46,6 +46,21 @@ export default function KPIGrid({ summary, regime, modelHealth }: KPIGridProps) 
   const maxDD = summary.max_drawdown
   const ddColor = maxDD > -0.05 ? 'var(--accent-green)' : maxDD > -0.15 ? 'var(--accent-amber)' : 'var(--accent-red)'
 
+  // Model staleness transparency
+  const staleDays = summary.model_staleness_days
+  const staleOverdue = summary.retrain_overdue
+  const staleVal = staleDays != null ? `${staleDays}d` : 'N/A'
+  const staleColor = staleOverdue
+    ? 'var(--accent-red)'
+    : staleDays != null && staleDays > 14
+      ? 'var(--accent-amber)'
+      : 'var(--accent-green)'
+  const staleSub = staleOverdue
+    ? 'OVERDUE — retrain recommended'
+    : summary.model_version
+      ? `Model: ${summary.model_version.slice(0, 8)}`
+      : 'Model age within limits'
+
   return (
     <div className="grid grid-cols-4 gap-3 mb-4">
       <MetricCard label="Win Rate" value={`${(winRate * 100).toFixed(1)}%`} color={wrColor} subtitle={`${summary.total_trades} trades`} />
@@ -54,8 +69,8 @@ export default function KPIGrid({ summary, regime, modelHealth }: KPIGridProps) 
       <MetricCard label="Current Regime" value={regimeLabel} color={regimeColor} subtitle={regimeSub} />
       <MetricCard label="Retrain Trigger" value={rtVal} color={rtColor} subtitle={rtSub} />
       <MetricCard label="CV Gap" value={cvg.toFixed(4)} color={cvgColor} subtitle="IS vs OOS degradation" />
+      <MetricCard label="Model Staleness" value={staleVal} color={staleColor} subtitle={staleSub} />
       <MetricCard label="Max Drawdown" value={`${(maxDD * 100).toFixed(2)}%`} color={ddColor} subtitle="Peak-to-trough" />
-      <MetricCard label="Avg Return" value={`${(summary.avg_return * 100).toFixed(4)}%`} color={summary.avg_return >= 0 ? 'var(--accent-green)' : 'var(--accent-red)'} subtitle={`${summary.trades_per_year.toFixed(0)} trades/year`} />
     </div>
   )
 }

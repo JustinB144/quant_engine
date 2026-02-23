@@ -16,13 +16,39 @@ from ..services.autopilot_service import AutopilotService
 router = APIRouter(prefix="/api/autopilot", tags=["autopilot"])
 
 
+def _get_autopilot_meta() -> dict:
+    """Collect transparency metadata for autopilot responses."""
+    meta_fields: dict = {}
+    try:
+        from quant_engine.config import WF_MAX_TRAIN_DATES
+        meta_fields["walk_forward_mode"] = "full" if WF_MAX_TRAIN_DATES > 0 else "single_split"
+    except (ImportError, AttributeError):
+        meta_fields["walk_forward_mode"] = "single_split"
+
+    # Detect predictor type: check if trained model exists
+    try:
+        from quant_engine.models.versioning import ModelRegistry
+        registry = ModelRegistry()
+        latest = registry.get_latest()
+        if latest:
+            meta_fields["predictor_type"] = "ensemble"
+            meta_fields["model_version"] = latest.version_id
+        else:
+            meta_fields["predictor_type"] = "heuristic"
+    except (ImportError, OSError):
+        meta_fields["predictor_type"] = "heuristic"
+
+    return meta_fields
+
+
 @router.get("/latest-cycle")
 async def latest_cycle() -> ApiResponse:
     t0 = time.monotonic()
     svc = AutopilotService()
     data = await asyncio.to_thread(svc.get_latest_cycle)
     elapsed = (time.monotonic() - t0) * 1000
-    return ApiResponse.success(data, elapsed_ms=elapsed)
+    meta_fields = await asyncio.to_thread(_get_autopilot_meta)
+    return ApiResponse.success(data, elapsed_ms=elapsed, **meta_fields)
 
 
 @router.get("/strategies")
@@ -40,7 +66,8 @@ async def paper_state() -> ApiResponse:
     svc = AutopilotService()
     data = await asyncio.to_thread(svc.get_paper_state)
     elapsed = (time.monotonic() - t0) * 1000
-    return ApiResponse.success(data, elapsed_ms=elapsed)
+    meta_fields = await asyncio.to_thread(_get_autopilot_meta)
+    return ApiResponse.success(data, elapsed_ms=elapsed, **meta_fields)
 
 
 @router.post("/run-cycle")

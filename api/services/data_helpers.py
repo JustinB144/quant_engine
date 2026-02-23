@@ -119,6 +119,310 @@ def load_benchmark_returns(cache_dir: Path, ref_index: pd.Index) -> pd.Series:
     return benchmark
 
 
+# ── Time Series Helpers ───────────────────────────────────────────────
+
+
+def build_equity_curves(
+    strategy_returns: pd.Series, benchmark_returns: pd.Series, max_points: int = 2500
+) -> Dict[str, Any]:
+    """Build aligned cumulative return series for strategy and benchmark."""
+    if strategy_returns.empty:
+        return {"strategy": [], "benchmark": [], "points": 0}
+
+    # Align benchmark to strategy date range
+    if not benchmark_returns.empty:
+        common_start = max(strategy_returns.index.min(), benchmark_returns.index.min())
+        common_end = min(strategy_returns.index.max(), benchmark_returns.index.max())
+        strategy_returns = strategy_returns.loc[common_start:common_end]
+        benchmark_returns = benchmark_returns.loc[common_start:common_end]
+        # Reindex benchmark to strategy dates, fill gaps with 0
+        benchmark_returns = benchmark_returns.reindex(strategy_returns.index, fill_value=0.0)
+
+    strat_eq = (1.0 + strategy_returns).cumprod()
+    bench_eq = (1.0 + benchmark_returns).cumprod() if not benchmark_returns.empty else pd.Series(dtype=float)
+
+    # Downsample if needed
+    if len(strat_eq) > max_points:
+        step = max(1, len(strat_eq) // max_points)
+        strat_eq = strat_eq.iloc[::step]
+        if not bench_eq.empty:
+            bench_eq = bench_eq.reindex(strat_eq.index, method="nearest")
+
+    strat_points = [
+        {"date": str(ts.date()) if hasattr(ts, "date") else str(ts), "value": round(float(v), 6)}
+        for ts, v in strat_eq.items()
+    ]
+    bench_points = []
+    if not bench_eq.empty:
+        bench_points = [
+            {"date": str(ts.date()) if hasattr(ts, "date") else str(ts), "value": round(float(v), 6)}
+            for ts, v in bench_eq.items()
+        ]
+
+    return {"strategy": strat_points, "benchmark": bench_points, "points": len(strat_points)}
+
+
+def compute_rolling_metrics(
+    strategy_returns: pd.Series, benchmark_returns: pd.Series, window: int = 60, max_points: int = 2500
+) -> Dict[str, Any]:
+    """Compute rolling correlation, alpha, beta, and relative strength."""
+    if strategy_returns.empty or benchmark_returns.empty:
+        return {"rolling_correlation": [], "rolling_alpha": [], "rolling_beta": [],
+                "relative_strength": [], "drawdown_strategy": [], "drawdown_benchmark": [], "points": 0}
+
+    # Align
+    common = strategy_returns.index.intersection(benchmark_returns.index)
+    if len(common) < window:
+        return {"rolling_correlation": [], "rolling_alpha": [], "rolling_beta": [],
+                "relative_strength": [], "drawdown_strategy": [], "drawdown_benchmark": [], "points": 0}
+    sr = strategy_returns.reindex(common).fillna(0.0)
+    br = benchmark_returns.reindex(common).fillna(0.0)
+
+    # Rolling correlation
+    rolling_corr = sr.rolling(window).corr(br).dropna()
+
+    # Rolling beta and alpha (OLS: strategy = alpha + beta * benchmark)
+    def _rolling_regression(s, b, w):
+        betas, alphas = [], []
+        dates = []
+        for i in range(w, len(s)):
+            s_win = s.iloc[i - w : i].values
+            b_win = b.iloc[i - w : i].values
+            cov = np.cov(s_win, b_win)
+            var_b = cov[1, 1]
+            beta = cov[0, 1] / var_b if var_b > 1e-12 else 0.0
+            alpha = (s_win.mean() - beta * b_win.mean()) * 252  # annualised
+            betas.append(round(float(beta), 4))
+            alphas.append(round(float(alpha), 4))
+            dates.append(str(s.index[i].date()) if hasattr(s.index[i], "date") else str(s.index[i]))
+        return dates, alphas, betas
+
+    dates, alphas, betas = _rolling_regression(sr, br, window)
+
+    # Relative strength: cumulative strategy / cumulative benchmark
+    strat_eq = (1.0 + sr).cumprod()
+    bench_eq = (1.0 + br).cumprod()
+    rel_strength = (strat_eq / bench_eq).dropna()
+
+    # Drawdowns
+    def _drawdown(equity):
+        peak = equity.cummax().replace(0, np.nan)
+        return (equity / peak - 1.0).fillna(0.0)
+
+    dd_strat = _drawdown(strat_eq)
+    dd_bench = _drawdown(bench_eq)
+
+    # Downsample all series to max_points
+    def _downsample_ts(series, max_pts):
+        if len(series) > max_pts:
+            step = max(1, len(series) // max_pts)
+            series = series.iloc[::step]
+        return [
+            {"date": str(ts.date()) if hasattr(ts, "date") else str(ts), "value": round(float(v), 4)}
+            for ts, v in series.items()
+        ]
+
+    corr_points = _downsample_ts(rolling_corr, max_points)
+    rs_points = _downsample_ts(rel_strength, max_points)
+    dd_s_points = _downsample_ts(dd_strat, max_points)
+    dd_b_points = _downsample_ts(dd_bench, max_points)
+
+    # Downsample regression-based series
+    if len(dates) > max_points:
+        step = max(1, len(dates) // max_points)
+        dates = dates[::step]
+        alphas = alphas[::step]
+        betas = betas[::step]
+    alpha_points = [{"date": d, "value": a} for d, a in zip(dates, alphas)]
+    beta_points = [{"date": d, "value": b} for d, b in zip(dates, betas)]
+
+    return {
+        "rolling_correlation": corr_points,
+        "rolling_alpha": alpha_points,
+        "rolling_beta": beta_points,
+        "relative_strength": rs_points,
+        "drawdown_strategy": dd_s_points,
+        "drawdown_benchmark": dd_b_points,
+        "points": len(corr_points),
+        "window": window,
+    }
+
+
+def compute_returns_distribution(returns: pd.Series, bins: int = 50) -> Dict[str, Any]:
+    """Compute histogram data and risk lines for a returns series."""
+    if returns.empty:
+        return {"bins": [], "var95": 0.0, "var99": 0.0, "cvar95": 0.0, "cvar99": 0.0, "count": 0}
+    arr = returns.to_numpy(dtype=float)
+    arr = arr[np.isfinite(arr)]
+    if len(arr) == 0:
+        return {"bins": [], "var95": 0.0, "var99": 0.0, "cvar95": 0.0, "cvar99": 0.0, "count": 0}
+
+    counts, edges = np.histogram(arr, bins=bins)
+    bin_data = [
+        {"x": round(float((edges[i] + edges[i + 1]) / 2), 6), "count": int(counts[i])}
+        for i in range(len(counts))
+    ]
+    var95 = float(np.percentile(arr, 5))
+    var99 = float(np.percentile(arr, 1))
+    cvar95 = float(arr[arr <= var95].mean()) if np.any(arr <= var95) else var95
+    cvar99 = float(arr[arr <= var99].mean()) if np.any(arr <= var99) else var99
+
+    return {
+        "bins": bin_data,
+        "var95": round(var95, 6),
+        "var99": round(var99, 6),
+        "cvar95": round(cvar95, 6),
+        "cvar99": round(cvar99, 6),
+        "count": len(arr),
+        "mean": round(float(arr.mean()), 6),
+        "std": round(float(arr.std(ddof=1)), 6) if len(arr) > 1 else 0.0,
+        "skew": round(float(pd.Series(arr).skew()), 4),
+        "kurtosis": round(float(pd.Series(arr).kurtosis()), 4),
+    }
+
+
+def compute_rolling_risk(
+    returns: pd.Series, vol_window: int = 21, sharpe_window: int = 60, max_points: int = 2500
+) -> Dict[str, Any]:
+    """Compute rolling volatility, Sharpe, and drawdown time series."""
+    if returns.empty or len(returns) < vol_window:
+        return {"rolling_vol": [], "rolling_sharpe": [], "drawdown": [], "points": 0}
+
+    # Rolling annualised volatility
+    rolling_vol = returns.rolling(vol_window).std() * np.sqrt(252)
+    rolling_vol = rolling_vol.dropna()
+
+    # Rolling Sharpe (annualised return / annualised vol over the sharpe_window)
+    rolling_ret = returns.rolling(sharpe_window).mean() * 252
+    rolling_vol_sharpe = returns.rolling(sharpe_window).std() * np.sqrt(252)
+    rolling_sharpe = (rolling_ret / rolling_vol_sharpe.replace(0, np.nan)).dropna()
+
+    # Drawdown
+    equity = (1.0 + returns).cumprod()
+    peak = equity.cummax().replace(0, np.nan)
+    drawdown = (equity / peak - 1.0).fillna(0.0)
+
+    def _downsample(series, max_pts):
+        if len(series) > max_pts:
+            step = max(1, len(series) // max_pts)
+            series = series.iloc[::step]
+        return [
+            {"date": str(ts.date()) if hasattr(ts, "date") else str(ts), "value": round(float(v), 4)}
+            for ts, v in series.items()
+        ]
+
+    return {
+        "rolling_vol": _downsample(rolling_vol, max_points),
+        "rolling_sharpe": _downsample(rolling_sharpe, max_points),
+        "drawdown": _downsample(drawdown, max_points),
+        "points": len(rolling_vol),
+        "vol_window": vol_window,
+        "sharpe_window": sharpe_window,
+    }
+
+
+def compute_attribution(strategy_returns: pd.Series, cache_dir: Path) -> Dict[str, Any]:
+    """Compute factor attribution: tech-minus-def and momentum-spread.
+
+    Uses a simple OLS regression of strategy returns on factor proxies.
+    """
+    if strategy_returns.empty or len(strategy_returns) < 60:
+        return {"factors": [], "residual_alpha": 0.0, "r_squared": 0.0, "points": 0}
+
+    # Load tech (QQQ) and defensive (XLU/TLT) proxy returns from cache
+    tech_ret = _load_proxy_returns(cache_dir, ["QQQ", "XLK"])
+    def_ret = _load_proxy_returns(cache_dir, ["XLU", "TLT", "VZ"])
+
+    # Build factor returns
+    factors = {}
+    common_idx = strategy_returns.index
+
+    if not tech_ret.empty and not def_ret.empty:
+        common_idx = common_idx.intersection(tech_ret.index).intersection(def_ret.index)
+        if len(common_idx) > 30:
+            tech_minus_def = tech_ret.reindex(common_idx).fillna(0.0) - def_ret.reindex(common_idx).fillna(0.0)
+            factors["tech_minus_def"] = tech_minus_def
+
+    # Momentum spread: top momentum vs bottom momentum proxy using SPY
+    spy_ret = _load_proxy_returns(cache_dir, ["SPY"])
+    if not spy_ret.empty:
+        mom_idx = common_idx.intersection(spy_ret.index)
+        if len(mom_idx) > 30:
+            # Use rolling 20d return minus rolling 60d return as momentum spread proxy
+            spy = spy_ret.reindex(mom_idx).fillna(0.0)
+            fast_mom = spy.rolling(20).mean()
+            slow_mom = spy.rolling(60).mean()
+            momentum_spread = (fast_mom - slow_mom).dropna()
+            if not momentum_spread.empty:
+                factors["momentum_spread"] = momentum_spread
+
+    if not factors:
+        return {"factors": [], "residual_alpha": 0.0, "r_squared": 0.0, "points": 0}
+
+    # Align all series
+    factor_df = pd.DataFrame(factors)
+    aligned_idx = strategy_returns.index.intersection(factor_df.index)
+    if len(aligned_idx) < 30:
+        return {"factors": [], "residual_alpha": 0.0, "r_squared": 0.0, "points": 0}
+
+    y = strategy_returns.reindex(aligned_idx).values
+    X = factor_df.reindex(aligned_idx).values
+    # Add intercept
+    X_with_const = np.column_stack([np.ones(len(X)), X])
+
+    try:
+        # OLS: y = X @ beta
+        beta, residuals, _, _ = np.linalg.lstsq(X_with_const, y, rcond=None)
+        y_pred = X_with_const @ beta
+        ss_res = np.sum((y - y_pred) ** 2)
+        ss_tot = np.sum((y - y.mean()) ** 2)
+        r_squared = 1.0 - ss_res / ss_tot if ss_tot > 1e-12 else 0.0
+    except np.linalg.LinAlgError:
+        return {"factors": [], "residual_alpha": 0.0, "r_squared": 0.0, "points": 0}
+
+    factor_names = list(factors.keys())
+    factor_results = []
+    for i, name in enumerate(factor_names):
+        factor_results.append({
+            "name": name,
+            "coefficient": round(float(beta[i + 1]), 4),
+            "annualized_contribution": round(float(beta[i + 1] * factor_df[name].reindex(aligned_idx).mean() * 252), 4),
+        })
+
+    return {
+        "factors": factor_results,
+        "residual_alpha": round(float(beta[0] * 252), 4),  # annualised
+        "r_squared": round(float(r_squared), 4),
+        "points": len(aligned_idx),
+    }
+
+
+def _load_proxy_returns(cache_dir: Path, symbols: List[str]) -> pd.Series:
+    """Try to load daily close returns for any of the given symbol tickers."""
+    for sym in symbols:
+        # Try standard naming patterns
+        for pattern in [f"{sym}_1d.parquet", f"{sym}_daily_*.parquet"]:
+            if "*" in pattern:
+                matches = sorted(cache_dir.glob(pattern))
+                if matches:
+                    try:
+                        ret = _read_close_returns(matches[0])
+                        if len(ret) > 20:
+                            return ret
+                    except (OSError, ValueError):
+                        continue
+            else:
+                path = cache_dir / pattern
+                if path.exists():
+                    try:
+                        ret = _read_close_returns(path)
+                        if len(ret) > 20:
+                            return ret
+                    except (OSError, ValueError):
+                        continue
+    return pd.Series(dtype=float)
+
+
 # ── Risk Metrics ──────────────────────────────────────────────────────
 
 

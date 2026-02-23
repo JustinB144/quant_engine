@@ -155,7 +155,7 @@ def main():
             )
             # Add PERMNO index level for backtester
             preds["permno"] = permno
-            preds = preds.set_index("permno", append=True).swaplevel()
+            preds = preds.set_index("permno", append=True).reorder_levels([1, 0])
             all_preds.append(preds)
             if verbose:
                 n_signals = (preds["predicted_return"] > ENTRY_THRESHOLD).sum()

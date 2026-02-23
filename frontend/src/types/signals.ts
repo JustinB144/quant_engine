@@ -15,4 +15,6 @@ export interface SignalRow {
   predicted_return: number
   confidence: number
   date: string
+  cs_zscore?: number
+  regime_suppressed?: boolean
 }

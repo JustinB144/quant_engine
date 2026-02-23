@@ -7,6 +7,10 @@ export const HEALTH_DETAILED = '/health/detailed'
 // Dashboard
 export const DASHBOARD_SUMMARY = '/dashboard/summary'
 export const DASHBOARD_REGIME = '/dashboard/regime'
+export const DASHBOARD_RETURNS_DISTRIBUTION = '/dashboard/returns-distribution'
+export const DASHBOARD_ROLLING_RISK = '/dashboard/rolling-risk'
+export const DASHBOARD_EQUITY = '/dashboard/equity'
+export const DASHBOARD_ATTRIBUTION = '/dashboard/attribution'
 
 // Signals
 export const SIGNALS_LATEST = '/signals/latest'
@@ -23,6 +27,7 @@ export const MODELS_HEALTH = '/models/health'
 export const MODELS_FEATURES = '/models/features/importance'
 export const MODELS_TRAIN = '/models/train'
 export const MODELS_PREDICT = '/models/predict'
+export const MODELS_FEATURE_CORRELATIONS = '/models/features/correlations'
 
 // Data
 export const DATA_UNIVERSE = '/data/universe'
@@ -30,6 +35,8 @@ export const DATA_TICKER = (ticker: string) => `/data/ticker/${ticker}`
 
 // Benchmark
 export const BENCHMARK_COMPARISON = '/benchmark/comparison'
+export const BENCHMARK_EQUITY_CURVES = '/benchmark/equity-curves'
+export const BENCHMARK_ROLLING_METRICS = '/benchmark/rolling-metrics'
 
 // Logs
 export const LOGS = '/logs'
@@ -48,3 +55,6 @@ export const JOBS_CANCEL = (id: string) => `/jobs/${id}/cancel`
 
 // Config
 export const CONFIG = '/config'
+
+// IV Surface
+export const IV_SURFACE_ARB_FREE = '/iv-surface/arb-free-svi'

@@ -1,6 +1,7 @@
 """FastAPI application factory and server entry point."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -12,6 +13,33 @@ from .deps.providers import get_cache, get_job_store, get_settings
 from .errors import register_error_handlers
 
 logger = logging.getLogger(__name__)
+
+# Background retrain monitor interval (seconds)
+_RETRAIN_CHECK_INTERVAL = 300  # 5 minutes
+
+
+async def _retrain_monitor_loop() -> None:
+    """Background task that periodically checks retrain triggers.
+
+    If a retrain is overdue, invalidates stale caches so the dashboard
+    KPIs reflect the current state.  Runs every 5 minutes.
+    """
+    from .cache.invalidation import invalidate_on_train
+
+    while True:
+        await asyncio.sleep(_RETRAIN_CHECK_INTERVAL)
+        try:
+            from api.services.backtest_service import BacktestService
+            staleness = await asyncio.to_thread(BacktestService()._compute_model_staleness)
+            if staleness.get("overdue"):
+                logger.warning(
+                    "Model retrain overdue (%s days). Invalidating dashboard cache.",
+                    staleness.get("days"),
+                )
+                cache = get_cache()
+                invalidate_on_train(cache)
+        except Exception:  # noqa: BLE001
+            logger.debug("Retrain monitor check failed", exc_info=True)
 
 
 @asynccontextmanager
@@ -25,9 +53,13 @@ async def _lifespan(app: FastAPI):
     store = get_job_store()
     await store.initialize()
 
+    # Start background retrain monitor
+    monitor_task = asyncio.create_task(_retrain_monitor_loop())
+
     yield
 
     # Cleanup
+    monitor_task.cancel()
     logger.info("Shutting down quant_engine API")
 
 
@@ -38,8 +70,12 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="Quant Engine API",
-        version="0.1.0",
+        description="Continuous Feature ML Trading System — REST API for backtesting, signals, model training, and autopilot.",
+        version="2.0.0",
         lifespan=_lifespan,
+        docs_url="/docs",
+        redoc_url="/redoc",
+        openapi_url="/openapi.json",
     )
 
     # CORS
