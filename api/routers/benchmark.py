@@ -20,7 +20,7 @@ def _compute_comparison() -> dict:
     import pandas as pd
 
     from quant_engine.config import DATA_CACHE_DIR, RESULTS_DIR
-    from quant_engine.dash_ui.data.loaders import (
+    from api.services.data_helpers import (
         build_portfolio_returns,
         compute_risk_metrics,
         load_benchmark_returns,

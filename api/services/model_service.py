@@ -23,7 +23,7 @@ class ModelService:
     def get_model_health(self) -> Dict[str, Any]:
         """Compute model health from registry + trade data."""
         from quant_engine.config import MODEL_DIR, RESULTS_DIR
-        from quant_engine.dash_ui.data.loaders import compute_model_health, load_trades
+        from api.services.data_helpers import compute_model_health, load_trades
 
         trades_path = RESULTS_DIR / "backtest_10d_trades.csv"
         trades = load_trades(trades_path)
@@ -37,7 +37,7 @@ class ModelService:
     def get_feature_importance(self) -> Dict[str, Any]:
         """Load feature importance from latest model meta."""
         from quant_engine.config import MODEL_DIR
-        from quant_engine.dash_ui.data.loaders import load_feature_importance
+        from api.services.data_helpers import load_feature_importance
 
         global_imp, regime_heat = load_feature_importance(MODEL_DIR)
         result: Dict[str, Any] = {

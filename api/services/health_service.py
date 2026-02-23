@@ -53,7 +53,7 @@ class HealthService:
 
     def get_detailed_health(self) -> Dict[str, Any]:
         """Full system health assessment."""
-        from quant_engine.dash_ui.data.loaders import collect_health_data
+        from api.services.data_helpers import collect_health_data
 
         payload = collect_health_data()
         # Convert dataclass to dict, handling nested dataclasses

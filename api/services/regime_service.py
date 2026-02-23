@@ -15,7 +15,7 @@ class RegimeService:
     def detect_current_regime(self) -> Dict[str, Any]:
         """Detect current market regime from SPY/benchmark data."""
         from quant_engine.config import DATA_CACHE_DIR, REGIME_NAMES
-        from quant_engine.dash_ui.data.loaders import compute_regime_payload
+        from api.services.data_helpers import compute_regime_payload
 
         from pathlib import Path
 

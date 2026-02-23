@@ -41,7 +41,6 @@ htmlcov/
 
 # Audit reports and one-off docs (not part of source)
 *.docx
-ADAPTED_MIGRATION_AUDIT_2026-02-22.md
 WRDS_DAILY_REDOWNLOAD_REPORT.md
 
 # Separate nested repo

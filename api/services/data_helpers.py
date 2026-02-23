@@ -1,8 +1,9 @@
 """
-Data loading and computation functions for the Dash UI.
+Data loading and computation functions extracted from dash_ui/data/loaders.py.
 
-Pure functions with no UI dependencies — extracted from the tkinter page classes
-so they can be reused across Dash callbacks.
+Pure functions with no UI dependencies — used by API services to read
+result files, compute risk metrics, run regime detection, and assess
+system health.
 """
 from __future__ import annotations
 
@@ -16,10 +17,11 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-logger = logging.getLogger("quant_engine.dash_ui")
+logger = logging.getLogger("quant_engine.api")
 
 
 # ── Trade & Portfolio Loading ─────────────────────────────────────────
+
 
 def load_trades(path: Path) -> pd.DataFrame:
     """Load and clean backtest trade CSV."""
@@ -117,43 +119,8 @@ def load_benchmark_returns(cache_dir: Path, ref_index: pd.Index) -> pd.Series:
     return benchmark
 
 
-def load_factor_proxies(cache_dir: Path, ref_index: pd.Index) -> pd.DataFrame:
-    """Load factor proxy returns for attribution."""
-    tickers = ["AAPL", "NVDA", "JPM", "UNH"]
-    returns: Dict[str, pd.Series] = {}
-    for ticker in tickers:
-        path = cache_dir / f"{ticker}_1d.parquet"
-        if not path.exists():
-            # Try IBKR-style daily naming
-            matches = sorted(cache_dir.glob(f"{ticker}_daily_*.parquet"))
-            path = matches[0] if matches else path
-        if not path.exists():
-            continue
-        try:
-            ret = _read_close_returns(path)
-            if len(ret) > 20:
-                returns[ticker] = ret
-        except (OSError, ValueError, ImportError) as e:
-            logger.warning("Failed to load factor proxy %s: %s", ticker, e)
-            continue
-    if not returns:
-        if len(ref_index) == 0:
-            return pd.DataFrame(columns=["tech_minus_def", "mom_spread"])
-        return pd.DataFrame(index=ref_index, data={"tech_minus_def": 0.0, "mom_spread": 0.0})
-    ret_df = pd.DataFrame(returns).sort_index()
-    tech = ret_df[[c for c in ["AAPL", "NVDA"] if c in ret_df.columns]].mean(axis=1)
-    defens = ret_df[[c for c in ["JPM", "UNH"] if c in ret_df.columns]].mean(axis=1)
-    tech_minus_def = (tech - defens).fillna(0.0)
-    ew = ret_df.mean(axis=1)
-    mom_spread = (ew.rolling(5).mean() - ew.rolling(21).mean()).fillna(0.0)
-    factors = pd.DataFrame({"tech_minus_def": tech_minus_def, "mom_spread": mom_spread})
-    factors = factors.replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    if len(ref_index) > 0:
-        factors = factors.reindex(pd.Index(ref_index).union(factors.index)).fillna(0.0)
-    return factors
-
-
 # ── Risk Metrics ──────────────────────────────────────────────────────
+
 
 def compute_risk_metrics(returns: pd.Series) -> Dict[str, float]:
     """Compute portfolio risk metrics from daily returns."""
@@ -188,9 +155,10 @@ def compute_risk_metrics(returns: pd.Series) -> Dict[str, float]:
 
 # ── Regime Detection ──────────────────────────────────────────────────
 
+
 def compute_regime_payload(cache_dir: Path) -> Dict[str, Any]:
     """Run HMM regime detection and return structured results."""
-    from quant_engine.dash_ui.theme import REGIME_NAMES, REGIME_COLORS
+    from quant_engine.config import REGIME_NAMES
 
     fallback = {
         "current_label": "Unavailable", "as_of": "---",
@@ -252,6 +220,7 @@ def compute_regime_payload(cache_dir: Path) -> Dict[str, Any]:
 
 
 # ── Model Health ──────────────────────────────────────────────────────
+
 
 def compute_model_health(model_dir: Path, trades: pd.DataFrame) -> Dict[str, Any]:
     """Assess model health from registry and trade data."""
@@ -335,47 +304,8 @@ def load_feature_importance(model_dir: Path) -> Tuple[pd.Series, pd.DataFrame]:
     return global_imp, regime_heat
 
 
-def compute_health_scores(model_health: Dict, trades: pd.DataFrame, cv_gap: float) -> Tuple[str, str]:
-    """Quick health indicators for dashboard cards."""
-    try:
-        from quant_engine.config import DATA_CACHE_DIR, SURVIVORSHIP_DB
-    except (ValueError, ImportError) as e:
-        logger.warning("Failed to compute health scores: %s", e)
-        return "---", "---"
-    issues = 0
-    cache_dir = Path(DATA_CACHE_DIR)
-    if cache_dir.exists():
-        parquets = list(cache_dir.glob("*.parquet"))
-        if not parquets:
-            issues += 2
-        else:
-            for f in parquets[:5]:
-                age = (datetime.now() - datetime.fromtimestamp(f.stat().st_mtime)).days
-                if age > 21:
-                    issues += 1
-                    break
-    else:
-        issues += 2
-    db_path = Path(SURVIVORSHIP_DB) if SURVIVORSHIP_DB else None
-    if not (db_path and db_path.exists() and db_path.stat().st_size > 1024):
-        issues += 1
-    data_quality = "GOOD" if issues == 0 else "FAIR" if issues <= 1 else "POOR"
-    health_issues = 0
-    if model_health.get("retrain_triggered"):
-        health_issues += 1
-    if cv_gap > 0.15:
-        health_issues += 1
-    if len(trades) > 0 and "net_return" in trades.columns:
-        win_rate = float((trades["net_return"] > 0).mean())
-        if win_rate < 0.45:
-            health_issues += 1
-    system_health = ("HEALTHY" if health_issues == 0
-                     else "CAUTION" if health_issues <= 1
-                     else "AT RISK")
-    return data_quality, system_health
-
-
 # ── System Health Assessment ──────────────────────────────────────────
+
 
 @dataclass
 class HealthCheck:
@@ -460,14 +390,13 @@ def collect_health_data() -> SystemHealthPayload:
 
 def _check_data_integrity() -> Tuple[List[HealthCheck], List[HealthCheck], float]:
     """Check survivorship bias and data quality."""
-    surv_checks = []
-    quality_checks = []
+    surv_checks: List[HealthCheck] = []
+    quality_checks: List[HealthCheck] = []
     score = 50.0
 
     try:
         from quant_engine.config import SURVIVORSHIP_DB, DATA_CACHE_DIR, WRDS_ENABLED
 
-        # Survivorship DB
         db_path = Path(SURVIVORSHIP_DB) if SURVIVORSHIP_DB else None
         if db_path and db_path.exists() and db_path.stat().st_size > 1024:
             surv_checks.append(HealthCheck(
@@ -479,7 +408,6 @@ def _check_data_integrity() -> Tuple[List[HealthCheck], List[HealthCheck], float
                 "Missing or empty survivorship database.",
                 recommendation="Run survivorship snapshot collection."))
 
-        # Data source check
         if WRDS_ENABLED:
             surv_checks.append(HealthCheck(
                 "WRDS Data Source", "PASS", "WRDS enabled as primary institutional source."))
@@ -490,7 +418,6 @@ def _check_data_integrity() -> Tuple[List[HealthCheck], List[HealthCheck], float
                 "WRDS disabled — relying on IBKR/local cache (survivorship-biased).",
                 recommendation="Enable WRDS for institutional-grade data."))
 
-        # Cache freshness
         cache_dir = Path(DATA_CACHE_DIR)
         if cache_dir.exists():
             parquets = list(cache_dir.glob("*.parquet"))
@@ -523,7 +450,7 @@ def _check_data_integrity() -> Tuple[List[HealthCheck], List[HealthCheck], float
 
 def _check_promotion_contract() -> Tuple[List[HealthCheck], Dict[str, int], float]:
     """Verify promotion gate configuration."""
-    checks = []
+    checks: List[HealthCheck] = []
     score = 50.0
 
     try:
@@ -572,7 +499,7 @@ def _check_promotion_contract() -> Tuple[List[HealthCheck], Dict[str, int], floa
 
 def _check_walkforward() -> Tuple[List[HealthCheck], float]:
     """Verify walk-forward validation setup."""
-    checks = []
+    checks: List[HealthCheck] = []
     score = 50.0
 
     try:
@@ -607,7 +534,7 @@ def _check_walkforward() -> Tuple[List[HealthCheck], float]:
 
 def _check_execution() -> Tuple[List[HealthCheck], float]:
     """Audit execution cost model."""
-    checks = []
+    checks: List[HealthCheck] = []
     score = 50.0
 
     try:
@@ -654,7 +581,7 @@ def _check_execution() -> Tuple[List[HealthCheck], float]:
 
 def _check_complexity() -> Tuple[List[HealthCheck], Dict[str, int], List[Dict[str, str]], float]:
     """Audit feature and knob complexity."""
-    checks = []
+    checks: List[HealthCheck] = []
     score = 60.0
     feature_inventory: Dict[str, int] = {}
     knob_inventory: List[Dict[str, str]] = []
@@ -707,7 +634,7 @@ def _check_complexity() -> Tuple[List[HealthCheck], Dict[str, int], List[Dict[st
 
 def _check_strengths() -> List[HealthCheck]:
     """Identify what's working well."""
-    strengths = []
+    strengths: List[HealthCheck] = []
     try:
         from quant_engine.config import (
             CPCV_PARTITIONS, SPA_BOOTSTRAPS, DATA_QUALITY_ENABLED,

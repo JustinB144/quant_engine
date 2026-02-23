@@ -44,7 +44,7 @@ class BacktestService:
     def get_equity_curve(self, horizon: int = 10) -> Dict[str, Any]:
         """Build equity curve from trade data."""
         from quant_engine.config import RESULTS_DIR
-        from quant_engine.dash_ui.data.loaders import build_portfolio_returns, load_trades
+        from api.services.data_helpers import build_portfolio_returns, load_trades
 
         path = RESULTS_DIR / f"backtest_{horizon}d_trades.csv"
         if not path.exists():
