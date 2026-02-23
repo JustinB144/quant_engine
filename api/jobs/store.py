@@ -45,6 +45,8 @@ class JobStore:
 
     async def create_job(self, job_type: str, params: Dict[str, Any] | None = None) -> JobRecord:
         """Insert a new queued job and return its record."""
+        if self._db is None:
+            await self.initialize()
         rec = JobRecord(
             job_id=uuid.uuid4().hex[:12],
             job_type=job_type,
@@ -59,6 +61,8 @@ class JobStore:
 
     async def get_job(self, job_id: str) -> Optional[JobRecord]:
         """Fetch a single job by ID."""
+        if self._db is None:
+            await self.initialize()
         async with self._db.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)) as cur:
             row = await cur.fetchone()
         if row is None:
@@ -67,6 +71,8 @@ class JobStore:
 
     async def list_jobs(self, limit: int = 50) -> List[JobRecord]:
         """List jobs ordered by creation time (newest first)."""
+        if self._db is None:
+            await self.initialize()
         async with self._db.execute(
             "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
         ) as cur:
@@ -100,11 +106,15 @@ class JobStore:
             sets.append("error = ?")
             vals.append(error)
         vals.append(job_id)
+        if self._db is None:
+            await self.initialize()
         await self._db.execute(f"UPDATE jobs SET {', '.join(sets)} WHERE job_id = ?", vals)
         await self._db.commit()
 
     async def update_progress(self, job_id: str, progress: float, message: str = "") -> None:
         """Update job progress (0.0 – 1.0) and optional message."""
+        if self._db is None:
+            await self.initialize()
         await self._db.execute(
             "UPDATE jobs SET progress = ?, progress_message = ? WHERE job_id = ?",
             (progress, message, job_id),
@@ -113,6 +123,8 @@ class JobStore:
 
     async def cancel_job(self, job_id: str) -> bool:
         """Mark a job as cancelled if it is still queued or running."""
+        if self._db is None:
+            await self.initialize()
         async with self._db.execute("SELECT status FROM jobs WHERE job_id = ?", (job_id,)) as cur:
             row = await cur.fetchone()
         if row is None:

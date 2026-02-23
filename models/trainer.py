@@ -618,6 +618,11 @@ class ModelTrainer:
                 train_data_start=train_data_start,
                 train_data_end=train_data_end,
             )
+            # Fit and save confidence calibrator on holdout predictions vs outcomes
+            self._fit_calibrator(
+                global_model, global_scaler, global_features, global_result,
+                X, y, horizon, versioned,
+            )
         elif verbose:
             print("  Skipping model save — global model was rejected by quality gates.")
 
@@ -1293,6 +1298,71 @@ class ModelTrainer:
             if save_dir != MODEL_DIR:
                 MODEL_DIR.mkdir(parents=True, exist_ok=True)
             print(f"\n  Saved to {prefix}_*")
+
+    def _fit_calibrator(
+        self,
+        global_model, global_scaler, global_features, global_result,
+        X: pd.DataFrame, y: pd.Series, horizon: int, versioned: bool,
+    ):
+        """Fit isotonic regression calibrator on holdout predictions vs outcomes.
+
+        Saves calibrator.pkl alongside the model so the predictor can load and
+        apply it to map raw confidence to empirical probability of correctness.
+        """
+        try:
+            from sklearn.isotonic import IsotonicRegression
+        except ImportError:
+            return  # sklearn not available
+
+        try:
+            # Use the holdout portion to calibrate
+            holdout_frac = HOLDOUT_FRACTION
+            n = len(X)
+            n_holdout = max(20, int(n * holdout_frac))
+            holdout_X = X.iloc[-n_holdout:]
+            holdout_y = y.iloc[-n_holdout:]
+
+            # Prepare features matching global model
+            available = [c for c in global_features if c in holdout_X.columns]
+            if not available:
+                return
+            X_cal = holdout_X[available].copy()
+            for col in global_features:
+                if col not in X_cal.columns:
+                    X_cal[col] = global_result.feature_medians.get(col, 0.0)
+            X_cal = X_cal[global_features].fillna(X_cal.median())
+            X_cal_scaled = global_scaler.transform(X_cal)
+
+            # Generate raw predictions on holdout
+            raw_preds = global_model.predict(X_cal_scaled)
+            # Binary outcome: did prediction get direction right?
+            direction_correct = ((raw_preds > 0) & (holdout_y.values > 0)) | (
+                (raw_preds <= 0) & (holdout_y.values <= 0)
+            )
+            direction_correct = direction_correct.astype(float)
+
+            # Raw confidence proxy: absolute prediction magnitude, normalized
+            abs_preds = np.abs(raw_preds)
+            if abs_preds.max() > 1e-10:
+                raw_confidence = abs_preds / abs_preds.max()
+            else:
+                return
+
+            # Fit isotonic regression: raw_confidence -> P(direction_correct)
+            calibrator = IsotonicRegression(out_of_bounds="clip")
+            calibrator.fit(raw_confidence, direction_correct)
+
+            # Save calibrator
+            registry = ModelRegistry() if versioned else None
+            if versioned and registry is not None and registry.has_versions():
+                save_dir = registry.get_latest_dir()
+            else:
+                save_dir = MODEL_DIR
+            if save_dir is not None:
+                calibrator_path = save_dir / f"ensemble_{horizon}d_calibrator.pkl"
+                joblib.dump(calibrator, str(calibrator_path))
+        except (ValueError, RuntimeError, OSError):
+            pass  # Calibration is optional; don't fail training
 
     def _print_summary(self, result: EnsembleResult, regimes: Optional[pd.Series] = None,
                         targets: Optional[pd.Series] = None):

@@ -499,14 +499,21 @@ def compute_regime_payload(cache_dir: Path) -> Dict[str, Any]:
         features = features.replace([np.inf, -np.inf], np.nan)
         detector = RegimeDetector(method="hmm", hmm_max_iter=35, min_duration=3)
         out = detector.detect_full(features)
-        current_state = int(out.regime.iloc[-1])
+        # Guard against NA in regime series (can happen when features have NaN)
+        last_regime = out.regime.iloc[-1]
+        current_state = int(last_regime) if pd.notna(last_regime) else 2  # default mean-reverting
         current_probs = out.probabilities.iloc[-1]
         history = out.probabilities.tail(240).copy()
         label = REGIME_NAMES.get(current_state, f"Regime {current_state}")
-        probs_pretty = {
-            REGIME_NAMES.get(i, f"Regime {i}"): float(current_probs.get(f"regime_prob_{i}", 0.0))
-            for i in range(4)
-        }
+        probs_pretty = {}
+        for i in range(4):
+            col = f"regime_prob_{i}"
+            val = current_probs.get(col, 0.0)
+            # pd.NA / np.nan can raise "boolean value of NA is ambiguous"
+            # when passed to float(), so guard explicitly
+            probs_pretty[REGIME_NAMES.get(i, f"Regime {i}")] = (
+                float(val) if pd.notna(val) else 0.0
+            )
         trans = out.transition_matrix if out.transition_matrix is not None else np.eye(4)
         trans = np.asarray(trans, dtype=float)
         if trans.ndim != 2:
@@ -696,7 +703,7 @@ def _check_data_integrity() -> Tuple[List[HealthCheck], List[HealthCheck], float
     """Check survivorship bias and data quality."""
     surv_checks: List[HealthCheck] = []
     quality_checks: List[HealthCheck] = []
-    score = 50.0
+    score = 0.0  # Start at 0 — earn points for each verified capability
 
     try:
         from quant_engine.config import SURVIVORSHIP_DB, DATA_CACHE_DIR, WRDS_ENABLED
@@ -705,7 +712,7 @@ def _check_data_integrity() -> Tuple[List[HealthCheck], List[HealthCheck], float
         if db_path and db_path.exists() and db_path.stat().st_size > 1024:
             surv_checks.append(HealthCheck(
                 "Survivorship DB", "PASS", "Universe history database exists and is populated."))
-            score += 10
+            score += 25
         else:
             surv_checks.append(HealthCheck(
                 "Survivorship DB", "FAIL",
@@ -715,12 +722,13 @@ def _check_data_integrity() -> Tuple[List[HealthCheck], List[HealthCheck], float
         if WRDS_ENABLED:
             surv_checks.append(HealthCheck(
                 "WRDS Data Source", "PASS", "WRDS enabled as primary institutional source."))
-            score += 10
+            score += 25
         else:
             surv_checks.append(HealthCheck(
                 "WRDS Data Source", "WARN",
                 "WRDS disabled — relying on IBKR/local cache (survivorship-biased).",
                 recommendation="Enable WRDS for institutional-grade data."))
+            score += 10
 
         cache_dir = Path(DATA_CACHE_DIR)
         if cache_dir.exists():
@@ -735,15 +743,26 @@ def _check_data_integrity() -> Tuple[List[HealthCheck], List[HealthCheck], float
                     f"Oldest cached file: {max_age} days",
                     value=f"{max_age}d"))
                 if max_age <= 7:
-                    score += 10
+                    score += 25
                 elif max_age <= 21:
-                    score += 5
+                    score += 15
             else:
                 quality_checks.append(HealthCheck(
                     "Cache Freshness", "FAIL", "No cached parquet files found."))
         else:
             quality_checks.append(HealthCheck(
                 "Data Cache", "FAIL", "Cache directory does not exist."))
+
+        # Bonus for data quality gates being enabled
+        from quant_engine.config import DATA_QUALITY_ENABLED
+        if DATA_QUALITY_ENABLED:
+            quality_checks.append(HealthCheck(
+                "Data Quality Gates", "PASS", "Automated quality gates enabled."))
+            score += 25
+        else:
+            quality_checks.append(HealthCheck(
+                "Data Quality Gates", "WARN", "Data quality gates disabled.",
+                recommendation="Enable DATA_QUALITY_ENABLED."))
 
     except (ValueError, ImportError) as e:
         surv_checks.append(HealthCheck("Config Check", "FAIL", str(e)))
@@ -755,7 +774,7 @@ def _check_data_integrity() -> Tuple[List[HealthCheck], List[HealthCheck], float
 def _check_promotion_contract() -> Tuple[List[HealthCheck], Dict[str, int], float]:
     """Verify promotion gate configuration."""
     checks: List[HealthCheck] = []
-    score = 50.0
+    score = 0.0  # Start at 0 — earn points for each verified capability
 
     try:
         from quant_engine.config import (
@@ -768,34 +787,66 @@ def _check_promotion_contract() -> Tuple[List[HealthCheck], Dict[str, int], floa
         checks.append(HealthCheck(
             "Min Sharpe Gate", "PASS",
             f"Threshold: {PROMOTION_MIN_SHARPE}", value=f"{PROMOTION_MIN_SHARPE}"))
+        score += 15
         checks.append(HealthCheck(
             "Max Drawdown Gate", "PASS",
             f"Threshold: {PROMOTION_MAX_DRAWDOWN}", value=f"{PROMOTION_MAX_DRAWDOWN}"))
+        score += 15
         checks.append(HealthCheck(
             "DSR Significance", "PASS",
             f"Max p-value: {PROMOTION_MAX_DSR_PVALUE}", value=f"p<{PROMOTION_MAX_DSR_PVALUE}"))
+        score += 15
         checks.append(HealthCheck(
             "PBO Gate", "PASS",
             f"Max PBO: {PROMOTION_MAX_PBO}", value=f"<{PROMOTION_MAX_PBO}"))
+        score += 15
         checks.append(HealthCheck(
             "Min Trade Count", "PASS",
             f"Required: {PROMOTION_MIN_TRADES} trades", value=f"{PROMOTION_MIN_TRADES}"))
+        score += 15
         if PROMOTION_REQUIRE_CAPACITY_UNCONSTRAINED:
             checks.append(HealthCheck(
                 "Capacity Check", "PASS", "Capacity constraint is enforced."))
+            score += 25
+        else:
             score += 10
-        score += 20
     except (ValueError, ImportError) as e:
         checks.append(HealthCheck("Promotion Config", "FAIL", str(e)))
 
+    # Load real funnel data from latest cycle report instead of hardcoded values.
     funnel = {
-        "Candidates Generated": 24,
-        "Passed Sharpe": 18,
-        "Passed DSR": 12,
-        "Passed PBO": 8,
-        "Passed Capacity": 5,
-        "Promoted": 3,
+        "Candidates Generated": 0,
+        "Passed Sharpe": 0,
+        "Passed DSR": 0,
+        "Passed PBO": 0,
+        "Passed Capacity": 0,
+        "Promoted": 0,
     }
+    try:
+        from quant_engine.config import AUTOPILOT_CYCLE_REPORT, STRATEGY_REGISTRY_PATH
+        report_path = Path(AUTOPILOT_CYCLE_REPORT)
+        if report_path.exists():
+            with open(report_path, "r", encoding="utf-8") as f:
+                cycle = json.load(f)
+            funnel["Candidates Generated"] = int(cycle.get("n_candidates", 0))
+            funnel["Promoted"] = int(cycle.get("n_promoted", 0))
+            n_passed = int(cycle.get("n_passed", 0))
+            # Reconstruct intermediate funnel from top_decisions breakdown
+            decisions = cycle.get("top_decisions", [])
+            if decisions:
+                reasons_all = [r for d in decisions for r in d.get("reasons", [])]
+                n_total = len(decisions)
+                funnel["Passed Sharpe"] = n_total - sum(1 for r in reasons_all if "sharpe" in r)
+                funnel["Passed DSR"] = n_total - sum(1 for r in reasons_all if "dsr" in r)
+                funnel["Passed PBO"] = n_total - sum(1 for r in reasons_all if "pbo" in r)
+                funnel["Passed Capacity"] = n_total - sum(1 for r in reasons_all if "capacity" in r)
+            else:
+                funnel["Passed Sharpe"] = n_passed
+                funnel["Passed DSR"] = n_passed
+                funnel["Passed PBO"] = n_passed
+                funnel["Passed Capacity"] = n_passed
+    except (OSError, json.JSONDecodeError, ValueError, ImportError) as e:
+        logger.warning("Failed to load cycle report for promotion funnel: %s", e)
 
     score = min(100.0, max(0.0, score))
     return checks, funnel, score
@@ -804,31 +855,42 @@ def _check_promotion_contract() -> Tuple[List[HealthCheck], Dict[str, int], floa
 def _check_walkforward() -> Tuple[List[HealthCheck], float]:
     """Verify walk-forward validation setup."""
     checks: List[HealthCheck] = []
-    score = 50.0
+    score = 0.0  # Start at 0 — earn points for each verified capability
 
     try:
         from quant_engine.config import CV_FOLDS, HOLDOUT_FRACTION, CPCV_PARTITIONS
 
         checks.append(HealthCheck(
             "CV Folds", "PASS", f"{CV_FOLDS}-fold cross-validation configured.", value=str(CV_FOLDS)))
+        score += 20
         checks.append(HealthCheck(
             "Holdout Fraction", "PASS",
             f"{HOLDOUT_FRACTION:.0%} holdout reserved.", value=f"{HOLDOUT_FRACTION:.0%}"))
+        score += 20
         checks.append(HealthCheck(
             "CPCV Partitions", "PASS",
             f"{CPCV_PARTITIONS} combinatorial partitions.", value=str(CPCV_PARTITIONS)))
-        score += 15
+        score += 20
 
         try:
             from quant_engine.backtest.validation import WalkForwardFold
             checks.append(HealthCheck(
                 "WalkForwardFold", "PASS", "Walk-forward validation module available."))
-            score += 15
+            score += 20
         except ImportError:
             checks.append(HealthCheck(
                 "WalkForwardFold", "FAIL",
                 "Walk-forward module not found.",
                 recommendation="Implement backtest.validation.WalkForwardFold"))
+
+        try:
+            from quant_engine.backtest.validation import run_statistical_tests
+            checks.append(HealthCheck(
+                "Statistical Tests", "PASS", "IC/FDR statistical testing available."))
+            score += 20
+        except ImportError:
+            checks.append(HealthCheck(
+                "Statistical Tests", "WARN", "Statistical testing module not available."))
     except (ValueError, ImportError) as e:
         checks.append(HealthCheck("WF Config", "FAIL", str(e)))
 
@@ -839,7 +901,7 @@ def _check_walkforward() -> Tuple[List[HealthCheck], float]:
 def _check_execution() -> Tuple[List[HealthCheck], float]:
     """Audit execution cost model."""
     checks: List[HealthCheck] = []
-    score = 50.0
+    score = 0.0  # Start at 0 — earn points for each verified capability
 
     try:
         from quant_engine.config import (
@@ -850,11 +912,12 @@ def _check_execution() -> Tuple[List[HealthCheck], float]:
         checks.append(HealthCheck(
             "Base Cost", "PASS",
             f"Transaction cost: {TRANSACTION_COST_BPS} bps round-trip.", value=f"{TRANSACTION_COST_BPS}bps"))
+        score += 20
 
         if EXEC_DYNAMIC_COSTS:
             checks.append(HealthCheck(
                 "Dynamic Costs", "PASS", "Costs conditioned on vol/liquidity."))
-            score += 15
+            score += 25
         else:
             checks.append(HealthCheck(
                 "Dynamic Costs", "WARN",
@@ -864,7 +927,7 @@ def _check_execution() -> Tuple[List[HealthCheck], float]:
         if ALMGREN_CHRISS_ENABLED:
             checks.append(HealthCheck(
                 "Almgren-Chriss", "PASS", "Optimal execution enabled for large positions."))
-            score += 10
+            score += 25
         else:
             checks.append(HealthCheck(
                 "Almgren-Chriss", "WARN", "Optimal execution disabled."))
@@ -872,10 +935,11 @@ def _check_execution() -> Tuple[List[HealthCheck], float]:
         checks.append(HealthCheck(
             "Spread Model", "PASS",
             f"Base spread: {EXEC_SPREAD_BPS} bps.", value=f"{EXEC_SPREAD_BPS}bps"))
+        score += 15
         checks.append(HealthCheck(
             "Impact Model", "PASS",
             f"Impact coefficient: {EXEC_IMPACT_COEFF_BPS} bps.", value=f"{EXEC_IMPACT_COEFF_BPS}bps"))
-        score += 5
+        score += 15
     except (ValueError, ImportError) as e:
         checks.append(HealthCheck("Execution Config", "FAIL", str(e)))
 
@@ -886,7 +950,7 @@ def _check_execution() -> Tuple[List[HealthCheck], float]:
 def _check_complexity() -> Tuple[List[HealthCheck], Dict[str, int], List[Dict[str, str]], float]:
     """Audit feature and knob complexity."""
     checks: List[HealthCheck] = []
-    score = 60.0
+    score = 0.0  # Start at 0 — earn points for each verified capability
     feature_inventory: Dict[str, int] = {}
     knob_inventory: List[Dict[str, str]] = []
 
@@ -900,6 +964,7 @@ def _check_complexity() -> Tuple[List[HealthCheck], Dict[str, int], List[Dict[st
             "Max Features", "PASS" if MAX_FEATURES_SELECTED <= 30 else "WARN",
             f"Post-selection: {MAX_FEATURES_SELECTED} features.",
             value=str(MAX_FEATURES_SELECTED)))
+        score += 25 if MAX_FEATURES_SELECTED <= 30 else 10
 
         n_interactions = len(INTERACTION_PAIRS)
         checks.append(HealthCheck(
@@ -907,6 +972,7 @@ def _check_complexity() -> Tuple[List[HealthCheck], Dict[str, int], List[Dict[st
             "PASS" if n_interactions <= 15 else "WARN",
             f"{n_interactions} interaction pairs configured.",
             value=str(n_interactions)))
+        score += 25 if n_interactions <= 15 else 10
 
         feat_mode = AUTOPILOT_FEATURE_MODE
         checks.append(HealthCheck(
@@ -914,8 +980,7 @@ def _check_complexity() -> Tuple[List[HealthCheck], Dict[str, int], List[Dict[st
             "PASS" if feat_mode == "core" else "WARN",
             f"Autopilot uses '{feat_mode}' feature set.",
             value=feat_mode))
-        if feat_mode == "core":
-            score += 10
+        score += 25 if feat_mode == "core" else 10
 
         feature_inventory = {
             "Technical": 12, "Volatility": 8, "Microstructure": 6,
@@ -928,7 +993,7 @@ def _check_complexity() -> Tuple[List[HealthCheck], Dict[str, int], List[Dict[st
             {"name": "Interaction Pairs", "value": str(n_interactions), "module": "Features"},
         ]
 
-        score += 10
+        score += 25
     except (ValueError, ImportError) as e:
         checks.append(HealthCheck("Complexity Config", "FAIL", str(e)))
 

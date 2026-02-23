@@ -92,6 +92,9 @@ class PromotionContractTests(unittest.TestCase):
                 "wf_positive_fold_fraction": 0.80,
                 "wf_is_oos_gap": 0.04,
                 "regime_positive_fraction": 0.75,
+                "stat_tests_pass": True,
+                "cpcv_passes": True,
+                "spa_passes": True,
             },
         )
         self.assertTrue(decision.passed)

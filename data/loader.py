@@ -8,11 +8,17 @@ Priority order:
 
 No external sys.path dependencies.
 """
+import logging
 from datetime import date, timedelta
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+# Module-level tracker recording all data source fallbacks for provenance auditing.
+_fallback_tracker: Dict[str, Dict[str, object]] = {}
 
 from ..config import (
     CACHE_MAX_STALENESS_DAYS,
@@ -351,9 +357,31 @@ def load_ohlcv(
 
     # ── 2. Local cache fallback (IBKR/local history) ──
     if fallback_cache_ready and cached is not None and ((not REQUIRE_PERMNO) or (cached_permno is not None)):
+        source = _cache_source(cache_meta)
+        logger.warning(
+            "Data fallback: %s loaded from non-trusted cache (source=%s). "
+            "WRDS data was unavailable or insufficient. Results may be affected by survivorship bias.",
+            requested_symbol,
+            source,
+        )
+        _fallback_tracker[requested_symbol] = {
+            "source": source,
+            "reason": "wrds_unavailable" if use_wrds else "wrds_disabled",
+            "bars": len(cached),
+            "trusted": False,
+        }
         return cached
 
     return None
+
+
+def get_data_provenance() -> Dict[str, Dict[str, object]]:
+    """Return a summary of data source provenance and any fallbacks that occurred.
+
+    Returns dict mapping ticker -> {"source": str, "reason": str, "trusted": bool, ...}.
+    Useful for auditing whether the system is running on institutional or demo data.
+    """
+    return dict(_fallback_tracker)
 
 
 def load_universe(
@@ -365,6 +393,7 @@ def load_universe(
 ) -> Dict[str, pd.DataFrame]:
     """Load OHLCV data for multiple symbols. Returns {permno: DataFrame}."""
     data: Dict[str, pd.DataFrame] = {}
+    skipped: Dict[str, str] = {}
     for i, symbol in enumerate(tickers):
         if verbose:
             print(f"  Loading {symbol} ({i+1}/{len(tickers)})...", end="", flush=True)
@@ -373,11 +402,14 @@ def load_universe(
             if DATA_QUALITY_ENABLED:
                 quality = assess_ohlcv_quality(df)
                 if not quality.passed:
+                    reason = f"quality: {', '.join(quality.warnings)}"
+                    skipped[symbol] = reason
                     if verbose:
-                        print(f" SKIPPED (quality: {', '.join(quality.warnings)})")
+                        print(f" SKIPPED ({reason})")
                     continue
             permno = df.attrs.get("permno", None)
             if permno is None and REQUIRE_PERMNO:
+                skipped[symbol] = "permno unresolved"
                 if verbose:
                     print(" SKIPPED (permno unresolved)")
                 continue
@@ -392,8 +424,19 @@ def load_universe(
                 ticker_lbl = df.attrs.get("ticker", str(symbol).upper().strip())
                 print(f" {len(df)} bars (permno={key}, ticker={ticker_lbl})")
         else:
+            bars = len(df) if df is not None else 0
+            reason = f"insufficient data ({bars} bars, need 500)" if df is not None else "load_ohlcv returned None"
+            skipped[symbol] = reason
             if verbose:
-                print(f" SKIPPED (insufficient data)")
+                print(f" SKIPPED ({reason})")
+
+    # Always log skip summary so diagnostics are available even with verbose=False
+    if skipped:
+        logger.warning(
+            "load_universe: %d/%d tickers skipped — %s",
+            len(skipped), len(tickers),
+            "; ".join(f"{sym}: {r}" for sym, r in skipped.items()),
+        )
     return data
 
 

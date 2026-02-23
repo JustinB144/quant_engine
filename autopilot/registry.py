@@ -3,7 +3,7 @@ Persistent strategy registry for promoted candidates.
 """
 import json
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
 
@@ -60,7 +60,7 @@ class StrategyRegistry:
     ) -> List[ActiveStrategy]:
         """Apply promotions."""
         payload = self._load()
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         ranked = [d for d in decisions if d.passed]
         ranked.sort(key=lambda d: d.score, reverse=True)

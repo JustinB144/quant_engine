@@ -271,6 +271,17 @@ PROMOTION_MIN_REGIME_POSITIVE_FRACTION = 0.50
 PROMOTION_EVENT_MAX_WORST_EVENT_LOSS = -0.08
 PROMOTION_EVENT_MIN_SURPRISE_HIT_RATE = 0.50
 PROMOTION_EVENT_MIN_REGIME_STABILITY = 0.40
+PROMOTION_REQUIRE_STATISTICAL_TESTS = True  # Require IC/FDR tests to pass
+PROMOTION_REQUIRE_CPCV = True               # Require CPCV to pass
+PROMOTION_REQUIRE_SPA = False               # SPA is informational by default (strict = True)
+
+# ── Kelly Sizing ──────────────────────────────────────────────────────
+KELLY_FRACTION = 0.50                   # Half-Kelly (conservative default)
+MAX_PORTFOLIO_DD = 0.20                 # Max portfolio drawdown for governor
+KELLY_PORTFOLIO_BLEND = 0.30            # Kelly weight in composite blend
+KELLY_BAYESIAN_ALPHA = 2.0              # Beta prior alpha for win rate
+KELLY_BAYESIAN_BETA = 2.0               # Beta prior beta for win rate
+KELLY_REGIME_CONDITIONAL = True         # Use regime-specific parameters
 
 PAPER_INITIAL_CAPITAL = 1_000_000.0
 PAPER_MAX_TOTAL_POSITIONS = 30

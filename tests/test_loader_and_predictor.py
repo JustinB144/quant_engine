@@ -69,6 +69,9 @@ class _FakeWRDSProvider:
             ),
         }
 
+    def get_option_surface_features(self, permnos=None, start_date=None, end_date=None):
+        return {}
+
     def resolve_permno(self, ticker, as_of_date=None):
         return "10001"
 

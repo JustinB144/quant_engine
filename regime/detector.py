@@ -39,6 +39,7 @@ class RegimeOutput:
     probabilities: pd.DataFrame
     transition_matrix: Optional[np.ndarray]
     model_type: str
+    uncertainty: Optional[pd.Series] = None  # Entropy of posterior probabilities
 
 
 class RegimeDetector:
@@ -180,12 +181,16 @@ class RegimeDetector:
         probs = probs.div(probs.sum(axis=1).replace(0, 1), axis=0)
         confidence = probs.max(axis=1).clip(0.0, 1.0)
 
+        # Compute regime uncertainty (entropy of posterior)
+        uncertainty = self.get_regime_uncertainty(probs)
+
         return RegimeOutput(
             regime=regime,
             confidence=confidence.astype(float),
             probabilities=probs.astype(float),
             transition_matrix=fit.transition_matrix,
             model_type="hmm",
+            uncertainty=uncertainty,
         )
 
     def detect_with_confidence(self, features: pd.DataFrame) -> tuple:
@@ -248,6 +253,98 @@ class RegimeDetector:
             result["regime_transition_prob"] = 0.0
 
         return result
+
+    @staticmethod
+    def get_regime_uncertainty(probabilities: pd.DataFrame) -> pd.Series:
+        """Compute entropy of posterior regime probabilities as uncertainty measure.
+
+        Entropy = -sum(p * log(p)) for each time step.
+        High entropy = uncertain about regime. Low entropy = confident.
+        Normalized to [0, 1] by dividing by max possible entropy (log(n_regimes)).
+        """
+        prob_cols = [c for c in probabilities.columns if c.startswith("regime_prob_")]
+        if not prob_cols:
+            return pd.Series(1.0, index=probabilities.index)
+        probs = probabilities[prob_cols].clip(lower=1e-10).values
+        n_regimes = probs.shape[1]
+        entropy = -np.sum(probs * np.log(probs), axis=1)
+        max_entropy = np.log(n_regimes) if n_regimes > 1 else 1.0
+        return pd.Series(entropy / max_entropy, index=probabilities.index, dtype=float)
+
+    @staticmethod
+    def map_raw_states_to_regimes_stable(
+        raw_states: np.ndarray,
+        features: pd.DataFrame,
+        reference_distributions: Optional[Dict[int, Dict[str, float]]] = None,
+    ) -> Dict[int, int]:
+        """Map HMM states to semantic regimes using Wasserstein distance matching.
+
+        Unlike the simple heuristic mapping, this method computes feature statistics
+        per HMM state and matches them to reference distributions. This prevents
+        label swaps across retrains by anchoring to stable reference profiles.
+
+        Args:
+            raw_states: HMM state labels
+            features: feature DataFrame for computing per-state stats
+            reference_distributions: optional dict {regime_code: {"mean_ret", "mean_vol"}}
+                If None, uses built-in defaults.
+        """
+        if reference_distributions is None:
+            reference_distributions = {
+                0: {"mean_ret": 0.001, "mean_vol": 12.0},   # trending_bull
+                1: {"mean_ret": -0.001, "mean_vol": 14.0},  # trending_bear
+                2: {"mean_ret": 0.0, "mean_vol": 10.0},     # mean_reverting
+                3: {"mean_ret": 0.0, "mean_vol": 25.0},     # high_volatility
+            }
+
+        unique_states = sorted(set(raw_states))
+        state_profiles: Dict[int, Dict[str, float]] = {}
+        for s in unique_states:
+            mask = raw_states == s
+            if mask.sum() == 0:
+                continue
+            ret = features.get("return_1d", pd.Series(0.0, index=features.index))[mask].mean()
+            vol = features.get("NATR_14", pd.Series(10.0, index=features.index))[mask].mean()
+            state_profiles[int(s)] = {"mean_ret": float(ret), "mean_vol": float(vol)}
+
+        if not state_profiles:
+            return {0: 2}
+
+        # Compute distance from each state to each reference regime
+        mapping: Dict[int, int] = {}
+        assigned_regimes = set()
+
+        # Sort regimes by distinctiveness (high vol first, then by return magnitude)
+        regime_order = sorted(
+            reference_distributions.keys(),
+            key=lambda r: reference_distributions[r]["mean_vol"],
+            reverse=True,
+        )
+
+        for regime_code in regime_order:
+            ref = reference_distributions[regime_code]
+            best_state = None
+            best_dist = float("inf")
+            for s, prof in state_profiles.items():
+                if s in mapping:
+                    continue
+                # Wasserstein-like L1 distance (normalized)
+                dist = (
+                    abs(prof["mean_ret"] - ref["mean_ret"]) * 1000  # Scale returns
+                    + abs(prof["mean_vol"] - ref["mean_vol"])
+                )
+                if dist < best_dist:
+                    best_dist = dist
+                    best_state = s
+            if best_state is not None:
+                mapping[best_state] = regime_code
+
+        # Assign any remaining unmapped states to mean_reverting
+        for s in state_profiles:
+            if s not in mapping:
+                mapping[s] = 2
+
+        return mapping
 
     @staticmethod
     def _get_col(df: pd.DataFrame, col: str, default: float) -> pd.Series:

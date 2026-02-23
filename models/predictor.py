@@ -131,6 +131,15 @@ class EnsemblePredictor:
         # Target std for prediction clipping
         self.global_target_std = self.meta.get("global_target_std", 0.10)
 
+        # Confidence calibrator (optional — trained on holdout predictions vs outcomes)
+        self.calibrator = None
+        calibrator_path = resolved_dir / f"ensemble_{self.horizon}d_calibrator.pkl"
+        if calibrator_path.exists():
+            try:
+                self.calibrator = joblib.load(str(calibrator_path))
+            except (OSError, ValueError):
+                self.calibrator = None
+
         # Regime models
         self.regime_models = {}
         self.regime_scalers = {}
@@ -319,6 +328,10 @@ class EnsemblePredictor:
         conf = conf * (0.6 + 0.4 * regime_certainty)
         result["confidence"] = np.clip(conf, 0, 1)
 
+        # ── Calibrate confidence if calibrator available ──
+        if self.calibrator is not None:
+            result["confidence"] = self._calibrate_confidence(result["confidence"].values)
+
         # ── Regime 2 suppression ──
         # When regime == 2 (high_vol), suppress predictions by zeroing
         # confidence and flagging the row.  This centralizes the trade gate
@@ -329,6 +342,21 @@ class EnsemblePredictor:
         result.loc[regime_2_mask, "confidence"] = 0.0
 
         return result
+
+    def _calibrate_confidence(self, raw_confidence: np.ndarray) -> np.ndarray:
+        """Apply isotonic regression calibrator to raw confidence scores.
+
+        The calibrator is fit during training on holdout predictions vs actual
+        binary outcomes (direction correct or not). It maps raw model confidence
+        to empirical probability of being correct.
+        """
+        if self.calibrator is None:
+            return raw_confidence
+        try:
+            calibrated = self.calibrator.transform(raw_confidence)
+            return np.clip(calibrated, 0.0, 1.0)
+        except (ValueError, AttributeError):
+            return raw_confidence
 
     def predict_single(
         self,

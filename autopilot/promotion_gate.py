@@ -26,6 +26,9 @@ from ..config import (
     PROMOTION_EVENT_MAX_WORST_EVENT_LOSS,
     PROMOTION_EVENT_MIN_SURPRISE_HIT_RATE,
     PROMOTION_EVENT_MIN_REGIME_STABILITY,
+    PROMOTION_REQUIRE_STATISTICAL_TESTS,
+    PROMOTION_REQUIRE_CPCV,
+    PROMOTION_REQUIRE_SPA,
 )
 from .strategy_discovery import StrategyCandidate
 
@@ -71,6 +74,9 @@ class PromotionGate:
         event_max_worst_event_loss: float = PROMOTION_EVENT_MAX_WORST_EVENT_LOSS,
         event_min_surprise_hit_rate: float = PROMOTION_EVENT_MIN_SURPRISE_HIT_RATE,
         event_min_regime_stability: float = PROMOTION_EVENT_MIN_REGIME_STABILITY,
+        require_statistical_tests: bool = PROMOTION_REQUIRE_STATISTICAL_TESTS,
+        require_cpcv: bool = PROMOTION_REQUIRE_CPCV,
+        require_spa: bool = PROMOTION_REQUIRE_SPA,
     ):
         """Initialize PromotionGate."""
         self.min_trades = min_trades
@@ -91,6 +97,9 @@ class PromotionGate:
         self.event_max_worst_event_loss = event_max_worst_event_loss
         self.event_min_surprise_hit_rate = event_min_surprise_hit_rate
         self.event_min_regime_stability = event_min_regime_stability
+        self.require_statistical_tests = require_statistical_tests
+        self.require_cpcv = require_cpcv
+        self.require_spa = require_spa
 
     def evaluate(
         self,
@@ -166,6 +175,23 @@ class PromotionGate:
                     f"regime_positive_fraction<{self.min_regime_positive_fraction:.2f}",
                 )
 
+            # ── New validation gates ──
+            if self.require_statistical_tests:
+                stat_tests_pass = bool(metrics.get("stat_tests_pass", False))
+                if not stat_tests_pass:
+                    reasons.append("stat_tests_failed")
+
+            if self.require_cpcv:
+                cpcv_passes = bool(metrics.get("cpcv_passes", False))
+                if not cpcv_passes:
+                    reasons.append("cpcv_failed")
+
+            if self.require_spa:
+                spa_passes = bool(metrics.get("spa_passes", False))
+                if not spa_passes:
+                    spa_p = float(metrics.get("spa_pvalue", 1.0))
+                    reasons.append(f"spa_failed(p={spa_p:.4f})")
+
         # Event-strategy contract checks (only enforced when metrics are supplied).
         if "worst_event_loss" in metrics:
             worst_event_loss = float(metrics.get("worst_event_loss", -np.inf))
@@ -201,6 +227,12 @@ class PromotionGate:
             score += 0.40 * float(metrics.get("regime_positive_fraction", 0.0))
         if "dsr_significant" in metrics and bool(metrics.get("dsr_significant", False)):
             score += 0.50
+        if bool(metrics.get("stat_tests_pass", False)):
+            score += 0.30
+        if bool(metrics.get("cpcv_passes", False)):
+            score += 0.35
+        if bool(metrics.get("spa_passes", False)):
+            score += 0.40
 
         return PromotionDecision(
             candidate=candidate,

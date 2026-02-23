@@ -23,12 +23,20 @@ from ..backtest.advanced_validation import (
     deflated_sharpe_ratio,
     probability_of_backtest_overfitting,
 )
-from ..backtest.validation import walk_forward_validate
+from ..backtest.validation import (
+    walk_forward_validate,
+    run_statistical_tests,
+    combinatorial_purged_cv,
+    superior_predictive_ability,
+    strategy_signal_returns,
+)
 from ..models.walk_forward import _expanding_walk_forward_folds
 from ..config import (
     AUTOPILOT_CYCLE_REPORT,
     AUTOPILOT_FEATURE_MODE,
     BACKTEST_ASSUMED_CAPITAL_USD,
+    CPCV_PARTITIONS,
+    CPCV_TEST_PARTITIONS,
     EXEC_MAX_PARTICIPATION,
     REQUIRE_PERMNO,
     SURVIVORSHIP_UNIVERSE_NAME,
@@ -41,7 +49,6 @@ from ..models.cross_sectional import cross_sectional_rank
 from ..models.predictor import EnsemblePredictor
 from ..models.trainer import ModelTrainer
 from ..regime.detector import RegimeDetector
-from ..risk.covariance import compute_regime_covariance, get_regime_covariance
 from ..risk.portfolio_optimizer import optimize_portfolio
 from .paper_trader import PaperTrader
 from .promotion_gate import PromotionDecision, PromotionGate
@@ -721,6 +728,50 @@ class AutopilotEngine:
             else:
                 cap_util = float(np.inf)
 
+            # ── Statistical tests (IC, FDR, t-test) ──
+            stat_tests_pass = False
+            stat_tests_result = None
+            if len(pred_series.dropna()) >= 50 and len(actual_series.dropna()) >= 50:
+                try:
+                    stat_tests_result = run_statistical_tests(
+                        predictions=pred_series,
+                        actuals=actual_series,
+                        entry_threshold=c.entry_threshold,
+                    )
+                    stat_tests_pass = bool(stat_tests_result.overall_pass)
+                except (ValueError, RuntimeError):
+                    pass
+
+            # ── Combinatorial Purged Cross-Validation (CPCV) ──
+            cpcv_passes = False
+            cpcv_result = None
+            if len(pred_series.dropna()) >= 150:
+                try:
+                    cpcv_result = combinatorial_purged_cv(
+                        predictions=pred_series,
+                        actuals=actual_series,
+                        n_partitions=CPCV_PARTITIONS,
+                        n_test_partitions=CPCV_TEST_PARTITIONS,
+                        purge_gap=c.horizon,
+                    )
+                    cpcv_passes = bool(cpcv_result.is_significant)
+                except (ValueError, RuntimeError):
+                    pass
+
+            # ── Superior Predictive Ability (SPA) bootstrap ──
+            spa_passes = False
+            spa_pvalue = 1.0
+            if result.daily_equity is not None and len(result.daily_equity) > 20:
+                try:
+                    strat_returns = result.daily_equity.pct_change().replace(
+                        [np.inf, -np.inf], np.nan
+                    ).fillna(0.0)
+                    spa_result = superior_predictive_ability(strat_returns)
+                    spa_passes = bool(spa_result.rejects_null)
+                    spa_pvalue = float(spa_result.p_value)
+                except (ValueError, RuntimeError):
+                    pass
+
             contract_metrics = {
                 "dsr_significant": dsr_sig,
                 "dsr_p_value": dsr_p,
@@ -731,7 +782,16 @@ class AutopilotEngine:
                 "wf_positive_fold_fraction": wf_pos_frac,
                 "wf_is_oos_gap": wf_gap,
                 "regime_positive_fraction": regime_positive_fraction,
+                "stat_tests_pass": stat_tests_pass,
+                "cpcv_passes": cpcv_passes,
+                "spa_passes": spa_passes,
+                "spa_pvalue": spa_pvalue,
             }
+            if stat_tests_result is not None:
+                contract_metrics["ic_mean"] = float(stat_tests_result.ic_mean)
+                contract_metrics["ic_ir"] = float(stat_tests_result.ic_ir)
+            if cpcv_result is not None:
+                contract_metrics["cpcv_mean_corr"] = float(cpcv_result.mean_test_corr)
             decisions.append(self.gate.evaluate(c, result, contract_metrics=contract_metrics))
 
         return decisions

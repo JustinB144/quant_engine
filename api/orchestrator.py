@@ -39,7 +39,7 @@ class PipelineOrchestrator:
         progress_callback=None,
     ) -> PipelineState:
         """Load data, compute features, detect regimes."""
-        from quant_engine.config import UNIVERSE_FULL, UNIVERSE_QUICK
+        from quant_engine.config import UNIVERSE_FULL, UNIVERSE_QUICK, WRDS_ENABLED, REQUIRE_PERMNO
         from quant_engine.data.loader import load_survivorship_universe, load_universe
         from quant_engine.features.pipeline import FeaturePipeline
         from quant_engine.regime.detector import RegimeDetector
@@ -57,7 +57,28 @@ class PipelineOrchestrator:
             state.data = load_universe(tickers, years=years, verbose=False)
 
         if not state.data:
-            raise RuntimeError("No data loaded — check data sources")
+            # Build a diagnostic message so the user knows *why* data loading failed
+            diagnostics = []
+            ticker_list = tickers if tickers else ("survivorship universe",)
+            diagnostics.append(f"Attempted tickers: {ticker_list}")
+            diagnostics.append(f"WRDS_ENABLED={WRDS_ENABLED}")
+            diagnostics.append(f"REQUIRE_PERMNO={REQUIRE_PERMNO}")
+            diagnostics.append(f"years={years}")
+
+            # Check if any cached data exists at all
+            from quant_engine.config import DATA_DIR
+            cache_dir = DATA_DIR / "cache"
+            if cache_dir.exists():
+                parquet_count = len(list(cache_dir.glob("*_1d.parquet")))
+                daily_count = len(list(cache_dir.glob("*_daily_*.parquet")))
+                diagnostics.append(f"Cache has {parquet_count} _1d.parquet + {daily_count} _daily_ files")
+            else:
+                diagnostics.append("Cache directory does not exist")
+
+            detail = "; ".join(diagnostics)
+            raise RuntimeError(
+                f"No data loaded — all tickers were rejected or unavailable. {detail}"
+            )
 
         # Step 2: features
         if progress_callback:

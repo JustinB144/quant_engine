@@ -437,13 +437,66 @@ def select_hmm_states_bic(
 
 def build_hmm_observation_matrix(features: pd.DataFrame) -> pd.DataFrame:
     """
-    Build a robust, low-dimensional observation matrix for regime inference.
+    Build an expanded observation matrix for regime inference.
+
+    Core features (4):
+        ret_1d, vol_20d, natr, trend
+    Extended features (7, with graceful fallback):
+        credit_spread_proxy, market_breadth, vix_rank, volume_regime,
+        momentum_20d, mean_reversion, cross_correlation
     """
     obs = pd.DataFrame(index=features.index)
+
+    # ── Core features (always available) ──
     obs["ret_1d"] = features.get("return_1d", pd.Series(0.0, index=features.index)).fillna(0.0)
     obs["vol_20d"] = features.get("return_vol_20d", pd.Series(0.01, index=features.index)).fillna(0.01)
     obs["natr"] = features.get("NATR_14", pd.Series(10.0, index=features.index)).fillna(10.0)
     obs["trend"] = features.get("SMASlope_50", pd.Series(0.0, index=features.index)).fillna(0.0)
+
+    # ── Extended features (graceful fallback if unavailable) ──
+
+    # Credit spread proxy: vol premium (high vol / low vol ratio)
+    if "GARCH_252" in features.columns and "return_vol_20d" in features.columns:
+        garch = features["GARCH_252"].fillna(features["return_vol_20d"].fillna(0.01))
+        short_vol = features["return_vol_20d"].fillna(0.01)
+        obs["credit_spread_proxy"] = (garch / short_vol.clip(lower=1e-6) - 1.0).fillna(0.0)
+
+    # Market breadth proxy: fraction of recent returns that are positive
+    if "return_1d" in features.columns:
+        ret = features["return_1d"].fillna(0.0)
+        obs["market_breadth"] = ret.rolling(20, min_periods=5).apply(
+            lambda x: (x > 0).mean(), raw=True
+        ).fillna(0.5)
+
+    # VIX rank: percentile rank of realized vol over 252 days
+    if "return_vol_20d" in features.columns:
+        vol = features["return_vol_20d"].fillna(features["return_vol_20d"].median())
+        obs["vix_rank"] = vol.rolling(252, min_periods=60).apply(
+            lambda x: float(pd.Series(x).rank(pct=True).iloc[-1]), raw=False
+        ).fillna(0.5)
+
+    # Volume regime: z-score of volume relative to trailing average
+    if "Volume" in features.columns:
+        vol_series = pd.to_numeric(features["Volume"], errors="coerce").fillna(0)
+        vol_mean = vol_series.rolling(60, min_periods=20).mean()
+        vol_std = vol_series.rolling(60, min_periods=20).std()
+        obs["volume_regime"] = ((vol_series - vol_mean) / vol_std.clip(lower=1e-6)).fillna(0.0)
+
+    # Momentum 20d
+    if "return_20d" in features.columns:
+        obs["momentum_20d"] = features["return_20d"].fillna(0.0)
+    elif "Close" in features.columns:
+        close = pd.to_numeric(features["Close"], errors="coerce")
+        obs["momentum_20d"] = close.pct_change(20).fillna(0.0)
+
+    # Mean reversion signal: inverse of Hurst exponent
+    if "Hurst_100" in features.columns:
+        obs["mean_reversion"] = (0.5 - features["Hurst_100"].fillna(0.5))
+
+    # Cross-correlation proxy: lagged return autocorrelation
+    if "AutoCorr_20_1" in features.columns:
+        obs["cross_correlation"] = features["AutoCorr_20_1"].fillna(0.0)
+
     obs = obs.replace([np.inf, -np.inf], np.nan).ffill().bfill().fillna(0.0)
 
     # Standardize columns for numerical stability.

@@ -46,12 +46,15 @@ try:
 except RuntimeError:
     asyncio.set_event_loop(asyncio.new_event_loop())
 
-from quant_engine.config import DATA_CACHE_DIR, UNIVERSE_FULL
+from quant_engine.config import UNIVERSE_FULL
 from quant_engine.data.local_cache import (
     _normalize_ohlcv_columns,
     _write_cache_meta,
     load_ohlcv_with_meta,
 )
+
+# Use the root-level config for correct DATA_CACHE_DIR path
+DATA_CACHE_DIR = _QE_ROOT / "data" / "cache"
 
 REQUIRED_OHLCV = ["Open", "High", "Low", "Close", "Volume"]
 

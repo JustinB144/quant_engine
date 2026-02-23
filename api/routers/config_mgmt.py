@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends
+from fastapi.responses import JSONResponse
 
 from ..cache.invalidation import invalidate_on_config_change
 from ..cache.manager import CacheManager
 from ..config import RuntimeConfig
 from ..deps.providers import get_cache, get_runtime_config
-from ..errors import ConfigValidationError
 from ..schemas.envelope import ApiResponse
 
 router = APIRouter(prefix="/api/config", tags=["config"])
@@ -27,6 +27,7 @@ async def patch_config(
     try:
         new_state = rc.patch(updates)
     except (KeyError, ValueError) as exc:
-        raise ConfigValidationError(str(exc)) from exc
+        resp = ApiResponse.fail(str(exc))
+        return JSONResponse(status_code=422, content=resp.model_dump())
     invalidate_on_config_change(cache)
     return ApiResponse.success(new_state)

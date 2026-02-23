@@ -34,8 +34,6 @@ import numpy as np
 # ── Resolve paths ────────────────────────────────────────────────────────────
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _QE_ROOT = _SCRIPT_DIR.parent
-_FRAMEWORK_DIR = _QE_ROOT.parent
-sys.path.insert(0, str(_FRAMEWORK_DIR))
 sys.path.insert(0, str(_QE_ROOT))
 
 # ib_insync / eventkit requires an event loop on import (Python 3.12+)
@@ -45,8 +43,46 @@ try:
 except RuntimeError:
     asyncio.set_event_loop(asyncio.new_event_loop())
 
-from quant_engine.config import DATA_CACHE_DIR, UNIVERSE_FULL
-from quant_engine.data.local_cache import _normalize_ohlcv_columns, _write_cache_meta
+# Import config directly from project root (avoid nested quant_engine/ ambiguity)
+import importlib.util as _ilu
+
+_cfg_spec = _ilu.spec_from_file_location("_cfg", _QE_ROOT / "config.py")
+_cfg = _ilu.module_from_spec(_cfg_spec)
+_cfg_spec.loader.exec_module(_cfg)
+DATA_CACHE_DIR = _cfg.DATA_CACHE_DIR
+UNIVERSE_FULL = _cfg.UNIVERSE_FULL
+
+_lc_spec = _ilu.spec_from_file_location("_lc", _QE_ROOT / "data" / "local_cache.py",
+                                         submodule_search_locations=[])
+_lc = _ilu.module_from_spec(_lc_spec)
+# Inject config vars that local_cache needs via its module globals
+_lc.DATA_CACHE_DIR = DATA_CACHE_DIR
+_lc.FRAMEWORK_DIR = _cfg.FRAMEWORK_DIR
+try:
+    _lc_spec.loader.exec_module(_lc)
+    _normalize_ohlcv_columns = _lc._normalize_ohlcv_columns
+    _write_cache_meta = _lc._write_cache_meta
+except Exception:
+    # Fallback: define minimal versions inline
+    def _normalize_ohlcv_columns(df):
+        col_map = {"open": "Open", "high": "High", "low": "Low",
+                    "close": "Close", "volume": "Volume", "adj close": "Adj Close"}
+        df.columns = [col_map.get(c.lower().strip(), c) for c in df.columns]
+        return df
+
+    def _write_cache_meta(data_path, ticker, df, source="ibkr", meta=None):
+        import json
+        meta_path = data_path.with_suffix(".meta.json")
+        info = {
+            "ticker": ticker, "source": source,
+            "start": str(df.index.min().date()) if len(df) > 0 else "",
+            "end": str(df.index.max().date()) if len(df) > 0 else "",
+            "n_bars": len(df),
+        }
+        if meta:
+            info.update(meta)
+        with open(meta_path, "w") as f:
+            json.dump(info, f, indent=2)
 
 REQUIRED_OHLCV = ["Open", "High", "Low", "Close", "Volume"]
 

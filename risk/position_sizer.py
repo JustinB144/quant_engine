@@ -6,9 +6,12 @@ Implements multiple sizing approaches that can be blended:
     - Volatility targeting (inverse vol scaling)
     - ATR-based (risk per unit of volatility)
     - Composite blend of all methods
+    - Regime-conditional Kelly (adjusts parameters by market regime)
+    - Drawdown governor (linearly reduces sizing as drawdown increases)
+    - Bayesian updating (Beta-Binomial conjugate prior for win rate)
 """
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -55,6 +58,9 @@ class PositionSizer:
         kelly_fraction: float = 0.5,             # Half-Kelly
         atr_multiplier: float = 2.0,             # ATR stop distance
         blend_weights: Optional[dict] = None,    # Method blend weights
+        max_portfolio_dd: float = 0.20,          # Max allowed portfolio drawdown
+        bayesian_alpha: float = 2.0,             # Beta prior alpha (wins + 1)
+        bayesian_beta: float = 2.0,              # Beta prior beta (losses + 1)
     ):
         """Initialize PositionSizer."""
         self.target_vol = target_portfolio_vol
@@ -67,6 +73,22 @@ class PositionSizer:
             "kelly": 0.3,
             "vol_scaled": 0.4,
             "atr_based": 0.3,
+        }
+        self.max_portfolio_dd = max_portfolio_dd
+
+        # Bayesian win-rate prior (Beta-Binomial conjugate)
+        self.win_rate_prior_alpha = bayesian_alpha
+        self.win_rate_prior_beta = bayesian_beta
+        self._bayesian_wins = 0
+        self._bayesian_losses = 0
+
+        # Regime-conditional historical statistics
+        # Keys: regime label (str), Values: {"win_rate", "avg_win", "avg_loss", "n_trades"}
+        self.regime_stats: Dict[str, Dict[str, float]] = {
+            "trending_bull": {"win_rate": 0.55, "avg_win": 0.03, "avg_loss": -0.02, "n_trades": 0},
+            "trending_bear": {"win_rate": 0.45, "avg_win": 0.02, "avg_loss": -0.025, "n_trades": 0},
+            "mean_reverting": {"win_rate": 0.50, "avg_win": 0.02, "avg_loss": -0.02, "n_trades": 0},
+            "high_volatility": {"win_rate": 0.42, "avg_win": 0.04, "avg_loss": -0.035, "n_trades": 0},
         }
 
     def size_position(
@@ -82,6 +104,8 @@ class PositionSizer:
         confidence: float = 0.5,
         n_current_positions: int = 0,
         max_positions: int = 20,
+        regime: Optional[str] = None,
+        current_drawdown: float = 0.0,
     ) -> PositionSize:
         """
         Calculate position size using multiple methods and blend.
@@ -98,10 +122,24 @@ class PositionSizer:
             confidence: model confidence (0-1)
             n_current_positions: number of existing positions
             max_positions: maximum total positions
+            regime: current market regime label (e.g. "trending_bull")
+            current_drawdown: current portfolio drawdown as negative fraction (e.g. -0.05)
         """
+        # Apply regime-conditional adjustments if regime is known
+        if regime is not None and regime in self.regime_stats:
+            rs = self.regime_stats[regime]
+            if rs["n_trades"] >= 20:
+                # Use regime-specific stats when we have enough data
+                win_rate = rs["win_rate"]
+                avg_win = rs["avg_win"]
+                avg_loss = rs["avg_loss"]
+
         # ── Kelly Criterion ──
         raw_kelly = self._kelly(win_rate, avg_win, avg_loss)
         half_kelly = raw_kelly * self.kelly_frac
+
+        # Apply drawdown governor to Kelly
+        half_kelly = self._apply_drawdown_governor(half_kelly, current_drawdown, self.max_portfolio_dd)
 
         # ── Volatility-scaled ──
         vol_scaled = self._vol_scaled(realized_vol, holding_days, max_positions)
@@ -208,6 +246,70 @@ class PositionSizer:
         size = self.max_risk / risk_per_share_pct
 
         return np.clip(size, self.min_position, self.max_position)
+
+    def _apply_drawdown_governor(
+        self, kelly_fraction: float, current_drawdown: float, max_allowed_dd: float,
+    ) -> float:
+        """Linearly reduce Kelly as drawdown approaches max. Returns 0 if DD exceeds max.
+
+        The governor scales position sizing proportionally to remaining drawdown budget.
+        At zero drawdown, full Kelly is used. At max drawdown, sizing goes to zero.
+        """
+        if current_drawdown >= 0.0:
+            return kelly_fraction  # No drawdown — full sizing
+        dd_abs = abs(current_drawdown)
+        dd_max = abs(max_allowed_dd)
+        if dd_abs >= dd_max:
+            return 0.0  # Breached max drawdown — no new positions
+        # Linear scaling: 1.0 at dd=0, 0.0 at dd=max
+        scale = 1.0 - (dd_abs / dd_max)
+        return kelly_fraction * scale
+
+    def update_regime_stats(self, regime: str, trades: pd.DataFrame):
+        """Update regime-specific historical stats from completed trades.
+
+        Args:
+            regime: regime label (e.g. "trending_bull")
+            trades: DataFrame with 'net_return' column for trades in this regime
+        """
+        if trades.empty or "net_return" not in trades.columns:
+            return
+        returns = trades["net_return"].dropna().values
+        if len(returns) < 5:
+            return
+        wins = returns[returns > 0]
+        losses = returns[returns < 0]
+        self.regime_stats[regime] = {
+            "win_rate": float((returns > 0).mean()),
+            "avg_win": float(wins.mean()) if len(wins) > 0 else 0.01,
+            "avg_loss": float(losses.mean()) if len(losses) > 0 else -0.01,
+            "n_trades": len(returns),
+        }
+
+    def update_kelly_bayesian(self, trades: pd.DataFrame):
+        """Update Bayesian posterior for win rate using Beta-Binomial conjugate prior.
+
+        Uses all trades to update the posterior. The posterior mean is:
+            posterior_win_rate = (alpha + wins) / (alpha + beta + wins + losses)
+        """
+        if trades.empty or "net_return" not in trades.columns:
+            return
+        returns = trades["net_return"].dropna().values
+        self._bayesian_wins = int((returns > 0).sum())
+        self._bayesian_losses = int((returns <= 0).sum())
+
+    def get_bayesian_kelly(self, avg_win: float = 0.02, avg_loss: float = -0.02) -> float:
+        """Compute Kelly fraction using Bayesian posterior mean for win rate.
+
+        The posterior mean of a Beta(alpha + wins, beta + losses) distribution
+        is used instead of the raw empirical win rate, which provides regularization
+        especially with small sample sizes.
+        """
+        alpha = self.win_rate_prior_alpha + self._bayesian_wins
+        beta = self.win_rate_prior_beta + self._bayesian_losses
+        posterior_win_rate = alpha / (alpha + beta)
+        raw_kelly = self._kelly(posterior_win_rate, avg_win, avg_loss)
+        return raw_kelly * self.kelly_frac
 
     def size_portfolio(
         self,

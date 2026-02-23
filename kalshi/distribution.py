@@ -148,9 +148,9 @@ def _resolve_threshold_direction_with_confidence(row: Mapping[str, object]) -> D
     """
     # Check explicit metadata first (highest confidence)
     explicit_dir = str(row.get("direction", "")).lower().strip()
-    if explicit_dir in ("ge", "gte", ">="):
+    if explicit_dir in ("ge", "gte", ">=", "above", "over"):
         return DirectionResult(direction="ge", source="explicit_metadata", confidence="high")
-    if explicit_dir in ("le", "lte", "<="):
+    if explicit_dir in ("le", "lte", "<=", "below", "under"):
         return DirectionResult(direction="le", source="explicit_metadata", confidence="high")
 
     payout = str(row.get("payout_structure", "")).lower().strip()

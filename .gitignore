@@ -43,5 +43,15 @@ htmlcov/
 *.docx
 WRDS_DAILY_REDOWNLOAD_REPORT.md
 
-# Separate nested repo
+# Data cache (large parquet/meta files)
+data/cache/
+*.parquet
+*.meta.json
+
+# SQLite databases
+*.db
+*.db-journal
+
+# Separate nested repos (prevent accidental re-nesting)
 QUANT DEMON/
+quant_engine/

@@ -9,6 +9,25 @@ import pandas as pd
 import pytest
 
 
+def pytest_sessionfinish(session, exitstatus):
+    """Spawn a watchdog that force-exits if the process hangs at shutdown.
+
+    Python 3.14's asyncio event loop cleanup and ThreadPoolExecutor atexit
+    handlers can block indefinitely. This watchdog ensures pytest exits
+    within a few seconds of test completion.
+    """
+    import os
+    import threading
+    import time
+
+    def _watchdog():
+        time.sleep(5)
+        os._exit(exitstatus)
+
+    t = threading.Thread(target=_watchdog, daemon=True)
+    t.start()
+
+
 # ── Data fixtures ────────────────────────────────────────────────────
 
 
@@ -127,22 +146,71 @@ def tmp_data_cache_dir(tmp_path):
 # ── API fixtures ─────────────────────────────────────────────────────
 
 
+class _InMemoryJobStore:
+    """Lightweight in-memory job store for tests (avoids aiosqlite threads)."""
+
+    def __init__(self):
+        self._jobs = {}
+
+    async def initialize(self):
+        pass
+
+    async def close(self):
+        self._jobs.clear()
+
+    async def create_job(self, job_type, params=None):
+        import uuid
+        from api.jobs.models import JobRecord
+        rec = JobRecord(job_id=uuid.uuid4().hex[:12], job_type=job_type, params=params or {})
+        self._jobs[rec.job_id] = rec
+        return rec
+
+    async def get_job(self, job_id):
+        return self._jobs.get(job_id)
+
+    async def list_jobs(self, limit=50):
+        return list(self._jobs.values())[:limit]
+
+    async def update_status(self, job_id, status, **kwargs):
+        rec = self._jobs.get(job_id)
+        if rec:
+            rec.status = status
+
+    async def update_progress(self, job_id, progress, message=""):
+        rec = self._jobs.get(job_id)
+        if rec:
+            rec.progress = progress
+            rec.progress_message = message
+
+    async def cancel_job(self, job_id):
+        from api.jobs.models import JobStatus
+        rec = self._jobs.get(job_id)
+        if rec and rec.status in (JobStatus.queued, JobStatus.running):
+            rec.status = JobStatus.cancelled
+            return True
+        return False
+
+
 @pytest.fixture
 async def app(tmp_path):
     """Create a test FastAPI app with a fresh per-test job store."""
     import api.deps.providers as _prov
     from api.config import ApiSettings
-    from api.jobs.store import JobStore
     from api.jobs.runner import JobRunner
     from api.main import create_app
 
-    db_path = str(tmp_path / "test_jobs.db")
-    settings = ApiSettings(job_db_path=db_path)
+    settings = ApiSettings(job_db_path=str(tmp_path / "test_jobs.db"))
 
-    # Create fresh singletons for this test
-    store = JobStore(db_path)
-    await store.initialize()
+    # Use in-memory store to avoid aiosqlite thread lifecycle issues
+    store = _InMemoryJobStore()
     runner = JobRunner(store)
+
+    # Patch submit to avoid spawning real background threads.
+    # Tests only verify the HTTP response (status=queued), not job execution.
+    async def _noop_submit(job_id, fn, *args, **kwargs):
+        pass
+
+    runner.submit = _noop_submit
 
     # Inject into the provider module
     _prov._job_store = store
@@ -152,9 +220,12 @@ async def app(tmp_path):
     yield application
 
     # Cleanup
-    await store.close()
+    runner._active_tasks.clear()
     _prov._job_store = None
     _prov._job_runner = None
+    _prov._cache = None
+    _prov.get_settings.cache_clear()
+    _prov.get_runtime_config.cache_clear()
 
 
 @pytest.fixture
