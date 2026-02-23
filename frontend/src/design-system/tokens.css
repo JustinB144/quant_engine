@@ -1,0 +1,61 @@
+:root {
+  /* ── Backgrounds ─────────────────────────────────────── */
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #1c2028;
+  --bg-sidebar: #010409;
+  --bg-hover: #1f2937;
+  --bg-active: #1a2332;
+  --bg-input: #0d1117;
+
+  /* ── Borders ─────────────────────────────────────────── */
+  --border: #30363d;
+  --border-light: #21262d;
+  --border-focus: #58a6ff;
+
+  /* ── Text ────────────────────────────────────────────── */
+  --text-primary: #ffffff;
+  --text-secondary: #c9d1d9;
+  --text-tertiary: #8b949e;
+
+  /* ── Accent colors ───────────────────────────────────── */
+  --accent-blue: #58a6ff;
+  --accent-green: #3fb950;
+  --accent-red: #f85149;
+  --accent-amber: #d29922;
+  --accent-purple: #bc8cff;
+  --accent-cyan: #39d2c0;
+  --accent-orange: #f0883e;
+
+  /* ── Regime colors ───────────────────────────────────── */
+  --regime-0: #3fb950; /* Trending Bull */
+  --regime-1: #f85149; /* Trending Bear */
+  --regime-2: #58a6ff; /* Mean Reverting */
+  --regime-3: #d29922; /* High Volatility */
+
+  /* ── Provenance badge ────────────────────────────────── */
+  --provenance-live: #3fb950;
+  --provenance-fallback: #d29922;
+  --provenance-demo: #f85149;
+
+  /* ── Chart color array (matches CHART_COLORS from theme.py) ── */
+  --chart-0: #58a6ff;
+  --chart-1: #3fb950;
+  --chart-2: #f85149;
+  --chart-3: #d29922;
+  --chart-4: #bc8cff;
+  --chart-5: #39d2c0;
+  --chart-6: #f0883e;
+  --chart-7: #79c0ff;
+  --chart-8: #56d364;
+  --chart-9: #ff7b72;
+  --chart-10: #e3b341;
+  --chart-11: #d2a8ff;
+  --chart-12: #76e4cc;
+  --chart-13: #ffa657;
+
+  /* ── Sidebar width ───────────────────────────────────── */
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 0px;
+  --statusbar-height: 32px;
+}
