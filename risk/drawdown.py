@@ -180,7 +180,22 @@ class DrawdownController:
     def _compute_actions(
         self, state: DrawdownState, drawdown: float,
     ) -> tuple:
-        """Determine size multiplier, entry permission, and liquidation flag."""
+        """Determine size multiplier, entry permission, and liquidation flag.
+
+        Recovery ramp uses a **quadratic** (concave) curve instead of linear,
+        so the system is more cautious at the start of recovery — preventing
+        immediate re-drawdown — and gradually returns to full sizing:
+
+            scale = 0.25 + 0.75 * progress²
+
+        At 25% of recovery: scale = 0.297  (linear would give 0.4375)
+        At 50% of recovery: scale = 0.4375 (linear would give 0.625)
+        At 75% of recovery: scale = 0.672  (linear would give 0.8125)
+        At 100% recovery:   scale = 1.0
+
+        New entries are only allowed after 30% of the recovery period has
+        elapsed, adding further caution.
+        """
         if state == DrawdownState.NORMAL:
             return 1.0, True, False
         elif state == DrawdownState.WARNING:
@@ -190,11 +205,16 @@ class DrawdownController:
         elif state == DrawdownState.CRITICAL:
             return 0.0, False, True
         elif state == DrawdownState.RECOVERY:
-            # Gradual re-entry: linearly scale from 0.25 to 1.0
+            # Gradual re-entry: quadratic (concave) ramp from 0.25 to 1.0
             days_recovering = self._total_days - self._recovery_start_day
             progress = min(1.0, days_recovering / max(1, self.recovery_days))
-            size_mult = 0.25 + 0.75 * progress
-            return size_mult, True, False
+
+            # Quadratic: cautious early recovery, faster later
+            size_mult = 0.25 + 0.75 * (progress ** 2)
+
+            # Only allow new entries after 30% of recovery period
+            allow_new = progress >= 0.3
+            return size_mult, allow_new, False
         return 1.0, True, False
 
     def reset(self, equity: float = 1.0):

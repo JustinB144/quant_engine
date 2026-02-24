@@ -1,7 +1,7 @@
 """
-Stress Testing Module --- scenario analysis and historical drawdown replay.
+Stress Testing Module --- scenario analysis, correlation stress, and historical drawdown replay.
 
-Provides two main capabilities:
+Provides four main capabilities:
 
 1. **Scenario analysis** (``run_stress_scenarios``): Applies predefined or
    custom macro-economic shocks to a portfolio and estimates the resulting
@@ -10,6 +10,13 @@ Provides two main capabilities:
 2. **Historical drawdown replay** (``run_historical_drawdown_test``): Identifies
    the worst historical drawdown episodes in the returns history and reports
    the portfolio's realised performance during those periods.
+
+3. **Correlation stress test** (``correlation_stress_test``): Models portfolio
+   risk when all pairwise correlations spike toward 1.0, as happens during
+   crises when diversification fails.
+
+4. **Factor stress test** (``factor_stress_test``): Simulates portfolio impact
+   of specific factor shocks using predefined crisis scenarios.
 
 Default built-in scenarios:
     - ``2008_crisis``:   Market -38%, volatility spike +150%
@@ -361,3 +368,180 @@ def _find_drawdown_episodes(
             unique.append(ep)
 
     return unique
+
+
+# ---------------------------------------------------------------------------
+# Factor-based crisis scenarios
+# ---------------------------------------------------------------------------
+
+CRISIS_SCENARIOS: Dict[str, Dict[str, float]] = {
+    "equity_crash_2008": {
+        "market": -0.40, "size": -0.20, "value": -0.30, "momentum": -0.50,
+    },
+    "covid_march_2020": {
+        "market": -0.35, "volatility": 0.60, "momentum": -0.40,
+    },
+    "rate_shock": {
+        "market": -0.15, "duration": -0.20, "growth": -0.10,
+    },
+    "liquidity_crisis": {
+        "market": -0.20, "size": -0.30, "illiquidity": -0.40,
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Correlation stress test
+# ---------------------------------------------------------------------------
+
+def correlation_stress_test(
+    portfolio_weights: Dict[str, float],
+    covariance: np.ndarray,
+    stress_correlation: float = 0.9,
+    annual_trading_days: int = 252,
+) -> Dict[str, float]:
+    """Simulate portfolio risk if all pairwise correlations spike to a stress level.
+
+    During crises, diversification fails as correlations converge toward 1.0.
+    This function estimates the portfolio volatility increase and resulting
+    tail risk under the stressed correlation regime.
+
+    Parameters
+    ----------
+    portfolio_weights : Dict[str, float]
+        Mapping of asset name to weight.  Need not sum to 1; will be
+        normalised internally.
+    covariance : np.ndarray
+        Current (normal-regime) covariance matrix, shape ``(n, n)``.
+        Must be annualised or match the annualisation factor passed.
+    stress_correlation : float
+        Target pairwise correlation under stress (default 0.9).
+    annual_trading_days : int
+        Trading days per year for annualisation (default 252).
+
+    Returns
+    -------
+    Dict[str, float]
+        ``normal_portfolio_vol``: annualised portfolio vol under normal correlations.
+        ``stress_portfolio_vol``: annualised portfolio vol under stress.
+        ``vol_increase_pct``: percentage increase in vol.
+        ``stress_var_99_daily``: parametric daily 99% VaR under stress.
+        ``max_loss_3sigma``: 3-sigma daily loss estimate under stress.
+        ``diversification_benefit_lost``: fraction of diversification benefit erased.
+    """
+    from scipy.stats import norm as normal_dist
+
+    n = covariance.shape[0]
+    w = np.array(list(portfolio_weights.values()), dtype=float)
+
+    if len(w) != n:
+        raise ValueError(
+            f"Weight vector length ({len(w)}) must match covariance dimension ({n})"
+        )
+
+    # Normalise weights to sum to 1
+    w_sum = np.abs(w).sum()
+    if w_sum > 1e-12:
+        w = w / w_sum
+
+    cov = np.asarray(covariance, dtype=float)
+
+    # Extract per-asset vols from the diagonal
+    vols = np.sqrt(np.maximum(np.diag(cov), 1e-14))
+
+    # Build stress correlation matrix: all off-diagonal = stress_correlation
+    stress_corr = np.full((n, n), stress_correlation)
+    np.fill_diagonal(stress_corr, 1.0)
+
+    # Convert to stress covariance
+    vol_matrix = np.diag(vols)
+    stress_cov = vol_matrix @ stress_corr @ vol_matrix
+
+    # Portfolio vol under both regimes
+    normal_var = float(w @ cov @ w)
+    stress_var = float(w @ stress_cov @ w)
+
+    normal_vol = float(np.sqrt(max(normal_var, 0.0)))
+    stress_vol = float(np.sqrt(max(stress_var, 0.0)))
+
+    # Annualise for reporting
+    ann_factor = np.sqrt(annual_trading_days)
+    normal_vol_ann = normal_vol * ann_factor
+    stress_vol_ann = stress_vol * ann_factor
+
+    vol_increase_pct = (
+        (stress_vol_ann / normal_vol_ann - 1.0) * 100
+        if normal_vol_ann > 1e-12
+        else 0.0
+    )
+
+    # 99% daily parametric VaR under stress
+    z_99 = normal_dist.ppf(0.01)
+    stress_var_99 = float(-z_99 * stress_vol)  # positive = loss magnitude
+
+    # Diversification benefit lost: 1 - (portfolio_vol / weighted_avg_vol)
+    weighted_avg_vol = float(np.abs(w) @ vols)
+    div_benefit_lost = (
+        1.0 - (normal_vol / weighted_avg_vol)
+        if weighted_avg_vol > 1e-12
+        else 0.0
+    )
+
+    return {
+        "normal_portfolio_vol": round(normal_vol_ann, 6),
+        "stress_portfolio_vol": round(stress_vol_ann, 6),
+        "vol_increase_pct": round(vol_increase_pct, 2),
+        "stress_var_99_daily": round(stress_var_99, 6),
+        "max_loss_3sigma": round(stress_var_99 * 3.0, 6),
+        "diversification_benefit_lost": round(div_benefit_lost, 6),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Factor stress test
+# ---------------------------------------------------------------------------
+
+def factor_stress_test(
+    factor_exposures: Dict[str, float],
+    scenarios: Optional[Dict[str, Dict[str, float]]] = None,
+) -> Dict[str, Dict[str, object]]:
+    """Simulate portfolio impact of specific factor shocks.
+
+    For each scenario, the estimated portfolio return is computed as the
+    sum of factor exposure times the corresponding factor shock.
+
+    Parameters
+    ----------
+    factor_exposures : Dict[str, float]
+        Current portfolio factor exposures (e.g., ``{"market": 1.1, "size": -0.2}``).
+    scenarios : Dict[str, Dict[str, float]], optional
+        Factor shocks per scenario.  If ``None``, uses ``CRISIS_SCENARIOS``.
+
+    Returns
+    -------
+    Dict[str, Dict[str, object]]
+        One entry per scenario with keys:
+        - ``portfolio_return``: Estimated portfolio return under the scenario.
+        - ``factor_contributions``: Per-factor return contribution.
+    """
+    if scenarios is None:
+        scenarios = CRISIS_SCENARIOS
+
+    results: Dict[str, Dict[str, object]] = {}
+
+    for scenario_name, factor_shocks in scenarios.items():
+        contributions: Dict[str, float] = {}
+        portfolio_impact = 0.0
+
+        for factor, shock in factor_shocks.items():
+            exposure = factor_exposures.get(factor, 0.0)
+            contrib = exposure * shock
+            contributions[factor] = round(contrib, 6)
+            portfolio_impact += contrib
+
+        results[scenario_name] = {
+            "portfolio_return": round(portfolio_impact, 6),
+            "factor_contributions": contributions,
+        }
+
+    return results

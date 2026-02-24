@@ -1,11 +1,28 @@
 """
 Covariance estimation utilities for portfolio risk controls.
+
+Supports three estimation methods:
+
+- ``ledoit_wolf`` (default): sklearn's data-driven Ledoit-Wolf shrinkage.
+  The optimal shrinkage intensity is determined automatically from the data
+  (no manual shrinkage parameter needed).  Falls back to manual diagonal
+  shrinkage if sklearn is unavailable.
+
+- ``ewma``: Exponentially weighted moving average covariance.  Weights
+  recent observations more heavily via a configurable half-life, making
+  the estimator more responsive to regime changes.
+
+- ``sample``: Plain sample covariance with optional manual diagonal
+  shrinkage for regularisation.
 """
 from dataclasses import dataclass
 from typing import Dict
+import logging
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -14,11 +31,27 @@ class CovarianceEstimate:
     covariance: pd.DataFrame
     n_observations: int
     method: str
+    shrinkage_intensity: float = 0.0
 
 
 class CovarianceEstimator:
     """
     Estimate a robust covariance matrix for asset returns.
+
+    Parameters
+    ----------
+    method : str
+        Estimation method: ``"ledoit_wolf"``, ``"ewma"``, or ``"sample"``.
+    shrinkage : float
+        Manual shrinkage intensity (0-1).  Used as fallback for Ledoit-Wolf
+        if sklearn fails, and as the diagonal shrinkage for ``"sample"``
+        method.  Ignored when Ledoit-Wolf succeeds (data-driven shrinkage
+        is used instead).
+    annualization : float
+        Factor to annualise the covariance (default 252 for daily data).
+    half_life : int
+        Half-life in observations for EWMA covariance (default 60).
+        Only used when ``method="ewma"``.
     """
 
     def __init__(
@@ -26,14 +59,29 @@ class CovarianceEstimator:
         method: str = "ledoit_wolf",
         shrinkage: float = 0.15,
         annualization: float = 252.0,
+        half_life: int = 60,
     ):
         """Initialize CovarianceEstimator."""
         self.method = method
         self.shrinkage = float(np.clip(shrinkage, 0.0, 1.0))
         self.annualization = float(max(1.0, annualization))
+        self.half_life = max(1, int(half_life))
 
     def estimate(self, returns: pd.DataFrame) -> CovarianceEstimate:
-        """estimate."""
+        """Estimate a robust covariance matrix from asset returns.
+
+        Parameters
+        ----------
+        returns : pd.DataFrame
+            Daily (or periodic) asset returns.  Columns are assets, rows are
+            time observations.
+
+        Returns
+        -------
+        CovarianceEstimate
+            Contains the estimated covariance matrix, observation count,
+            method used, and the shrinkage intensity applied.
+        """
         clean = returns.replace([np.inf, -np.inf], np.nan).dropna(how="all")
         if clean.shape[0] < 5 or clean.shape[1] == 0:
             cov = pd.DataFrame(
@@ -53,9 +101,14 @@ class CovarianceEstimator:
                 columns=returns.columns,
             )
             return CovarianceEstimate(covariance=cov, n_observations=int(clean.shape[0]), method="fallback")
-        cov_values = self._estimate_values(clean.values)
+        cov_values, shrinkage_used = self._estimate_values(clean)
         cov = pd.DataFrame(cov_values, index=clean.columns, columns=clean.columns)
-        return CovarianceEstimate(covariance=cov, n_observations=int(clean.shape[0]), method=self.method)
+        return CovarianceEstimate(
+            covariance=cov,
+            n_observations=int(clean.shape[0]),
+            method=self.method,
+            shrinkage_intensity=shrinkage_used,
+        )
 
     def portfolio_volatility(
         self,
@@ -76,17 +129,31 @@ class CovarianceEstimator:
         var = max(var, 0.0)
         return float(np.sqrt(var * self.annualization))
 
-    def _estimate_values(self, values: np.ndarray) -> np.ndarray:
-        """Internal helper for estimate values."""
+    def _estimate_values(self, clean: pd.DataFrame) -> tuple:
+        """Internal helper — estimate covariance values and return shrinkage used.
+
+        Parameters
+        ----------
+        clean : pd.DataFrame
+            Cleaned returns (no NaN/inf, ffill/bfill already applied).
+
+        Returns
+        -------
+        tuple[np.ndarray, float]
+            (covariance_matrix, shrinkage_intensity)
+        """
+        values = clean.values
         if values.ndim != 2:
             raise ValueError("returns array must be 2D")
 
         n_assets = int(values.shape[1])
+        shrinkage_used = 0.0
+
         if n_assets == 1:
             series = values[:, 0].astype(float)
             ddof = 1 if len(series) > 1 else 0
             var = float(np.var(series, ddof=ddof))
-            return np.array([[max(var, 1e-10)]], dtype=float)
+            return np.array([[max(var, 1e-10)]], dtype=float), 0.0
 
         if self.method == "ledoit_wolf":
             try:
@@ -95,10 +162,25 @@ class CovarianceEstimator:
                 lw = LedoitWolf()
                 lw.fit(values)
                 cov = lw.covariance_
+                shrinkage_used = float(lw.shrinkage_)
+                logger.debug("Ledoit-Wolf data-driven shrinkage: %.4f", shrinkage_used)
             except (ImportError, ValueError, RuntimeError):
+                # Fallback: manual diagonal shrinkage on sample covariance
+                logger.warning("Ledoit-Wolf failed, falling back to manual shrinkage=%.2f", self.shrinkage)
                 cov = np.cov(values, rowvar=False)
+                shrinkage_used = self.shrinkage
+                diag = np.diag(np.diag(cov))
+                cov = (1.0 - shrinkage_used) * cov + shrinkage_used * diag
+
+        elif self.method == "ewma":
+            cov, shrinkage_used = self._estimate_ewma(clean)
+
         else:
+            # Sample covariance with manual diagonal shrinkage
             cov = np.cov(values, rowvar=False)
+            shrinkage_used = self.shrinkage
+            diag = np.diag(np.diag(cov))
+            cov = (1.0 - shrinkage_used) * cov + shrinkage_used * diag
 
         cov = np.asarray(cov, dtype=float)
         if cov.ndim == 0:
@@ -106,15 +188,39 @@ class CovarianceEstimator:
         elif cov.ndim == 1:
             cov = np.diag(cov)
 
-        # Additional diagonal shrinkage for numerical stability.
-        diag = np.diag(np.diag(cov))
-        cov = (1.0 - self.shrinkage) * cov + self.shrinkage * diag
-
         # Enforce PSD with small eigenvalue flooring.
         eigvals, eigvecs = np.linalg.eigh(cov)
         eigvals = np.maximum(eigvals, 1e-10)
         cov_psd = (eigvecs * eigvals) @ eigvecs.T
-        return cov_psd
+        return cov_psd, shrinkage_used
+
+    def _estimate_ewma(self, clean: pd.DataFrame) -> tuple:
+        """Exponentially weighted covariance estimation.
+
+        Uses pandas EWM to weight recent observations more heavily.
+        During regime changes the EWMA estimator reacts faster than
+        equal-weighted sample covariance.
+
+        Parameters
+        ----------
+        clean : pd.DataFrame
+            Cleaned returns DataFrame.
+
+        Returns
+        -------
+        tuple[np.ndarray, float]
+            (covariance_matrix, 0.0) — EWMA has no shrinkage intensity.
+        """
+        n_obs, n_assets = clean.shape
+
+        # pandas ewm().cov() returns a MultiIndex DataFrame (date x asset, asset).
+        # We extract the final cross-section (last date's covariance block).
+        ewma_cov = clean.ewm(halflife=self.half_life).cov()
+        last_date = clean.index[-1]
+        cov = ewma_cov.loc[last_date].values.astype(float)
+
+        logger.debug("EWMA covariance with half_life=%d on %d observations", self.half_life, n_obs)
+        return cov, 0.0
 
 
 # ---------------------------------------------------------------------------

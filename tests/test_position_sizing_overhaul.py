@@ -369,15 +369,25 @@ class TestDrawdownControllerIntegration:
         assert isinstance(pt._dd_controller, DrawdownController)
 
     def test_recovery_allows_gradual_reentry(self):
-        """After crisis subsides, recovery state allows entries with reduced sizing."""
+        """After crisis subsides, recovery uses concave ramp with cautious early entry.
+
+        Spec 016 T7: New entries are blocked until 30% of recovery period
+        elapses, then gradually re-enabled with quadratic size ramp.
+        """
         dc = DrawdownController(recovery_days=5)
         # Enter caution
         dc.update(-0.05)
         # Recover
         status = dc.update(0.03)
         if status.state == DrawdownState.RECOVERY:
-            assert status.allow_new_entries is True
+            # Early recovery: entries blocked (progress < 0.3)
+            assert status.allow_new_entries is False
             assert status.size_multiplier < 1.0
+            # After 30%+ of recovery_days (2+ of 5), entries should be allowed
+            for _ in range(2):
+                status = dc.update(0.001)
+            if status.state == DrawdownState.RECOVERY:
+                assert status.allow_new_entries is True
 
 
 # ---------------------------------------------------------------------------

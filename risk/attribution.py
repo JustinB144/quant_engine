@@ -175,6 +175,108 @@ def decompose_returns(
     }
 
 
+def compute_rolling_attribution(
+    portfolio_returns: pd.Series,
+    benchmark_returns: pd.Series,
+    factor_returns: Optional[pd.DataFrame] = None,
+    window: int = 60,
+) -> pd.DataFrame:
+    """Decompose portfolio returns on a rolling basis with time-varying exposures.
+
+    For each date (after an initial warm-up of *window* observations), a
+    trailing OLS regression decomposes the current-period portfolio return
+    into:
+
+    - **market_return**: beta * benchmark_return (systematic exposure)
+    - **factor_return**: sum of factor loadings * factor returns
+    - **alpha_return**: residual (skill component)
+
+    Using a rolling window allows exposures (beta, factor loadings) to
+    evolve over time, capturing regime changes and style drift.
+
+    Parameters
+    ----------
+    portfolio_returns : pd.Series
+        Daily portfolio returns.
+    benchmark_returns : pd.Series
+        Daily benchmark returns.
+    factor_returns : pd.DataFrame, optional
+        Daily returns for each factor (columns = factor names).
+    window : int
+        Rolling regression window size (default 60 trading days).
+
+    Returns
+    -------
+    pd.DataFrame
+        Indexed by date with columns: ``total_return``, ``market_return``,
+        ``factor_return``, ``alpha_return``, ``beta``.
+    """
+    common = portfolio_returns.index.intersection(benchmark_returns.index)
+    if factor_returns is not None:
+        common = common.intersection(factor_returns.index)
+
+    if len(common) < window + 1:
+        return pd.DataFrame(
+            columns=["total_return", "market_return", "factor_return", "alpha_return", "beta"]
+        )
+
+    port = portfolio_returns.loc[common]
+    bench = benchmark_returns.loc[common]
+    factors = factor_returns.loc[common] if factor_returns is not None else None
+
+    results = []
+
+    for end_idx in range(window, len(common)):
+        start_idx = end_idx - window
+
+        # Training window
+        y_train = port.iloc[start_idx:end_idx].values.astype(float)
+        x_bench_train = bench.iloc[start_idx:end_idx].values.astype(float)
+
+        if factors is not None:
+            X_train = np.column_stack([
+                np.ones(window),
+                x_bench_train,
+                factors.iloc[start_idx:end_idx].values.astype(float),
+            ])
+        else:
+            X_train = np.column_stack([np.ones(window), x_bench_train])
+
+        # OLS regression: y = alpha + beta*benchmark + factor_loadings*factors
+        try:
+            coeffs = np.linalg.lstsq(X_train, y_train, rcond=None)[0]
+        except np.linalg.LinAlgError:
+            coeffs = np.zeros(X_train.shape[1])
+
+        # Decompose current-period return
+        current_return = float(port.iloc[end_idx])
+        beta = float(coeffs[1])
+        market_component = beta * float(bench.iloc[end_idx])
+
+        factor_component = 0.0
+        if factors is not None and len(coeffs) > 2:
+            for i, col in enumerate(factors.columns):
+                factor_component += float(coeffs[i + 2]) * float(factors[col].iloc[end_idx])
+
+        alpha_component = current_return - market_component - factor_component
+
+        results.append({
+            "date": common[end_idx],
+            "total_return": current_return,
+            "market_return": market_component,
+            "factor_return": factor_component,
+            "alpha_return": alpha_component,
+            "beta": beta,
+        })
+
+    if not results:
+        return pd.DataFrame(
+            columns=["total_return", "market_return", "factor_return", "alpha_return", "beta"]
+        )
+
+    return pd.DataFrame(results).set_index("date")
+
+
 def compute_attribution_report(
     portfolio_returns: pd.Series,
     benchmark_returns: pd.Series,

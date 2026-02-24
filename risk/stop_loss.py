@@ -22,7 +22,7 @@ import pandas as pd
 
 from ..config import REGIME_STOP_MULTIPLIER
 from ..config import (HARD_STOP_PCT, ATR_STOP_MULTIPLIER, TRAILING_ATR_MULTIPLIER,
-    TRAILING_ACTIVATION_PCT, MAX_HOLDING_DAYS)
+    TRAILING_ACTIVATION_PCT, MAX_HOLDING_DAYS, STOP_LOSS_SPREAD_BUFFER_BPS)
 
 
 class StopReason(Enum):
@@ -74,6 +74,7 @@ class StopLossManager:
         max_holding_days: int = MAX_HOLDING_DAYS,             # Time stop
         regime_change_exit: bool = True,        # Exit on regime change
         profit_target_pct: Optional[float] = None,  # Optional profit target
+        spread_buffer_bps: float = STOP_LOSS_SPREAD_BUFFER_BPS,  # Bid-ask spread buffer
     ):
         """Initialize StopLossManager."""
         self.hard_stop = hard_stop_pct
@@ -83,6 +84,26 @@ class StopLossManager:
         self.max_days = max_holding_days
         self.regime_exit = regime_change_exit
         self.profit_target = profit_target_pct
+        self.spread_buffer_bps = max(0.0, float(spread_buffer_bps))
+
+    def _spread_buffer(self, reference_price: float) -> float:
+        """Compute the spread buffer in price terms.
+
+        The buffer equals half the bid-ask spread (stop orders fill at the
+        bid, not at mid).  Adjusting stop prices downward by this amount
+        prevents false triggers caused by temporary spread widening.
+
+        Parameters
+        ----------
+        reference_price : float
+            Price used to convert basis points to dollar amount.
+
+        Returns
+        -------
+        float
+            Spread buffer in the same currency as *reference_price*.
+        """
+        return reference_price * (self.spread_buffer_bps / 10_000.0) * 0.5
 
     def evaluate(
         self,
@@ -96,6 +117,11 @@ class StopLossManager:
     ) -> StopResult:
         """
         Evaluate all stop conditions for an open position.
+
+        All price-based stop levels are adjusted downward by a bid-ask spread
+        buffer (``spread_buffer_bps``) to avoid false triggers on spread-
+        widening events.  The buffer represents half the expected spread
+        because stop orders fill at the bid, not the mid-price.
 
         Args:
             entry_price: original entry price
@@ -111,6 +137,9 @@ class StopLossManager:
         """
         unrealized = (current_price - entry_price) / entry_price
 
+        # Spread buffer: half the expected spread (stop fills at bid)
+        spread_buf = self._spread_buffer(entry_price)
+
         # ── Regime-conditional ATR scaling ──
         # Look up the stop multiplier for the current regime.  A multiplier
         # >1 widens ATR-based stops (high-vol / mean-revert), <1 tightens
@@ -119,20 +148,24 @@ class StopLossManager:
         effective_atr_mult = self.atr_mult * regime_mult
         effective_trail_mult = self.trail_mult * regime_mult
 
-        # ── 1. Hard stop ──
+        # ── 1. Hard stop (spread-adjusted) ──
+        hard_stop_price = entry_price * (1 + self.hard_stop) - spread_buf
         if unrealized <= self.hard_stop:
             return StopResult(
                 should_exit=True,
                 reason=StopReason.HARD_STOP,
-                stop_price=entry_price * (1 + self.hard_stop),
+                stop_price=hard_stop_price,
                 trailing_high=highest_price,
                 unrealized_pnl=unrealized,
                 bars_held=bars_held,
-                details={"hard_stop_level": self.hard_stop},
+                details={
+                    "hard_stop_level": self.hard_stop,
+                    "spread_buffer": spread_buf,
+                },
             )
 
-        # ── 2. ATR stop (regime-adjusted) ──
-        atr_stop_price = entry_price - effective_atr_mult * atr
+        # ── 2. ATR stop (regime-adjusted, spread-adjusted) ──
+        atr_stop_price = entry_price - effective_atr_mult * atr - spread_buf
         if current_price <= atr_stop_price:
             return StopResult(
                 should_exit=True,
@@ -145,13 +178,14 @@ class StopLossManager:
                     "atr": atr,
                     "atr_multiplier": effective_atr_mult,
                     "regime_stop_multiplier": regime_mult,
+                    "spread_buffer": spread_buf,
                 },
             )
 
-        # ── 3. Trailing stop (regime-adjusted, only active after minimum gain) ──
+        # ── 3. Trailing stop (regime-adjusted, spread-adjusted, only active after minimum gain) ──
         trailing_stop_price = 0.0
         if unrealized >= self.trail_activation:
-            trailing_stop_price = highest_price - effective_trail_mult * atr
+            trailing_stop_price = highest_price - effective_trail_mult * atr - spread_buf
             if current_price <= trailing_stop_price:
                 return StopResult(
                     should_exit=True,
@@ -165,6 +199,7 @@ class StopLossManager:
                         "atr": atr,
                         "trail_multiplier": effective_trail_mult,
                         "regime_stop_multiplier": regime_mult,
+                        "spread_buffer": spread_buf,
                     },
                 )
 
@@ -217,7 +252,7 @@ class StopLossManager:
             trailing_high=highest_price,
             unrealized_pnl=unrealized,
             bars_held=bars_held,
-            details={},
+            details={"spread_buffer": spread_buf},
         )
 
     def compute_initial_stop(
@@ -226,16 +261,19 @@ class StopLossManager:
         """
         Compute the initial stop-loss price for a new position.
 
-        Returns the tighter of regime-adjusted ATR stop and hard stop.
+        Returns the tighter of regime-adjusted ATR stop and hard stop,
+        both adjusted downward by the bid-ask spread buffer to prevent
+        false triggers on spread-widening events.
 
         Args:
             entry_price: position entry price
             atr: current Average True Range
             regime: current market regime (used to look up REGIME_STOP_MULTIPLIER)
         """
+        spread_buf = self._spread_buffer(entry_price)
         regime_mult = REGIME_STOP_MULTIPLIER.get(regime, 1.0)
-        atr_stop = entry_price - self.atr_mult * regime_mult * atr
-        hard_stop = entry_price * (1 + self.hard_stop)
+        atr_stop = entry_price - self.atr_mult * regime_mult * atr - spread_buf
+        hard_stop = entry_price * (1 + self.hard_stop) - spread_buf
         return max(atr_stop, hard_stop)  # tighter = higher price = less risk
 
     def compute_risk_per_share(

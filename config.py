@@ -346,7 +346,11 @@ DRAWDOWN_RECOVERY_DAYS = 10                       # STATUS: ACTIVE — risk/stop
 DRAWDOWN_SIZE_MULT_WARNING = 0.50                 # STATUS: ACTIVE — risk/stop_loss.py; size multiplier during WARNING tier
 DRAWDOWN_SIZE_MULT_CAUTION = 0.25                 # STATUS: ACTIVE — risk/stop_loss.py; size multiplier during CAUTION tier
 
+# ── Covariance ────────────────────────────────────────────────────
+COVARIANCE_HALF_LIFE = 60                         # STATUS: ACTIVE — risk/covariance.py; EWMA half-life in trading days (60 ≈ 3 months)
+
 # ── Stop Loss ───────────────────────────────────────────────────────
+STOP_LOSS_SPREAD_BUFFER_BPS = 3.0                 # STATUS: ACTIVE — risk/stop_loss.py; bid-ask spread buffer for stop prices (bps)
 HARD_STOP_PCT = -0.08                             # STATUS: ACTIVE — risk/stop_loss.py; -8% hard stop loss
 ATR_STOP_MULTIPLIER = 2.0                         # STATUS: ACTIVE — risk/stop_loss.py; initial stop at 2x ATR
 TRAILING_ATR_MULTIPLIER = 1.5                     # STATUS: ACTIVE — risk/stop_loss.py; trailing stop at 1.5x ATR
