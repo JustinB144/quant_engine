@@ -6,19 +6,68 @@ Expanded health service with 15 runtime monitoring checks across 5 domains:
     - Risk Management (20%)
     - Execution Quality (15%)
     - Model Governance (15%)
+
+Each check returns a ``HealthCheckResult`` dataclass with score, status,
+methodology, and raw metrics.  UNAVAILABLE checks (missing data) score 0
+and are excluded from domain averages so they don't inflate results.
 """
 from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
+from scipy import stats as sp_stats
 
 logger = logging.getLogger(__name__)
+
+
+# ── HealthCheckResult dataclass ─────────────────────────────────────────
+
+@dataclass
+class HealthCheckResult:
+    """Structured result from a single health check."""
+
+    name: str
+    domain: str
+    score: float  # 0–100
+    status: str  # PASS, WARN, FAIL, UNAVAILABLE
+    explanation: str = ""
+    methodology: str = ""
+    data_available: bool = True
+    raw_metrics: Dict[str, Any] = field(default_factory=dict)
+    thresholds: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "domain": self.domain,
+            "score": self.score,
+            "status": self.status,
+            "explanation": self.explanation,
+            "methodology": self.methodology,
+            "data_available": self.data_available,
+            "raw_metrics": self.raw_metrics,
+            "thresholds": self.thresholds,
+        }
+
+
+def _unavailable(name: str, domain: str, reason: str) -> HealthCheckResult:
+    """Return a standard UNAVAILABLE result (score=0, excluded from averages)."""
+    return HealthCheckResult(
+        name=name,
+        domain=domain,
+        score=0.0,
+        status="UNAVAILABLE",
+        explanation=reason,
+        methodology="N/A — data not available",
+        data_available=False,
+    )
 
 
 class HealthService:
@@ -68,7 +117,6 @@ class HealthService:
         from api.services.data_helpers import collect_health_data
 
         payload = collect_health_data()
-        # Convert dataclass to dict, handling nested dataclasses
         result: Dict[str, Any] = {
             "overall_score": payload.overall_score,
             "overall_status": payload.overall_status,
@@ -79,7 +127,6 @@ class HealthService:
             "execution_score": payload.execution_score,
             "complexity_score": payload.complexity_score,
         }
-        # Convert HealthCheck lists to dicts
         for section in [
             "survivorship_checks", "data_quality_checks", "promotion_checks",
             "wf_checks", "execution_checks", "complexity_checks", "strengths",
@@ -98,57 +145,117 @@ class HealthService:
         result["runtime_health"] = self.compute_comprehensive_health()
         return result
 
+    # ── Domain Scoring ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _domain_score(checks: List[HealthCheckResult]) -> float:
+        """Compute mean score for a domain, excluding UNAVAILABLE checks."""
+        scores = [c.score for c in checks if c.status != "UNAVAILABLE"]
+        return float(np.mean(scores)) if scores else 0.0
+
+    @staticmethod
+    def _domain_status(checks: List[HealthCheckResult]) -> str:
+        """Determine domain-level status."""
+        total = len(checks)
+        unavailable = sum(1 for c in checks if c.status == "UNAVAILABLE")
+        if total > 0 and unavailable / total > 0.5:
+            return "UNAVAILABLE"
+        available = [c for c in checks if c.status != "UNAVAILABLE"]
+        if not available:
+            return "UNAVAILABLE"
+        avg = float(np.mean([c.score for c in available]))
+        if avg >= 75:
+            return "PASS"
+        if avg >= 50:
+            return "WARN"
+        return "FAIL"
+
+    # ── Comprehensive Health ────────────────────────────────────────────
+
     def compute_comprehensive_health(self) -> Dict[str, Any]:
         """Compute comprehensive health score across 5 weighted domains.
 
         Domain weights:
-            - Data Integrity (25%): freshness + survivorship + anomalies
-            - Signal Quality (25%): IC + decay + prediction distribution + ensemble
-            - Risk Management (20%): drawdown + correlations + tail risk + Kelly + capital
-            - Execution Quality (15%): slippage + microstructure + IR
-            - Model Governance (15%): feature drift + retraining + CV gap + regime
+            - Data Integrity (25%): survivorship + anomalies + microstructure
+            - Signal Quality (25%): IC decay + prediction distribution + ensemble
+            - Risk Management (20%): tail risk + correlations + capital utilization
+            - Execution Quality (15%): execution quality + signal profitability
+            - Model Governance (15%): feature drift + CV gap + regime + retraining
         """
         domains: Dict[str, Dict[str, Any]] = {}
 
+        checks_total = 0
+        checks_available = 0
+
         # ── Data Integrity (25%) ──
-        data_checks = []
-        data_checks.append(self._check_data_quality_anomalies())
-        data_checks.append(self._check_survivorship_bias())
+        data_checks = [
+            self._check_survivorship_bias(),
+            self._check_data_quality_anomalies(),
+            self._check_market_microstructure(),
+        ]
         data_score = self._domain_score(data_checks)
-        domains["data_integrity"] = {"weight": 0.25, "score": data_score, "checks": data_checks}
+        data_status = self._domain_status(data_checks)
+        domains["data_integrity"] = {
+            "weight": 0.25, "score": data_score, "status": data_status,
+            "checks": [c.to_dict() for c in data_checks],
+        }
 
         # ── Signal Quality (25%) ──
-        signal_checks = []
-        signal_checks.append(self._check_signal_decay())
-        signal_checks.append(self._check_prediction_distribution())
-        signal_checks.append(self._check_ensemble_disagreement())
+        signal_checks = [
+            self._check_signal_decay(),
+            self._check_prediction_distribution(),
+            self._check_ensemble_disagreement(),
+        ]
         signal_score = self._domain_score(signal_checks)
-        domains["signal_quality"] = {"weight": 0.25, "score": signal_score, "checks": signal_checks}
+        signal_status = self._domain_status(signal_checks)
+        domains["signal_quality"] = {
+            "weight": 0.25, "score": signal_score, "status": signal_status,
+            "checks": [c.to_dict() for c in signal_checks],
+        }
 
         # ── Risk Management (20%) ──
-        risk_checks = []
-        risk_checks.append(self._check_tail_risk())
-        risk_checks.append(self._check_correlation_regime())
-        risk_checks.append(self._check_capital_utilization())
+        risk_checks = [
+            self._check_tail_risk(),
+            self._check_correlation_regime(),
+            self._check_capital_utilization(),
+        ]
         risk_score = self._domain_score(risk_checks)
-        domains["risk_management"] = {"weight": 0.20, "score": risk_score, "checks": risk_checks}
+        risk_status = self._domain_status(risk_checks)
+        domains["risk_management"] = {
+            "weight": 0.20, "score": risk_score, "status": risk_status,
+            "checks": [c.to_dict() for c in risk_checks],
+        }
 
         # ── Execution Quality (15%) ──
-        exec_checks = []
-        exec_checks.append(self._check_execution_quality())
-        exec_checks.append(self._check_information_ratio())
-        exec_checks.append(self._check_market_microstructure())
+        exec_checks = [
+            self._check_execution_quality(),
+            self._check_signal_profitability(),
+        ]
         exec_score = self._domain_score(exec_checks)
-        domains["execution_quality"] = {"weight": 0.15, "score": exec_score, "checks": exec_checks}
+        exec_status = self._domain_status(exec_checks)
+        domains["execution_quality"] = {
+            "weight": 0.15, "score": exec_score, "status": exec_status,
+            "checks": [c.to_dict() for c in exec_checks],
+        }
 
         # ── Model Governance (15%) ──
-        gov_checks = []
-        gov_checks.append(self._check_feature_importance_drift())
-        gov_checks.append(self._check_cv_gap_trend())
-        gov_checks.append(self._check_regime_transition_health())
-        gov_checks.append(self._check_retraining_effectiveness())
+        gov_checks = [
+            self._check_feature_importance_drift(),
+            self._check_cv_gap_trend(),
+            self._check_regime_transition_health(),
+            self._check_retraining_effectiveness(),
+        ]
         gov_score = self._domain_score(gov_checks)
-        domains["model_governance"] = {"weight": 0.15, "score": gov_score, "checks": gov_checks}
+        gov_status = self._domain_status(gov_checks)
+        domains["model_governance"] = {
+            "weight": 0.15, "score": gov_score, "status": gov_status,
+            "checks": [c.to_dict() for c in gov_checks],
+        }
+
+        # Count available/total
+        all_checks = data_checks + signal_checks + risk_checks + exec_checks + gov_checks
+        checks_total = len(all_checks)
+        checks_available = sum(1 for c in all_checks if c.status != "UNAVAILABLE")
 
         # Weighted overall
         overall = sum(d["weight"] * d["score"] for d in domains.values())
@@ -156,531 +263,1105 @@ class HealthService:
         return {
             "overall_score": round(overall, 1),
             "overall_status": "PASS" if overall >= 75 else "WARN" if overall >= 50 else "FAIL",
+            "checks_available": checks_available,
+            "checks_total": checks_total,
             "domains": {k: {"score": round(v["score"], 1), "weight": v["weight"],
+                            "status": v["status"],
                             "checks": v["checks"]} for k, v in domains.items()},
         }
 
+    # ── Helper: load backtest trades CSV ────────────────────────────────
+
     @staticmethod
-    def _domain_score(checks: List[Dict[str, Any]]) -> float:
-        """Compute mean score for a domain from its check results."""
-        scores = [c.get("score", 0.0) for c in checks if isinstance(c.get("score"), (int, float))]
-        return float(np.mean(scores)) if scores else 0.0
-
-    # ── Individual Check Methods ────────────────────────────────────────
-
-    def _check_signal_decay(self) -> Dict[str, Any]:
-        """Check for autocorrelation of prediction errors (signal decay)."""
+    def _load_trades_csv() -> Optional[pd.DataFrame]:
+        """Load backtest_10d_trades.csv, return None if unavailable."""
         try:
             from quant_engine.config import RESULTS_DIR
-            trades_path = RESULTS_DIR / "autopilot" / "paper_state.json"
-            if not trades_path.exists():
-                return {"name": "signal_decay", "status": "unavailable", "score": 50.0,
-                        "reason": "No paper trading state available"}
-            with open(trades_path, "r") as f:
-                state = json.load(f)
-            trades = state.get("trade_history", [])
-            if len(trades) < 20:
-                return {"name": "signal_decay", "status": "insufficient_data", "score": 50.0,
-                        "reason": f"Only {len(trades)} trades — need 20+"}
-            # Check if recent prediction errors are autocorrelated
-            errors = [t.get("predicted_return", 0) - t.get("actual_return", 0)
-                      for t in trades[-100:] if "predicted_return" in t and "actual_return" in t]
-            if len(errors) < 10:
-                return {"name": "signal_decay", "status": "insufficient_data", "score": 50.0,
-                        "reason": "Not enough matched prediction/actual pairs"}
-            errors = np.array(errors, dtype=float)
-            # Lag-1 autocorrelation of errors
-            if len(errors) > 2 and np.std(errors) > 1e-10:
-                autocorr = float(np.corrcoef(errors[:-1], errors[1:])[0, 1])
+            path = Path(RESULTS_DIR) / "backtest_10d_trades.csv"
+            if not path.exists():
+                return None
+            df = pd.read_csv(path)
+            if df.empty:
+                return None
+            return df
+        except Exception:
+            return None
+
+    # ── Signal Quality Checks ───────────────────────────────────────────
+
+    def _check_signal_decay(self) -> HealthCheckResult:
+        """Check rolling IC trend — is signal strength declining over time?
+
+        Computes Spearman rank correlation between predicted_return and
+        actual_return in rolling windows, then checks if IC_recent / IC_initial
+        ratio indicates decay.
+        """
+        domain = "signal_quality"
+        name = "signal_decay"
+        methodology = (
+            "Rolling IC (Spearman) between predicted and actual returns "
+            "in windows of 200 trades.  Ratio of recent IC to initial IC "
+            "detects signal decay."
+        )
+        thresholds = {"ratio_pass": 0.8, "ratio_warn": 0.5}
+        try:
+            df = self._load_trades_csv()
+            if df is None:
+                return _unavailable(name, domain, "No backtest trades CSV")
+            if "predicted_return" not in df.columns or "actual_return" not in df.columns:
+                return _unavailable(name, domain, "Trades CSV missing predicted/actual columns")
+            df = df.dropna(subset=["predicted_return", "actual_return"])
+            if len(df) < 100:
+                return _unavailable(name, domain, f"Only {len(df)} trades with predictions — need 100+")
+
+            # Compute rolling IC in windows
+            window = min(200, len(df) // 3)
+            if window < 30:
+                window = 30
+            ics = []
+            for start in range(0, len(df) - window + 1, window // 2):
+                chunk = df.iloc[start:start + window]
+                if len(chunk) >= 20:
+                    corr, _ = sp_stats.spearmanr(chunk["predicted_return"], chunk["actual_return"])
+                    if not np.isnan(corr):
+                        ics.append(corr)
+
+            if len(ics) < 2:
+                return _unavailable(name, domain, "Not enough windows for IC trend")
+
+            ic_initial = float(np.mean(ics[:max(1, len(ics) // 3)]))
+            ic_recent = float(np.mean(ics[-max(1, len(ics) // 3):]))
+            overall_ic = float(np.mean(ics))
+
+            # Avoid division by zero — use absolute comparison when initial IC near zero
+            if abs(ic_initial) < 1e-6:
+                ratio = 1.0 if abs(ic_recent) < 1e-6 else 0.0
             else:
-                autocorr = 0.0
-            # Low autocorrelation is good (errors are random, not persistent)
-            if abs(autocorr) < 0.15:
-                return {"name": "signal_decay", "status": "PASS", "score": 85.0,
-                        "reason": f"Error autocorrelation: {autocorr:.3f} (low)"}
-            elif abs(autocorr) < 0.30:
-                return {"name": "signal_decay", "status": "WARN", "score": 55.0,
-                        "reason": f"Error autocorrelation: {autocorr:.3f} (moderate — possible decay)"}
-            return {"name": "signal_decay", "status": "FAIL", "score": 25.0,
-                    "reason": f"Error autocorrelation: {autocorr:.3f} (high — signal may be stale)"}
-        except (OSError, json.JSONDecodeError, ValueError, ImportError) as e:
-            logger.warning("Health check 'signal_decay' failed: %s", e)
-            return {"name": "signal_decay", "status": "error", "score": 50.0,
-                    "reason": f"Could not assess signal decay: {e}"}
+                ratio = ic_recent / ic_initial
 
-    def _check_feature_importance_drift(self) -> Dict[str, Any]:
-        """Check if feature importance rankings are drifting across retrains."""
-        try:
-            from quant_engine.models.feature_stability import FeatureStabilityTracker
-            tracker = FeatureStabilityTracker()
-            report = tracker.check_stability()
-            if report.n_cycles < 2:
-                return {"name": "feature_drift", "status": "insufficient_data", "score": 50.0,
-                        "reason": f"Only {report.n_cycles} training cycles recorded"}
-            spearman = report.spearman_vs_previous
-            if spearman is None:
-                return {"name": "feature_drift", "status": "unavailable", "score": 50.0,
-                        "reason": "No comparison available"}
-            if spearman > 0.70:
-                return {"name": "feature_drift", "status": "PASS", "score": 90.0,
-                        "reason": f"Feature rank correlation: {spearman:.3f} (stable)"}
-            elif spearman > 0.40:
-                return {"name": "feature_drift", "status": "WARN", "score": 55.0,
-                        "reason": f"Feature rank correlation: {spearman:.3f} (moderate drift)"}
-            return {"name": "feature_drift", "status": "FAIL", "score": 20.0,
-                    "reason": f"Feature rank correlation: {spearman:.3f} (severe drift — retrain advised)"}
-        except (OSError, ValueError, ImportError) as e:
-            logger.warning("Health check 'feature_drift' failed: %s", e)
-            return {"name": "feature_drift", "status": "error", "score": 50.0,
-                    "reason": f"Could not assess feature stability: {e}"}
+            raw = {"ic_initial": round(ic_initial, 4), "ic_recent": round(ic_recent, 4),
+                   "ratio": round(ratio, 4), "overall_ic": round(overall_ic, 4),
+                   "n_windows": len(ics)}
 
-    def _check_regime_transition_health(self) -> Dict[str, Any]:
-        """Validate HMM transition matrix for degenerate rows."""
-        try:
-            from quant_engine.config import DATA_CACHE_DIR
-            from api.services.data_helpers import compute_regime_payload
-            regime = compute_regime_payload(Path(DATA_CACHE_DIR))
-            trans = regime.get("transition", None)
-            if trans is None:
-                return {"name": "regime_transitions", "status": "unavailable", "score": 50.0,
-                        "reason": "No transition matrix available"}
-            trans = np.asarray(trans, dtype=float)
-            # Check for degenerate rows (absorbing states)
-            diag = np.diag(trans)
-            max_diag = float(diag.max())
-            if max_diag > 0.98:
-                return {"name": "regime_transitions", "status": "FAIL", "score": 25.0,
-                        "reason": f"Near-absorbing state detected (max diagonal: {max_diag:.3f})"}
-            if max_diag > 0.95:
-                return {"name": "regime_transitions", "status": "WARN", "score": 60.0,
-                        "reason": f"Sticky regime (max diagonal: {max_diag:.3f})"}
-            return {"name": "regime_transitions", "status": "PASS", "score": 85.0,
-                    "reason": f"Transition matrix healthy (max diagonal: {max_diag:.3f})"}
-        except (OSError, ValueError, ImportError) as e:
-            logger.warning("Health check 'regime_transitions' failed: %s", e)
-            return {"name": "regime_transitions", "status": "error", "score": 50.0,
-                    "reason": f"Could not assess regime transitions: {e}"}
+            if ratio > 0.8:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=85.0, status="PASS",
+                    explanation=f"IC stable (ratio {ratio:.2f}, recent={ic_recent:.4f})",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            if ratio > 0.5:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=55.0, status="WARN",
+                    explanation=f"IC declining (ratio {ratio:.2f}, recent={ic_recent:.4f})",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            return HealthCheckResult(
+                name=name, domain=domain, score=25.0, status="FAIL",
+                explanation=f"IC decayed significantly (ratio {ratio:.2f}, recent={ic_recent:.4f})",
+                methodology=methodology, raw_metrics=raw, thresholds=thresholds)
 
-    def _check_prediction_distribution(self) -> Dict[str, Any]:
-        """Detect variance collapse in predictions."""
+        except Exception as e:
+            logger.warning("Health check '%s' failed: %s", name, e)
+            return _unavailable(name, domain, f"Error: {e}")
+
+    def _check_prediction_distribution(self) -> HealthCheckResult:
+        """Detect variance collapse in predictions using std AND IQR."""
+        domain = "signal_quality"
+        name = "prediction_distribution"
+        methodology = (
+            "Check std AND IQR of predicted returns from backtest trades. "
+            "Both must exceed minimum thresholds to confirm predictions are "
+            "not collapsing to a single value."
+        )
+        thresholds = {"std_pass": 0.005, "iqr_pass": 0.003}
         try:
-            from quant_engine.config import RESULTS_DIR
-            trades_path = RESULTS_DIR / "autopilot" / "paper_state.json"
-            if not trades_path.exists():
-                return {"name": "prediction_distribution", "status": "unavailable", "score": 50.0,
-                        "reason": "No paper trading state"}
-            with open(trades_path, "r") as f:
-                state = json.load(f)
-            trades = state.get("trade_history", [])
-            preds = [t.get("predicted_return", 0) for t in trades[-200:] if "predicted_return" in t]
+            df = self._load_trades_csv()
+            if df is None:
+                return _unavailable(name, domain, "No backtest trades CSV")
+            if "predicted_return" not in df.columns:
+                return _unavailable(name, domain, "No predicted_return column")
+
+            preds = pd.to_numeric(df["predicted_return"], errors="coerce").dropna()
             if len(preds) < 10:
-                return {"name": "prediction_distribution", "status": "insufficient_data",
-                        "score": 50.0, "reason": "Too few predictions"}
-            preds = np.array(preds, dtype=float)
-            std = float(np.std(preds))
-            if std < 1e-6:
-                return {"name": "prediction_distribution", "status": "FAIL", "score": 10.0,
-                        "reason": f"Variance collapse — all predictions near-identical (std={std:.6f})"}
-            if std < 0.001:
-                return {"name": "prediction_distribution", "status": "WARN", "score": 45.0,
-                        "reason": f"Low prediction variance (std={std:.6f})"}
-            return {"name": "prediction_distribution", "status": "PASS", "score": 85.0,
-                    "reason": f"Healthy prediction spread (std={std:.6f})"}
-        except (OSError, json.JSONDecodeError, ValueError, ImportError) as e:
-            logger.warning("Health check 'prediction_distribution' failed: %s", e)
-            return {"name": "prediction_distribution", "status": "error", "score": 50.0,
-                    "reason": f"Could not assess prediction distribution: {e}"}
+                return _unavailable(name, domain, "Too few predictions")
 
-    def _check_survivorship_bias(self) -> Dict[str, Any]:
-        """Quantify survivorship bias impact."""
-        try:
-            from quant_engine.config import SURVIVORSHIP_DB, WRDS_ENABLED
-            if WRDS_ENABLED:
-                db_path = Path(SURVIVORSHIP_DB)
-                if db_path.exists() and db_path.stat().st_size > 1024:
-                    return {"name": "survivorship_bias", "status": "PASS", "score": 90.0,
-                            "reason": "WRDS + survivorship DB active — bias mitigated"}
-                return {"name": "survivorship_bias", "status": "WARN", "score": 60.0,
-                        "reason": "WRDS enabled but survivorship DB empty"}
-            return {"name": "survivorship_bias", "status": "FAIL", "score": 30.0,
-                    "reason": "WRDS disabled — static universe has survivorship bias"}
-        except (ValueError, ImportError) as e:
-            logger.warning("Health check 'survivorship_bias' failed: %s", e)
-            return {"name": "survivorship_bias", "status": "error", "score": 50.0,
-                    "reason": f"Could not assess survivorship bias: {e}"}
+            std_val = float(preds.std())
+            q75, q25 = float(preds.quantile(0.75)), float(preds.quantile(0.25))
+            iqr_val = q75 - q25
 
-    def _check_correlation_regime(self) -> Dict[str, Any]:
-        """Check average pairwise correlation in portfolio."""
-        try:
-            from quant_engine.config import DATA_CACHE_DIR
-            cache_dir = Path(DATA_CACHE_DIR)
-            parquets = sorted(cache_dir.glob("*_1d.parquet"))[:20]
-            if len(parquets) < 3:
-                return {"name": "correlation_regime", "status": "unavailable", "score": 50.0,
-                        "reason": "Not enough assets for correlation check"}
-            returns = []
-            for p in parquets:
-                try:
-                    df = pd.read_parquet(p)
-                    if "Close" in df.columns:
-                        ret = pd.to_numeric(df["Close"], errors="coerce").pct_change().dropna()
-                        ret.name = p.stem
-                        returns.append(ret.tail(252))
-                except (OSError, ValueError):
-                    continue
-            if len(returns) < 3:
-                return {"name": "correlation_regime", "status": "unavailable", "score": 50.0,
-                        "reason": "Could not load enough return series"}
-            ret_df = pd.concat(returns, axis=1).dropna()
-            if ret_df.shape[0] < 20 or ret_df.shape[1] < 3:
-                return {"name": "correlation_regime", "status": "unavailable", "score": 50.0,
-                        "reason": "Insufficient overlapping data"}
-            corr_matrix = ret_df.corr()
-            # Average off-diagonal correlation
-            mask = ~np.eye(corr_matrix.shape[0], dtype=bool)
-            avg_corr = float(corr_matrix.values[mask].mean())
-            if avg_corr < 0.40:
-                return {"name": "correlation_regime", "status": "PASS", "score": 85.0,
-                        "reason": f"Avg pairwise correlation: {avg_corr:.3f} (diversified)"}
-            if avg_corr < 0.65:
-                return {"name": "correlation_regime", "status": "WARN", "score": 55.0,
-                        "reason": f"Avg pairwise correlation: {avg_corr:.3f} (elevated)"}
-            return {"name": "correlation_regime", "status": "FAIL", "score": 25.0,
-                    "reason": f"Avg pairwise correlation: {avg_corr:.3f} (crisis-level)"}
-        except (OSError, ValueError, ImportError) as e:
-            logger.warning("Health check 'correlation_regime' failed: %s", e)
-            return {"name": "correlation_regime", "status": "error", "score": 50.0,
-                    "reason": f"Could not assess correlations: {e}"}
+            raw = {"std": round(std_val, 6), "iqr": round(iqr_val, 6),
+                   "n_predictions": len(preds), "mean": round(float(preds.mean()), 6)}
 
-    def _check_execution_quality(self) -> Dict[str, Any]:
-        """Check slippage tracking from paper/live trading."""
-        try:
-            from quant_engine.config import RESULTS_DIR
-            trades_path = RESULTS_DIR / "autopilot" / "paper_state.json"
-            if not trades_path.exists():
-                return {"name": "execution_quality", "status": "unavailable", "score": 50.0,
-                        "reason": "No trade data available"}
-            with open(trades_path, "r") as f:
-                state = json.load(f)
-            trades = state.get("trade_history", [])
-            if len(trades) < 10:
-                return {"name": "execution_quality", "status": "insufficient_data", "score": 50.0,
-                        "reason": f"Only {len(trades)} trades — need 10+"}
-            # Check if slippage data is present
-            slippages = [t.get("slippage", 0) for t in trades if "slippage" in t]
-            if not slippages:
-                return {"name": "execution_quality", "status": "WARN", "score": 60.0,
-                        "reason": "No slippage tracking data (paper trading only)"}
-            avg_slippage = float(np.mean(slippages))
-            if abs(avg_slippage) < 0.001:
-                return {"name": "execution_quality", "status": "PASS", "score": 85.0,
-                        "reason": f"Avg slippage: {avg_slippage:.4f} (minimal)"}
-            return {"name": "execution_quality", "status": "WARN", "score": 55.0,
-                    "reason": f"Avg slippage: {avg_slippage:.4f}"}
-        except (OSError, json.JSONDecodeError, ValueError, ImportError) as e:
-            logger.warning("Health check 'execution_quality' failed: %s", e)
-            return {"name": "execution_quality", "status": "error", "score": 50.0,
-                    "reason": f"Could not assess execution quality: {e}"}
+            if std_val > 0.005 and iqr_val > 0.003:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=85.0, status="PASS",
+                    explanation=f"Healthy spread (std={std_val:.6f}, IQR={iqr_val:.6f})",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            if std_val < 1e-6:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=10.0, status="FAIL",
+                    explanation=f"Variance collapse (std={std_val:.6f})",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            return HealthCheckResult(
+                name=name, domain=domain, score=45.0, status="WARN",
+                explanation=f"Low prediction variance (std={std_val:.6f}, IQR={iqr_val:.6f})",
+                methodology=methodology, raw_metrics=raw, thresholds=thresholds)
 
-    def _check_tail_risk(self) -> Dict[str, Any]:
-        """Compute rolling CVaR and tail ratio from backtest results."""
-        try:
-            from quant_engine.config import RESULTS_DIR
-            equity_path = RESULTS_DIR / "backtest_equity.csv"
-            if not equity_path.exists():
-                return {"name": "tail_risk", "status": "unavailable", "score": 50.0,
-                        "reason": "No equity curve available"}
-            df = pd.read_csv(equity_path, index_col=0, parse_dates=True)
-            if "equity" not in df.columns or len(df) < 60:
-                return {"name": "tail_risk", "status": "insufficient_data", "score": 50.0,
-                        "reason": "Insufficient equity data"}
-            returns = df["equity"].pct_change().dropna().values
-            var5 = float(np.percentile(returns, 5))
-            cvar5 = float(returns[returns <= var5].mean()) if np.any(returns <= var5) else var5
-            # Tail ratio: avg gain in top 5% / abs(avg loss in bottom 5%)
-            p95 = float(np.percentile(returns, 95))
-            top_tail = returns[returns >= p95]
-            bot_tail = returns[returns <= var5]
-            if len(bot_tail) > 0 and abs(bot_tail.mean()) > 1e-10:
-                tail_ratio = float(top_tail.mean() / abs(bot_tail.mean())) if len(top_tail) > 0 else 0.0
-            else:
-                tail_ratio = 1.0
-            if tail_ratio > 1.0 and cvar5 > -0.05:
-                return {"name": "tail_risk", "status": "PASS", "score": 85.0,
-                        "reason": f"Tail ratio: {tail_ratio:.2f}, CVaR5: {cvar5:.4f}"}
-            if cvar5 > -0.10:
-                return {"name": "tail_risk", "status": "WARN", "score": 55.0,
-                        "reason": f"Tail ratio: {tail_ratio:.2f}, CVaR5: {cvar5:.4f}"}
-            return {"name": "tail_risk", "status": "FAIL", "score": 25.0,
-                    "reason": f"Extreme tail risk — CVaR5: {cvar5:.4f}"}
-        except (OSError, ValueError, ImportError) as e:
-            logger.warning("Health check 'tail_risk' failed: %s", e)
-            return {"name": "tail_risk", "status": "error", "score": 50.0,
-                    "reason": f"Could not assess tail risk: {e}"}
+        except Exception as e:
+            logger.warning("Health check '%s' failed: %s", name, e)
+            return _unavailable(name, domain, f"Error: {e}")
 
-    def _check_information_ratio(self) -> Dict[str, Any]:
-        """Check excess return vs benchmark (information ratio)."""
-        try:
-            from quant_engine.config import RESULTS_DIR, DATA_CACHE_DIR
-            equity_path = RESULTS_DIR / "backtest_equity.csv"
-            if not equity_path.exists():
-                return {"name": "information_ratio", "status": "unavailable", "score": 50.0,
-                        "reason": "No equity curve available"}
-            df = pd.read_csv(equity_path, index_col=0, parse_dates=True)
-            if "equity" not in df.columns or len(df) < 60:
-                return {"name": "information_ratio", "status": "insufficient_data",
-                        "score": 50.0, "reason": "Insufficient data"}
-            strat_ret = df["equity"].pct_change().dropna()
-            # Try to load SPY benchmark
-            bench_path = Path(DATA_CACHE_DIR) / "SPY_1d.parquet"
-            if not bench_path.exists():
-                return {"name": "information_ratio", "status": "unavailable", "score": 50.0,
-                        "reason": "No benchmark data"}
-            bench_df = pd.read_parquet(bench_path)
-            if "Close" not in bench_df.columns:
-                return {"name": "information_ratio", "status": "unavailable", "score": 50.0,
-                        "reason": "No benchmark Close column"}
-            bench_ret = pd.to_numeric(bench_df["Close"], errors="coerce").pct_change().dropna()
-            common = strat_ret.index.intersection(bench_ret.index)
-            if len(common) < 30:
-                return {"name": "information_ratio", "status": "insufficient_data",
-                        "score": 50.0, "reason": "Insufficient overlapping data"}
-            excess = strat_ret.reindex(common) - bench_ret.reindex(common)
-            te = float(excess.std() * np.sqrt(252))
-            ir = float(excess.mean() * 252 / te) if te > 1e-10 else 0.0
-            if ir > 0.5:
-                return {"name": "information_ratio", "status": "PASS", "score": 90.0,
-                        "reason": f"IR: {ir:.2f} (strong alpha)"}
-            if ir > 0.0:
-                return {"name": "information_ratio", "status": "WARN", "score": 60.0,
-                        "reason": f"IR: {ir:.2f} (positive but modest)"}
-            return {"name": "information_ratio", "status": "FAIL", "score": 25.0,
-                    "reason": f"IR: {ir:.2f} (negative — underperforming benchmark)"}
-        except (OSError, ValueError, ImportError) as e:
-            logger.warning("Health check 'information_ratio' failed: %s", e)
-            return {"name": "information_ratio", "status": "error", "score": 50.0,
-                    "reason": f"Could not compute information ratio: {e}"}
-
-    def _check_cv_gap_trend(self) -> Dict[str, Any]:
-        """Detect overfitting trend from expanding CV gap across model versions."""
-        try:
-            from quant_engine.config import MODEL_DIR
-            registry_path = Path(MODEL_DIR) / "registry.json"
-            if not registry_path.exists():
-                return {"name": "cv_gap_trend", "status": "unavailable", "score": 50.0,
-                        "reason": "No model registry"}
-            with open(registry_path, "r") as f:
-                reg = json.load(f)
-            versions = reg.get("versions", []) if isinstance(reg, dict) else []
-            if len(versions) < 2:
-                return {"name": "cv_gap_trend", "status": "insufficient_data", "score": 50.0,
-                        "reason": f"Only {len(versions)} model versions"}
-            gaps = [float(v.get("cv_gap", 0)) for v in versions if "cv_gap" in v]
-            if len(gaps) < 2:
-                return {"name": "cv_gap_trend", "status": "insufficient_data", "score": 50.0,
-                        "reason": "No CV gap data"}
-            # Check if gap is trending upward (linear regression slope)
-            x = np.arange(len(gaps), dtype=float)
-            slope = float(np.polyfit(x, gaps, 1)[0]) if len(gaps) >= 2 else 0.0
-            latest_gap = gaps[-1]
-            if latest_gap < 0.05 and slope < 0.005:
-                return {"name": "cv_gap_trend", "status": "PASS", "score": 85.0,
-                        "reason": f"CV gap: {latest_gap:.4f}, trend: {slope:+.4f}/version (stable)"}
-            if latest_gap < 0.10:
-                return {"name": "cv_gap_trend", "status": "WARN", "score": 55.0,
-                        "reason": f"CV gap: {latest_gap:.4f}, trend: {slope:+.4f}/version"}
-            return {"name": "cv_gap_trend", "status": "FAIL", "score": 25.0,
-                    "reason": f"CV gap: {latest_gap:.4f}, trend: {slope:+.4f}/version (overfitting risk)"}
-        except (OSError, json.JSONDecodeError, ValueError, ImportError) as e:
-            logger.warning("Health check 'cv_gap_trend' failed: %s", e)
-            return {"name": "cv_gap_trend", "status": "error", "score": 50.0,
-                    "reason": f"Could not assess CV gap trend: {e}"}
-
-    def _check_data_quality_anomalies(self) -> Dict[str, Any]:
-        """Check for volume/price anomalies in cached data."""
-        try:
-            from quant_engine.config import DATA_CACHE_DIR
-            cache_dir = Path(DATA_CACHE_DIR)
-            parquets = sorted(cache_dir.glob("*_1d.parquet"))[:10]
-            if len(parquets) < 1:
-                return {"name": "data_anomalies", "status": "unavailable", "score": 50.0,
-                        "reason": "No cached data files"}
-            anomaly_count = 0
-            total_checked = 0
-            for p in parquets:
-                try:
-                    df = pd.read_parquet(p)
-                    total_checked += 1
-                    if "Volume" in df.columns:
-                        vol = pd.to_numeric(df["Volume"], errors="coerce").dropna()
-                        if len(vol) > 20:
-                            zero_frac = (vol == 0).mean()
-                            if zero_frac > 0.25:
-                                anomaly_count += 1
-                    if "Close" in df.columns:
-                        close = pd.to_numeric(df["Close"], errors="coerce").dropna()
-                        if len(close) > 20:
-                            daily_ret = close.pct_change().dropna()
-                            extreme = (daily_ret.abs() > 0.40).sum()
-                            if extreme > 0:
-                                anomaly_count += 1
-                except (OSError, ValueError):
-                    continue
-            if total_checked == 0:
-                return {"name": "data_anomalies", "status": "unavailable", "score": 50.0,
-                        "reason": "Could not read any data files"}
-            anomaly_rate = anomaly_count / total_checked
-            if anomaly_rate == 0:
-                return {"name": "data_anomalies", "status": "PASS", "score": 90.0,
-                        "reason": f"No anomalies in {total_checked} files"}
-            if anomaly_rate < 0.3:
-                return {"name": "data_anomalies", "status": "WARN", "score": 60.0,
-                        "reason": f"{anomaly_count}/{total_checked} files with anomalies"}
-            return {"name": "data_anomalies", "status": "FAIL", "score": 25.0,
-                    "reason": f"{anomaly_count}/{total_checked} files with anomalies"}
-        except (OSError, ValueError, ImportError) as e:
-            logger.warning("Health check 'data_anomalies' failed: %s", e)
-            return {"name": "data_anomalies", "status": "error", "score": 50.0,
-                    "reason": f"Could not check for data anomalies: {e}"}
-
-    def _check_ensemble_disagreement(self) -> Dict[str, Any]:
-        """Check ensemble member consensus (if multi-model)."""
+    def _check_ensemble_disagreement(self) -> HealthCheckResult:
+        """Check if ensemble regime models have informative and consistent quality."""
+        domain = "signal_quality"
+        name = "ensemble_disagreement"
+        methodology = (
+            "Load regime model holdout_corr values from model metadata. "
+            "Check average quality (>0.02) and spread (<0.20) to ensure "
+            "ensemble members are both useful and consistent."
+        )
+        thresholds = {"avg_corr_pass": 0.02, "spread_pass": 0.20}
         try:
             from quant_engine.config import MODEL_DIR
             meta_files = sorted(Path(MODEL_DIR).rglob("*_meta.json"), reverse=True)
             if not meta_files:
-                return {"name": "ensemble_disagreement", "status": "unavailable", "score": 50.0,
-                        "reason": "No model metadata found"}
+                return _unavailable(name, domain, "No model metadata found")
+
             with open(meta_files[0], "r") as f:
                 meta = json.load(f)
+
             regime_models = meta.get("regime_models", {})
             if not regime_models:
-                return {"name": "ensemble_disagreement", "status": "WARN", "score": 60.0,
-                        "reason": "Only global model — no regime ensemble"}
-            holdout_corrs = [float(v.get("holdout_corr", 0)) for v in regime_models.values()]
+                return HealthCheckResult(
+                    name=name, domain=domain, score=60.0, status="WARN",
+                    explanation="Only global model — no regime ensemble",
+                    methodology=methodology, data_available=True)
+
+            holdout_corrs = [float(v.get("holdout_corr", 0)) for v in regime_models.values()
+                            if "holdout_corr" in v]
             if not holdout_corrs:
-                return {"name": "ensemble_disagreement", "status": "unavailable", "score": 50.0,
-                        "reason": "No holdout correlations for regime models"}
+                return _unavailable(name, domain, "No holdout correlations for regime models")
+
             spread = float(max(holdout_corrs) - min(holdout_corrs))
             avg = float(np.mean(holdout_corrs))
-            if spread < 0.20 and avg > 0.02:
-                return {"name": "ensemble_disagreement", "status": "PASS", "score": 85.0,
-                        "reason": f"Ensemble consistent (spread: {spread:.3f}, avg: {avg:.3f})"}
-            if avg > 0:
-                return {"name": "ensemble_disagreement", "status": "WARN", "score": 55.0,
-                        "reason": f"Ensemble divergent (spread: {spread:.3f}, avg: {avg:.3f})"}
-            return {"name": "ensemble_disagreement", "status": "FAIL", "score": 25.0,
-                    "reason": f"Ensemble poor quality (avg holdout corr: {avg:.3f})"}
-        except (OSError, json.JSONDecodeError, ValueError, ImportError) as e:
-            logger.warning("Health check 'ensemble_disagreement' failed: %s", e)
-            return {"name": "ensemble_disagreement", "status": "error", "score": 50.0,
-                    "reason": f"Could not assess ensemble: {e}"}
+            raw = {"avg_holdout_corr": round(avg, 4), "spread": round(spread, 4),
+                   "n_regime_models": len(holdout_corrs),
+                   "per_regime": {k: round(float(v.get("holdout_corr", 0)), 4)
+                                  for k, v in regime_models.items()}}
 
-    def _check_market_microstructure(self) -> Dict[str, Any]:
-        """Check liquidity metrics from cached data."""
+            if avg > 0.02 and spread < 0.20:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=85.0, status="PASS",
+                    explanation=f"Ensemble consistent (spread={spread:.3f}, avg={avg:.3f})",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            if avg > 0:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=55.0, status="WARN",
+                    explanation=f"Ensemble divergent (spread={spread:.3f}, avg={avg:.3f})",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            return HealthCheckResult(
+                name=name, domain=domain, score=25.0, status="FAIL",
+                explanation=f"Ensemble poor quality (avg holdout_corr={avg:.3f})",
+                methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+
+        except Exception as e:
+            logger.warning("Health check '%s' failed: %s", name, e)
+            return _unavailable(name, domain, f"Error: {e}")
+
+    # ── Data Quality Checks ─────────────────────────────────────────────
+
+    def _check_survivorship_bias(self) -> HealthCheckResult:
+        """Check actual data for survivorship bias indicators.
+
+        Scans cache parquets for total_ret column (delisting returns) and
+        counts tickers whose last bar is >1yr old (likely delisted).
+        """
+        domain = "data_integrity"
+        name = "survivorship_bias"
+        methodology = (
+            "Scan cached parquets for total_ret column (delisting returns from WRDS). "
+            "Count tickers whose last data bar is >1yr old (delisted proxies). "
+            "Both indicators needed to confirm survivorship bias is mitigated."
+        )
+        thresholds = {"has_total_ret": True, "delisted_count_min": 1}
         try:
             from quant_engine.config import DATA_CACHE_DIR
             cache_dir = Path(DATA_CACHE_DIR)
-            parquets = sorted(cache_dir.glob("*_1d.parquet"))[:10]
-            if len(parquets) < 3:
-                return {"name": "microstructure", "status": "unavailable", "score": 50.0,
-                        "reason": "Insufficient data for microstructure analysis"}
-            low_liquidity = 0
+            parquets = sorted(cache_dir.glob("*_1d.parquet"))
+            if not parquets:
+                return _unavailable(name, domain, "No cached parquet files")
+
+            has_total_ret = 0
+            delisted_count = 0
             checked = 0
+            cutoff = datetime.now().timestamp() - 365 * 86400  # 1 year ago
+
+            for p in parquets:
+                try:
+                    df = pd.read_parquet(p)
+                    checked += 1
+                    if "total_ret" in df.columns:
+                        has_total_ret += 1
+                    # Check if last bar is old (delisted proxy)
+                    if df.index.dtype == "datetime64[ns]" or hasattr(df.index, 'max'):
+                        try:
+                            last_date = pd.Timestamp(df.index.max())
+                            if last_date.timestamp() < cutoff:
+                                delisted_count += 1
+                        except (TypeError, ValueError):
+                            pass
+                except (OSError, ValueError):
+                    continue
+
+            if checked == 0:
+                return _unavailable(name, domain, "Could not read any cache files")
+
+            total_ret_present = has_total_ret > 0
+            raw = {"files_checked": checked, "has_total_ret": has_total_ret,
+                   "delisted_count": delisted_count}
+
+            if total_ret_present and delisted_count > 0:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=90.0, status="PASS",
+                    explanation=f"Delisting returns present ({has_total_ret} files), "
+                                f"{delisted_count} delisted tickers found",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            if total_ret_present or delisted_count > 0:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=60.0, status="WARN",
+                    explanation=f"Partial survivorship coverage (total_ret={has_total_ret}, "
+                                f"delisted={delisted_count})",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            return HealthCheckResult(
+                name=name, domain=domain, score=30.0, status="FAIL",
+                explanation="No delisting returns or delisted tickers — survivorship bias likely",
+                methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+
+        except Exception as e:
+            logger.warning("Health check '%s' failed: %s", name, e)
+            return _unavailable(name, domain, f"Error: {e}")
+
+    def _check_data_quality_anomalies(self) -> HealthCheckResult:
+        """Systematic anomaly scan across full cached universe.
+
+        Checks zero-volume fraction, extreme daily returns (>40%), and
+        stale data (>30 days old) across ALL cached parquets.
+        """
+        domain = "data_integrity"
+        name = "data_anomalies"
+        methodology = (
+            "Scan ALL cached parquets for: zero-volume fraction >25%, "
+            "extreme daily returns >40%, stale data >30 days. "
+            "Tickers with any issue are flagged."
+        )
+        thresholds = {"issue_rate_pass": 0.05, "issue_rate_warn": 0.20}
+        try:
+            from quant_engine.config import DATA_CACHE_DIR
+            cache_dir = Path(DATA_CACHE_DIR)
+            parquets = sorted(cache_dir.glob("*_1d.parquet"))
+            if not parquets:
+                return _unavailable(name, domain, "No cached data files")
+
+            issue_count = 0
+            total_checked = 0
+            stale_cutoff = datetime.now().timestamp() - 30 * 86400  # 30 days
+
+            for p in parquets:
+                try:
+                    df = pd.read_parquet(p)
+                    total_checked += 1
+                    has_issue = False
+
+                    # Zero-volume check
+                    if "Volume" in df.columns:
+                        vol = pd.to_numeric(df["Volume"], errors="coerce").dropna()
+                        if len(vol) > 20 and float((vol == 0).mean()) > 0.25:
+                            has_issue = True
+
+                    # Extreme return check
+                    if "Close" in df.columns:
+                        close = pd.to_numeric(df["Close"], errors="coerce").dropna()
+                        if len(close) > 20:
+                            daily_ret = close.pct_change().dropna()
+                            if (daily_ret.abs() > 0.40).any():
+                                has_issue = True
+
+                    # Stale data check
+                    if p.stat().st_mtime < stale_cutoff:
+                        has_issue = True
+
+                    if has_issue:
+                        issue_count += 1
+                except (OSError, ValueError):
+                    continue
+
+            if total_checked == 0:
+                return _unavailable(name, domain, "Could not read any data files")
+
+            issue_rate = issue_count / total_checked
+            raw = {"total_checked": total_checked, "issues_found": issue_count,
+                   "issue_rate": round(issue_rate, 4)}
+
+            if issue_rate < 0.05:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=85.0, status="PASS",
+                    explanation=f"{issue_count}/{total_checked} tickers with issues ({issue_rate:.1%})",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            if issue_rate < 0.20:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=55.0, status="WARN",
+                    explanation=f"{issue_count}/{total_checked} tickers with issues ({issue_rate:.1%})",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            return HealthCheckResult(
+                name=name, domain=domain, score=25.0, status="FAIL",
+                explanation=f"{issue_count}/{total_checked} tickers with issues ({issue_rate:.1%})",
+                methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+
+        except Exception as e:
+            logger.warning("Health check '%s' failed: %s", name, e)
+            return _unavailable(name, domain, f"Error: {e}")
+
+    def _check_market_microstructure(self) -> HealthCheckResult:
+        """Check position sizes vs liquidity (participation rate).
+
+        Computes position_notional = capital * position_size_pct, compares
+        to median daily dollar volume.  Low participation rate means
+        positions won't move the market.
+        """
+        domain = "data_integrity"
+        name = "microstructure"
+        methodology = (
+            "position_notional = BACKTEST_ASSUMED_CAPITAL_USD * POSITION_SIZE_PCT. "
+            "participation_rate = position_notional / median_daily_dollar_volume. "
+            "<0.5% is excellent, <2% is acceptable."
+        )
+        thresholds = {"participation_pass": 0.005, "participation_warn": 0.02}
+        try:
+            from quant_engine.config import (
+                DATA_CACHE_DIR, BACKTEST_ASSUMED_CAPITAL_USD, POSITION_SIZE_PCT,
+            )
+            position_notional = BACKTEST_ASSUMED_CAPITAL_USD * POSITION_SIZE_PCT
+
+            cache_dir = Path(DATA_CACHE_DIR)
+            parquets = sorted(cache_dir.glob("*_1d.parquet"))
+            if len(parquets) < 3:
+                return _unavailable(name, domain, "Insufficient data for microstructure analysis")
+
+            dollar_volumes = []
             for p in parquets:
                 try:
                     df = pd.read_parquet(p)
                     if "Volume" in df.columns and "Close" in df.columns:
-                        vol = pd.to_numeric(df["Volume"], errors="coerce").tail(20)
-                        close = pd.to_numeric(df["Close"], errors="coerce").tail(20)
-                        dollar_vol = (vol * close).mean()
-                        checked += 1
-                        if dollar_vol < 1_000_000:  # Less than $1M daily
-                            low_liquidity += 1
+                        vol = pd.to_numeric(df["Volume"], errors="coerce")
+                        close = pd.to_numeric(df["Close"], errors="coerce")
+                        dv = (vol * close).dropna().tail(60)
+                        if len(dv) > 0:
+                            dollar_volumes.append(float(dv.median()))
                 except (OSError, ValueError):
                     continue
-            if checked == 0:
-                return {"name": "microstructure", "status": "unavailable", "score": 50.0,
-                        "reason": "Could not assess liquidity"}
-            low_frac = low_liquidity / checked
-            if low_frac < 0.1:
-                return {"name": "microstructure", "status": "PASS", "score": 85.0,
-                        "reason": f"All {checked} assets have adequate liquidity"}
-            if low_frac < 0.3:
-                return {"name": "microstructure", "status": "WARN", "score": 60.0,
-                        "reason": f"{low_liquidity}/{checked} assets have low daily dollar volume"}
-            return {"name": "microstructure", "status": "FAIL", "score": 30.0,
-                    "reason": f"{low_liquidity}/{checked} assets are illiquid"}
-        except (OSError, ValueError, ImportError) as e:
-            logger.warning("Health check 'microstructure' failed: %s", e)
-            return {"name": "microstructure", "status": "error", "score": 50.0,
-                    "reason": f"Could not assess microstructure: {e}"}
 
-    def _check_retraining_effectiveness(self) -> Dict[str, Any]:
-        """Check if model retrains are improving or degrading performance."""
+            if not dollar_volumes:
+                return _unavailable(name, domain, "Could not compute dollar volumes")
+
+            median_dv = float(np.median(dollar_volumes))
+            if median_dv <= 0:
+                return _unavailable(name, domain, "Zero median dollar volume")
+
+            participation = position_notional / median_dv
+            raw = {"position_notional": position_notional,
+                   "median_dollar_volume": round(median_dv, 0),
+                   "participation_rate": round(participation, 6),
+                   "tickers_checked": len(dollar_volumes)}
+
+            if participation < 0.005:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=85.0, status="PASS",
+                    explanation=f"Participation rate {participation:.4%} — minimal market impact",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            if participation < 0.02:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=55.0, status="WARN",
+                    explanation=f"Participation rate {participation:.4%} — moderate impact risk",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            return HealthCheckResult(
+                name=name, domain=domain, score=25.0, status="FAIL",
+                explanation=f"Participation rate {participation:.4%} — high market impact risk",
+                methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+
+        except Exception as e:
+            logger.warning("Health check '%s' failed: %s", name, e)
+            return _unavailable(name, domain, f"Error: {e}")
+
+    # ── Risk Management Checks ──────────────────────────────────────────
+
+    def _check_tail_risk(self) -> HealthCheckResult:
+        """Compute CVaR and max drawdown from backtest trade-level returns.
+
+        Uses backtest_10d_trades.csv (not equity CSV which doesn't exist).
+        Reconstructs daily P&L from trade returns and position sizes.
+        """
+        domain = "risk_management"
+        name = "tail_risk"
+        methodology = (
+            "Reconstruct portfolio returns from backtest trades (net_return * position_size). "
+            "Compute CVaR at 95th percentile and max drawdown. "
+            "CVaR > -3% AND reasonable max drawdown indicates controlled tail risk."
+        )
+        thresholds = {"cvar95_pass": -0.03, "cvar95_warn": -0.05}
+        try:
+            df = self._load_trades_csv()
+            if df is None:
+                return _unavailable(name, domain, "No backtest trades CSV")
+
+            if "net_return" not in df.columns or "position_size" not in df.columns:
+                return _unavailable(name, domain, "Trades CSV missing net_return/position_size")
+
+            # Compute trade-level portfolio contribution
+            trade_returns = (
+                pd.to_numeric(df["net_return"], errors="coerce")
+                * pd.to_numeric(df["position_size"], errors="coerce")
+            ).dropna()
+
+            if len(trade_returns) < 30:
+                return _unavailable(name, domain, f"Only {len(trade_returns)} trade returns — need 30+")
+
+            returns = trade_returns.values.astype(float)
+            var5 = float(np.percentile(returns, 5))
+            tail = returns[returns <= var5]
+            cvar5 = float(tail.mean()) if len(tail) > 0 else var5
+
+            # Max drawdown from cumulative returns
+            cum = np.cumsum(returns)
+            running_max = np.maximum.accumulate(cum)
+            drawdowns = cum - running_max
+            max_dd = float(drawdowns.min()) if len(drawdowns) > 0 else 0.0
+
+            raw = {"cvar_95": round(cvar5, 4), "var_5": round(var5, 4),
+                   "max_drawdown": round(max_dd, 4), "n_trades": len(returns)}
+
+            if cvar5 > -0.03 and max_dd > -0.15:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=85.0, status="PASS",
+                    explanation=f"CVaR95={cvar5:.4f}, MaxDD={max_dd:.4f} — controlled tail risk",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            if cvar5 > -0.05:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=55.0, status="WARN",
+                    explanation=f"CVaR95={cvar5:.4f}, MaxDD={max_dd:.4f} — elevated tail risk",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            return HealthCheckResult(
+                name=name, domain=domain, score=25.0, status="FAIL",
+                explanation=f"CVaR95={cvar5:.4f}, MaxDD={max_dd:.4f} — extreme tail risk",
+                methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+
+        except Exception as e:
+            logger.warning("Health check '%s' failed: %s", name, e)
+            return _unavailable(name, domain, f"Error: {e}")
+
+    def _check_correlation_regime(self) -> HealthCheckResult:
+        """Check pairwise correlation of actual portfolio holdings.
+
+        Tries paper trader positions first; if empty, falls back to
+        backtest trades (groups concurrent trades, computes pairwise
+        correlation of held tickers from cache parquets).
+        """
+        domain = "risk_management"
+        name = "correlation_regime"
+        methodology = (
+            "Identify held tickers from paper trader or backtest trades. "
+            "Load daily returns from cache, compute avg pairwise correlation. "
+            "<0.40 indicates good diversification."
+        )
+        thresholds = {"avg_corr_pass": 0.40, "avg_corr_warn": 0.65}
+        try:
+            from quant_engine.config import DATA_CACHE_DIR, RESULTS_DIR
+
+            # Try paper trader positions first
+            tickers_to_check = []
+            state_path = Path(RESULTS_DIR) / "autopilot" / "paper_state.json"
+            if state_path.exists():
+                with open(state_path, "r") as f:
+                    state = json.load(f)
+                positions = state.get("positions", [])
+                tickers_to_check = [p.get("ticker", "") for p in positions if p.get("ticker")]
+
+            # Fall back to backtest trades
+            if len(tickers_to_check) < 3:
+                df = self._load_trades_csv()
+                if df is not None and "ticker" in df.columns:
+                    # Use the most frequently traded tickers
+                    top_tickers = df["ticker"].value_counts().head(20).index.tolist()
+                    tickers_to_check = top_tickers
+
+            if len(tickers_to_check) < 3:
+                return _unavailable(name, domain, "Not enough tickers for correlation check")
+
+            # Load returns from cache
+            cache_dir = Path(DATA_CACHE_DIR)
+            returns_list = []
+            for ticker in tickers_to_check:
+                p = cache_dir / f"{ticker}_1d.parquet"
+                if not p.exists():
+                    continue
+                try:
+                    df_t = pd.read_parquet(p)
+                    if "Close" in df_t.columns:
+                        ret = pd.to_numeric(df_t["Close"], errors="coerce").pct_change().dropna()
+                        ret.name = ticker
+                        returns_list.append(ret.tail(252))
+                except (OSError, ValueError):
+                    continue
+
+            if len(returns_list) < 3:
+                return _unavailable(name, domain, "Could not load enough return series")
+
+            ret_df = pd.concat(returns_list, axis=1).dropna()
+            if ret_df.shape[0] < 20 or ret_df.shape[1] < 3:
+                return _unavailable(name, domain, "Insufficient overlapping return data")
+
+            corr_matrix = ret_df.corr()
+            mask = ~np.eye(corr_matrix.shape[0], dtype=bool)
+            avg_corr = float(corr_matrix.values[mask].mean())
+            raw = {"avg_pairwise_corr": round(avg_corr, 4),
+                   "n_assets": ret_df.shape[1], "n_days": ret_df.shape[0],
+                   "source": "paper_trader" if len(tickers_to_check) > 0 else "backtest"}
+
+            if avg_corr < 0.40:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=85.0, status="PASS",
+                    explanation=f"Avg pairwise correlation: {avg_corr:.3f} (diversified)",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            if avg_corr < 0.65:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=55.0, status="WARN",
+                    explanation=f"Avg pairwise correlation: {avg_corr:.3f} (elevated)",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            return HealthCheckResult(
+                name=name, domain=domain, score=25.0, status="FAIL",
+                explanation=f"Avg pairwise correlation: {avg_corr:.3f} (crisis-level)",
+                methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+
+        except Exception as e:
+            logger.warning("Health check '%s' failed: %s", name, e)
+            return _unavailable(name, domain, f"Error: {e}")
+
+    def _check_capital_utilization(self) -> HealthCheckResult:
+        """Check capital deployment with Herfindahl diversification index.
+
+        Loads paper state positions, computes utilization ratio AND HHI
+        of position sizes to detect over-concentration.
+        """
+        domain = "risk_management"
+        name = "capital_utilization"
+        methodology = (
+            "Load paper trader positions.  Compute utilization ratio "
+            "(invested / equity) and HHI of position weights. "
+            "Low HHI + moderate utilization is ideal."
+        )
+        thresholds = {"utilization_low": 0.10, "utilization_high": 0.95,
+                      "hhi_pass": 0.15}
+        try:
+            from quant_engine.config import RESULTS_DIR, PAPER_INITIAL_CAPITAL
+            state_path = Path(RESULTS_DIR) / "autopilot" / "paper_state.json"
+            if not state_path.exists():
+                return _unavailable(name, domain, "No paper trading state")
+
+            with open(state_path, "r") as f:
+                state = json.load(f)
+
+            positions = state.get("positions", [])
+            cash = float(state.get("cash", PAPER_INITIAL_CAPITAL))
+            equity = float(state.get("equity", cash))
+            if equity <= 0:
+                equity = cash if cash > 0 else PAPER_INITIAL_CAPITAL
+
+            if not positions:
+                # No positions — report utilization as 0%
+                raw = {"utilization": 0.0, "hhi": 0.0, "n_positions": 0,
+                       "equity": equity, "cash": cash}
+                return HealthCheckResult(
+                    name=name, domain=domain, score=50.0, status="WARN",
+                    explanation="No open positions — capital fully idle",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+
+            position_values = [abs(float(p.get("value", 0))) for p in positions]
+            total_invested = sum(position_values)
+            utilization = total_invested / equity if equity > 0 else 0.0
+
+            # Herfindahl index (HHI) of position weights
+            if total_invested > 0:
+                weights = [v / total_invested for v in position_values]
+                hhi = float(sum(w ** 2 for w in weights))
+            else:
+                hhi = 0.0
+
+            raw = {"utilization": round(utilization, 4), "hhi": round(hhi, 4),
+                   "n_positions": len(positions), "equity": equity,
+                   "total_invested": round(total_invested, 2)}
+
+            if 0.30 <= utilization <= 0.90 and hhi < 0.15:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=85.0, status="PASS",
+                    explanation=f"Utilization {utilization:.0%}, HHI={hhi:.3f} (diversified)",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            if utilization < 0.10:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=50.0, status="WARN",
+                    explanation=f"Utilization {utilization:.0%} (underdeployed)",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            if utilization > 0.95 or hhi > 0.25:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=45.0, status="WARN",
+                    explanation=f"Utilization {utilization:.0%}, HHI={hhi:.3f} (concentrated)",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            return HealthCheckResult(
+                name=name, domain=domain, score=70.0, status="PASS",
+                explanation=f"Utilization {utilization:.0%}, HHI={hhi:.3f}",
+                methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+
+        except Exception as e:
+            logger.warning("Health check '%s' failed: %s", name, e)
+            return _unavailable(name, domain, f"Error: {e}")
+
+    # ── Execution Quality Checks ────────────────────────────────────────
+
+    def _check_execution_quality(self) -> HealthCheckResult:
+        """Check execution model accuracy using backtest TCA data.
+
+        If TCA columns present (fill_ratio, entry_impact_bps, exit_impact_bps),
+        analyze them directly.  Otherwise, use predicted vs actual return
+        correlation as a proxy for execution model accuracy.
+        """
+        domain = "execution_quality"
+        name = "execution_quality"
+        methodology = (
+            "Load backtest trades.  If TCA columns present: analyze fill ratio "
+            "and impact.  Otherwise: use predicted-vs-actual return correlation "
+            "as proxy for execution model accuracy."
+        )
+        try:
+            df = self._load_trades_csv()
+            if df is None:
+                return _unavailable(name, domain, "No backtest trades CSV")
+
+            # Check for TCA columns
+            tca_cols = {"fill_ratio", "entry_impact_bps", "exit_impact_bps"}
+            has_tca = tca_cols.issubset(set(df.columns))
+
+            if has_tca:
+                fill_ratio = pd.to_numeric(df["fill_ratio"], errors="coerce").dropna()
+                entry_impact = pd.to_numeric(df["entry_impact_bps"], errors="coerce").dropna()
+                exit_impact = pd.to_numeric(df["exit_impact_bps"], errors="coerce").dropna()
+
+                avg_fill = float(fill_ratio.mean()) if len(fill_ratio) > 0 else 0.0
+                avg_impact = float((entry_impact.mean() + exit_impact.mean()) / 2) if len(entry_impact) > 0 else 0.0
+
+                raw = {"avg_fill_ratio": round(avg_fill, 4),
+                       "avg_impact_bps": round(avg_impact, 2),
+                       "data_source": "TCA", "n_trades": len(df)}
+                thresholds = {"fill_ratio_pass": 0.90, "impact_pass": 10.0}
+
+                if avg_fill > 0.90 and avg_impact < 10.0:
+                    return HealthCheckResult(
+                        name=name, domain=domain, score=85.0, status="PASS",
+                        explanation=f"Fill={avg_fill:.1%}, avg impact={avg_impact:.1f}bps",
+                        methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+                if avg_fill > 0.70:
+                    return HealthCheckResult(
+                        name=name, domain=domain, score=55.0, status="WARN",
+                        explanation=f"Fill={avg_fill:.1%}, avg impact={avg_impact:.1f}bps",
+                        methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+                return HealthCheckResult(
+                    name=name, domain=domain, score=25.0, status="FAIL",
+                    explanation=f"Poor execution: Fill={avg_fill:.1%}, impact={avg_impact:.1f}bps",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+
+            # No TCA — use prediction-realization correlation as proxy
+            if "predicted_return" not in df.columns or "actual_return" not in df.columns:
+                return _unavailable(name, domain, "No TCA columns and no predicted/actual returns")
+
+            pred = pd.to_numeric(df["predicted_return"], errors="coerce")
+            actual = pd.to_numeric(df["actual_return"], errors="coerce")
+            valid = pred.notna() & actual.notna()
+            if valid.sum() < 20:
+                return _unavailable(name, domain, "Too few prediction-actual pairs")
+
+            corr, _ = sp_stats.spearmanr(pred[valid], actual[valid])
+            # Slippage proxy: median absolute difference between predicted and net return
+            if "net_return" in df.columns:
+                net = pd.to_numeric(df["net_return"], errors="coerce")
+                slip_proxy = float((actual[valid] - net[valid]).abs().median())
+            else:
+                slip_proxy = 0.0
+
+            raw = {"pred_actual_corr": round(float(corr), 4),
+                   "median_slippage_proxy": round(slip_proxy, 6),
+                   "data_source": "prediction_proxy", "n_pairs": int(valid.sum())}
+            thresholds = {"corr_pass": 0.05, "corr_warn": 0.0}
+
+            if corr > 0.05:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=75.0, status="PASS",
+                    explanation=f"Pred-actual correlation={corr:.4f} (no TCA; proxy only)",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            if corr > 0.0:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=55.0, status="WARN",
+                    explanation=f"Weak pred-actual correlation={corr:.4f} (no TCA; proxy only)",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            return HealthCheckResult(
+                name=name, domain=domain, score=30.0, status="FAIL",
+                explanation=f"Negative pred-actual correlation={corr:.4f}",
+                methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+
+        except Exception as e:
+            logger.warning("Health check '%s' failed: %s", name, e)
+            return _unavailable(name, domain, f"Error: {e}")
+
+    def _check_signal_profitability(self) -> HealthCheckResult:
+        """Check if long signals are actually profitable (renamed from information_ratio).
+
+        Uses trades CSV: compute average return of long-signal trades and
+        overall IC (Spearman of predicted vs actual).
+        """
+        domain = "execution_quality"
+        name = "signal_profitability"
+        methodology = (
+            "From backtest trades: compute average return of trades where "
+            "predicted_return > 0 (long signal) and overall IC. "
+            "Both positive = signals have real edge."
+        )
+        thresholds = {"long_return_pass": 0.0, "ic_pass": 0.0}
+        try:
+            df = self._load_trades_csv()
+            if df is None:
+                return _unavailable(name, domain, "No backtest trades CSV")
+            if "predicted_return" not in df.columns or "actual_return" not in df.columns:
+                return _unavailable(name, domain, "Missing predicted/actual columns")
+
+            pred = pd.to_numeric(df["predicted_return"], errors="coerce")
+            actual = pd.to_numeric(df["actual_return"], errors="coerce")
+            valid = pred.notna() & actual.notna()
+            if valid.sum() < 20:
+                return _unavailable(name, domain, "Too few trades")
+
+            long_mask = pred[valid] > 0
+            long_return = float(actual[valid][long_mask].mean()) if long_mask.sum() > 0 else 0.0
+            ic, _ = sp_stats.spearmanr(pred[valid], actual[valid])
+
+            raw = {"long_avg_return": round(long_return, 6),
+                   "ic_spearman": round(float(ic), 4),
+                   "n_long_trades": int(long_mask.sum()),
+                   "n_total_trades": int(valid.sum())}
+
+            if long_return > 0 and ic > 0:
+                score = min(90.0, 70.0 + ic * 200)  # scale IC contribution
+                return HealthCheckResult(
+                    name=name, domain=domain, score=score, status="PASS",
+                    explanation=f"Long signal avg return={long_return:.4f}, IC={ic:.4f}",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            if long_return > 0 or ic > 0:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=55.0, status="WARN",
+                    explanation=f"Mixed signal: long_ret={long_return:.4f}, IC={ic:.4f}",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            return HealthCheckResult(
+                name=name, domain=domain, score=25.0, status="FAIL",
+                explanation=f"No edge: long_ret={long_return:.4f}, IC={ic:.4f}",
+                methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+
+        except Exception as e:
+            logger.warning("Health check '%s' failed: %s", name, e)
+            return _unavailable(name, domain, f"Error: {e}")
+
+    # ── Model Governance Checks ─────────────────────────────────────────
+
+    def _check_cv_gap_trend(self) -> HealthCheckResult:
+        """Detect overfitting from CV gap — with absolute gap threshold.
+
+        Gap > 0.15 always FAIL regardless of trend.
+        gap < 0.05 AND trend < 0 → PASS(85).
+        """
+        domain = "model_governance"
+        name = "cv_gap_trend"
+        methodology = (
+            "Load model registry versions.  Check latest CV gap against "
+            "absolute threshold (0.15 = always FAIL).  Compute trend slope "
+            "across versions.  gap < 0.05 with decreasing trend is ideal."
+        )
+        thresholds = {"gap_fail": 0.15, "gap_pass": 0.05, "trend_pass": 0.0}
         try:
             from quant_engine.config import MODEL_DIR
             registry_path = Path(MODEL_DIR) / "registry.json"
             if not registry_path.exists():
-                return {"name": "retrain_effectiveness", "status": "unavailable", "score": 50.0,
-                        "reason": "No model registry"}
+                return _unavailable(name, domain, "No model registry")
+
             with open(registry_path, "r") as f:
                 reg = json.load(f)
+
             versions = reg.get("versions", []) if isinstance(reg, dict) else []
-            if len(versions) < 2:
-                return {"name": "retrain_effectiveness", "status": "insufficient_data",
-                        "score": 50.0, "reason": "Need 2+ model versions"}
+            gaps = [float(v.get("cv_gap", 0)) for v in versions if "cv_gap" in v]
+
+            if not gaps:
+                return _unavailable(name, domain, "No CV gap data in registry")
+
+            latest_gap = gaps[-1]
+
+            # Compute trend if 2+ versions
+            if len(gaps) >= 2:
+                x = np.arange(len(gaps), dtype=float)
+                slope = float(np.polyfit(x, gaps, 1)[0])
+            else:
+                slope = 0.0
+
+            raw = {"latest_gap": round(latest_gap, 4), "trend_slope": round(slope, 6),
+                   "n_versions": len(gaps), "all_gaps": [round(g, 4) for g in gaps]}
+
+            # Absolute threshold: gap > 0.15 is always FAIL
+            if latest_gap > 0.15:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=20.0, status="FAIL",
+                    explanation=f"CV gap {latest_gap:.4f} exceeds 0.15 — severe overfitting",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+
+            if latest_gap < 0.05 and slope <= 0:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=85.0, status="PASS",
+                    explanation=f"CV gap {latest_gap:.4f}, trend {slope:+.4f}/version (stable)",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            if latest_gap < 0.10:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=55.0, status="WARN",
+                    explanation=f"CV gap {latest_gap:.4f}, trend {slope:+.4f}/version",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            return HealthCheckResult(
+                name=name, domain=domain, score=30.0, status="FAIL",
+                explanation=f"CV gap {latest_gap:.4f}, trend {slope:+.4f}/version (overfitting risk)",
+                methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+
+        except Exception as e:
+            logger.warning("Health check '%s' failed: %s", name, e)
+            return _unavailable(name, domain, f"Error: {e}")
+
+    def _check_retraining_effectiveness(self) -> HealthCheckResult:
+        """Track slope direction of holdout Spearman across model versions.
+
+        Improving slope → PASS(85), stable → WARN(65), declining → FAIL(25).
+        """
+        domain = "model_governance"
+        name = "retrain_effectiveness"
+        methodology = (
+            "Compute linear regression slope of holdout Spearman values "
+            "across model versions.  Positive slope indicates retrains are "
+            "improving model quality."
+        )
+        thresholds = {"slope_pass": 0.0, "slope_warn": -0.005}
+        try:
+            from quant_engine.config import MODEL_DIR
+            registry_path = Path(MODEL_DIR) / "registry.json"
+            if not registry_path.exists():
+                return _unavailable(name, domain, "No model registry")
+
+            with open(registry_path, "r") as f:
+                reg = json.load(f)
+
+            versions = reg.get("versions", []) if isinstance(reg, dict) else []
             spearman_vals = [float(v.get("holdout_spearman", 0)) for v in versions
                             if "holdout_spearman" in v]
-            if len(spearman_vals) < 2:
-                return {"name": "retrain_effectiveness", "status": "insufficient_data",
-                        "score": 50.0, "reason": "No holdout Spearman data"}
-            # Is most recent better than average?
-            latest = spearman_vals[-1]
-            avg = float(np.mean(spearman_vals[:-1]))
-            if latest >= avg:
-                return {"name": "retrain_effectiveness", "status": "PASS", "score": 85.0,
-                        "reason": f"Latest retrain improved (Spearman: {latest:.4f} vs avg {avg:.4f})"}
-            if latest > 0:
-                return {"name": "retrain_effectiveness", "status": "WARN", "score": 55.0,
-                        "reason": f"Latest retrain degraded (Spearman: {latest:.4f} vs avg {avg:.4f})"}
-            return {"name": "retrain_effectiveness", "status": "FAIL", "score": 20.0,
-                    "reason": f"Latest retrain negative (Spearman: {latest:.4f})"}
-        except (OSError, json.JSONDecodeError, ValueError, ImportError) as e:
-            logger.warning("Health check 'retrain_effectiveness' failed: %s", e)
-            return {"name": "retrain_effectiveness", "status": "error", "score": 50.0,
-                    "reason": f"Could not assess retrain effectiveness: {e}"}
 
-    def _check_capital_utilization(self) -> Dict[str, Any]:
-        """Check capital deployment efficiency."""
+            if len(spearman_vals) < 2:
+                return _unavailable(name, domain, f"Need 2+ versions (have {len(spearman_vals)})")
+
+            x = np.arange(len(spearman_vals), dtype=float)
+            slope = float(np.polyfit(x, spearman_vals, 1)[0])
+            latest = spearman_vals[-1]
+            raw = {"slope": round(slope, 6), "latest_spearman": round(latest, 4),
+                   "n_versions": len(spearman_vals),
+                   "all_values": [round(v, 4) for v in spearman_vals]}
+
+            if slope > 0:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=85.0, status="PASS",
+                    explanation=f"Retrains improving (slope={slope:+.4f}, latest={latest:.4f})",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            if slope > -0.005:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=65.0, status="WARN",
+                    explanation=f"Retrains stable (slope={slope:+.4f}, latest={latest:.4f})",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            return HealthCheckResult(
+                name=name, domain=domain, score=25.0, status="FAIL",
+                explanation=f"Retrains declining (slope={slope:+.4f}, latest={latest:.4f})",
+                methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+
+        except Exception as e:
+            logger.warning("Health check '%s' failed: %s", name, e)
+            return _unavailable(name, domain, f"Error: {e}")
+
+    def _check_feature_importance_drift(self) -> HealthCheckResult:
+        """Check feature importance drift with top-3 rank change explanation."""
+        domain = "model_governance"
+        name = "feature_drift"
+        methodology = (
+            "Load FeatureStabilityTracker, get Spearman rank correlation "
+            "between latest and previous training cycles.  Identify top-3 "
+            "features with largest rank changes for explanation."
+        )
         try:
-            from quant_engine.config import RESULTS_DIR, PAPER_INITIAL_CAPITAL
-            state_path = RESULTS_DIR / "autopilot" / "paper_state.json"
-            if not state_path.exists():
-                return {"name": "capital_utilization", "status": "unavailable", "score": 50.0,
-                        "reason": "No paper trading state"}
-            with open(state_path, "r") as f:
-                state = json.load(f)
-            positions = state.get("positions", [])
-            equity = float(state.get("equity", PAPER_INITIAL_CAPITAL))
-            if equity <= 0:
-                return {"name": "capital_utilization", "status": "FAIL", "score": 10.0,
-                        "reason": "Zero or negative equity"}
-            # Capital in positions vs total equity
-            position_value = sum(float(p.get("value", 0)) for p in positions)
-            utilization = position_value / equity if equity > 0 else 0.0
-            if 0.30 <= utilization <= 0.90:
-                return {"name": "capital_utilization", "status": "PASS", "score": 85.0,
-                        "reason": f"Capital utilization: {utilization:.0%} (well-deployed)"}
-            if utilization < 0.10:
-                return {"name": "capital_utilization", "status": "WARN", "score": 50.0,
-                        "reason": f"Capital utilization: {utilization:.0%} (underdeployed)"}
-            if utilization > 0.95:
-                return {"name": "capital_utilization", "status": "WARN", "score": 55.0,
-                        "reason": f"Capital utilization: {utilization:.0%} (over-concentrated)"}
-            return {"name": "capital_utilization", "status": "PASS", "score": 70.0,
-                    "reason": f"Capital utilization: {utilization:.0%}"}
-        except (OSError, json.JSONDecodeError, ValueError, ImportError) as e:
-            logger.warning("Health check 'capital_utilization' failed: %s", e)
-            return {"name": "capital_utilization", "status": "error", "score": 50.0,
-                    "reason": f"Could not assess capital utilization: {e}"}
+            from quant_engine.models.feature_stability import FeatureStabilityTracker
+            tracker = FeatureStabilityTracker()
+            report = tracker.check_stability()
+
+            if report.n_cycles < 2:
+                return _unavailable(name, domain, f"Only {report.n_cycles} training cycles")
+
+            spearman = report.spearman_vs_previous
+            if spearman is None:
+                return _unavailable(name, domain, "No comparison available")
+
+            raw: Dict[str, Any] = {"spearman_vs_previous": round(spearman, 4),
+                   "n_cycles": report.n_cycles}
+
+            # Compute top-3 rank changes if we have the data
+            rank_change_explanation = ""
+            try:
+                history_path = Path("results/feature_stability_history.json")
+                if history_path.exists():
+                    with open(history_path) as f:
+                        hist = json.load(f)
+                    cycles = hist.get("cycles", [])
+                    if len(cycles) >= 2:
+                        current = cycles[-1].get("top_features", [])
+                        previous = cycles[-2].get("top_features", [])
+                        if current and previous:
+                            changes = []
+                            for feat in set(current + previous):
+                                cur_rank = current.index(feat) + 1 if feat in current else len(current) + 1
+                                prev_rank = previous.index(feat) + 1 if feat in previous else len(previous) + 1
+                                changes.append((feat, prev_rank - cur_rank))  # positive = improved
+                            changes.sort(key=lambda x: abs(x[1]), reverse=True)
+                            top3 = changes[:3]
+                            rank_change_explanation = "Top 3 rank changes: " + ", ".join(
+                                f"{f} ({d:+d})" for f, d in top3
+                            )
+                            raw["top_rank_changes"] = {f: d for f, d in top3}
+            except Exception:
+                pass
+
+            thresholds = {"spearman_pass": 0.70, "spearman_warn": 0.40}
+            explanation_parts = [f"Feature rank correlation: {spearman:.3f}"]
+            if rank_change_explanation:
+                explanation_parts.append(rank_change_explanation)
+
+            if spearman > 0.70:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=90.0, status="PASS",
+                    explanation=" | ".join(explanation_parts) + " (stable)",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            if spearman > 0.40:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=55.0, status="WARN",
+                    explanation=" | ".join(explanation_parts) + " (moderate drift)",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            return HealthCheckResult(
+                name=name, domain=domain, score=20.0, status="FAIL",
+                explanation=" | ".join(explanation_parts) + " (severe drift)",
+                methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+
+        except Exception as e:
+            logger.warning("Health check '%s' failed: %s", name, e)
+            return _unavailable(name, domain, f"Error: {e}")
+
+    def _check_regime_transition_health(self) -> HealthCheckResult:
+        """Check regime model quality via entropy, transition frequency,
+        and predictive power (replaces HMM diagonal check).
+
+        Computes Shannon entropy of regime distribution and checks if
+        regime predicts volatility changes.
+        """
+        domain = "model_governance"
+        name = "regime_transitions"
+        methodology = (
+            "Compute Shannon entropy of regime probability distribution "
+            "from prob_history.  Check correlation between regime and "
+            "realized volatility.  Entropy > 0.5 AND predictive_corr > 0.2 "
+            "indicates a useful regime model."
+        )
+        thresholds = {"entropy_pass": 0.5, "predictive_corr_pass": 0.2}
+        try:
+            from quant_engine.config import DATA_CACHE_DIR
+            from api.services.data_helpers import compute_regime_payload
+
+            regime = compute_regime_payload(Path(DATA_CACHE_DIR))
+            if regime is None:
+                return _unavailable(name, domain, "No regime data available")
+
+            prob_history = regime.get("prob_history", None)
+            current_probs = regime.get("current_probs", None)
+
+            # Compute entropy from current regime probabilities
+            entropy = 0.0
+            if current_probs and isinstance(current_probs, dict):
+                probs = [float(v) for v in current_probs.values() if float(v) > 0]
+                if probs:
+                    probs = np.array(probs)
+                    probs = probs / probs.sum()  # normalize
+                    entropy = float(-np.sum(probs * np.log2(probs + 1e-10)))
+            elif isinstance(prob_history, pd.DataFrame) and not prob_history.empty:
+                # Use average probabilities across time
+                prob_cols = [c for c in prob_history.columns if c.startswith("regime_prob_")]
+                if prob_cols:
+                    avg_probs = prob_history[prob_cols].mean().values
+                    avg_probs = avg_probs[avg_probs > 0]
+                    if len(avg_probs) > 0:
+                        avg_probs = avg_probs / avg_probs.sum()
+                        entropy = float(-np.sum(avg_probs * np.log2(avg_probs + 1e-10)))
+
+            # Check predictive power: does regime correlate with realized vol?
+            predictive_corr = 0.0
+            if isinstance(prob_history, pd.DataFrame) and not prob_history.empty:
+                prob_cols = [c for c in prob_history.columns if c.startswith("regime_prob_")]
+                if prob_cols and len(prob_history) > 30:
+                    # Use dominant regime as signal
+                    dominant = prob_history[prob_cols].idxmax(axis=1).astype("category").cat.codes
+                    # Try to get realized vol from SPY cache
+                    try:
+                        spy_path = Path(DATA_CACHE_DIR) / "SPY_1d.parquet"
+                        if spy_path.exists():
+                            spy = pd.read_parquet(spy_path)
+                            if "Close" in spy.columns:
+                                spy_ret = pd.to_numeric(spy["Close"], errors="coerce").pct_change()
+                                rvol = spy_ret.rolling(20).std()
+                                # Align indices
+                                common = dominant.index.intersection(rvol.index)
+                                if len(common) > 30:
+                                    corr, _ = sp_stats.spearmanr(
+                                        dominant.reindex(common).dropna(),
+                                        rvol.reindex(common).dropna(),
+                                    )
+                                    if not np.isnan(corr):
+                                        predictive_corr = abs(float(corr))
+                    except Exception:
+                        pass
+
+            raw = {"entropy": round(entropy, 4),
+                   "predictive_corr": round(predictive_corr, 4)}
+
+            if entropy > 0.5 and predictive_corr > 0.2:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=85.0, status="PASS",
+                    explanation=f"Entropy={entropy:.3f}, vol predictive corr={predictive_corr:.3f}",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+
+            if entropy > 0.3 or predictive_corr > 0.1:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=55.0, status="WARN",
+                    explanation=f"Entropy={entropy:.3f}, vol predictive corr={predictive_corr:.3f} — partial",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+
+            return HealthCheckResult(
+                name=name, domain=domain, score=25.0, status="FAIL",
+                explanation=f"Entropy={entropy:.3f}, vol predictive corr={predictive_corr:.3f} — poor regime model",
+                methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+
+        except Exception as e:
+            logger.warning("Health check '%s' failed: %s", name, e)
+            return _unavailable(name, domain, f"Error: {e}")
