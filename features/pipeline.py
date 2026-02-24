@@ -6,6 +6,12 @@ Includes:
 2) raw OHLCV transforms,
 3) interaction features,
 4) research-derived factors (single-asset and cross-asset).
+
+Feature causality types:
+    CAUSAL        — uses only past and current data; safe for production
+    END_OF_DAY    — uses full-day data; safe for daily predictions only
+    RESEARCH_ONLY — may contain cross-sectional or other non-causal info;
+                    for offline analysis only
 """
 from typing import Dict, List, Optional
 
