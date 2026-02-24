@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-logger = logging.getLogger("quant_engine.api")
+logger = logging.getLogger(__name__)
 
 
 # ── Trade & Portfolio Loading ─────────────────────────────────────────

@@ -46,7 +46,26 @@ async def _retrain_monitor_loop() -> None:
 async def _lifespan(app: FastAPI):
     """Startup / shutdown lifecycle."""
     settings: ApiSettings = get_settings()
-    logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
+
+    # Configure structured log format using engine config
+    try:
+        from quant_engine.config import LOG_LEVEL, LOG_FORMAT
+        effective_level = getattr(logging, LOG_LEVEL.upper(), logging.INFO)
+    except (ImportError, AttributeError):
+        effective_level = getattr(logging, settings.log_level.upper(), logging.INFO)
+        LOG_FORMAT = "structured"
+
+    if LOG_FORMAT == "json":
+        fmt = '{"time":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s","message":"%(message)s"}'
+    else:
+        fmt = "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s"
+
+    logging.basicConfig(
+        level=effective_level,
+        format=fmt,
+        datefmt="%Y-%m-%d %H:%M:%S",
+        force=True,
+    )
     logger.info("Starting quant_engine API on %s:%s", settings.host, settings.port)
 
     # Run config validation on startup
