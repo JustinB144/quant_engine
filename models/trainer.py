@@ -368,7 +368,8 @@ class ModelTrainer:
     @staticmethod
     def _prune_correlated_features(
         X: pd.DataFrame,
-        threshold: float = 0.90,
+        threshold: float = 0.80,
+        use_vif: bool = False,
     ) -> List[str]:
         """Remove highly correlated features before permutation importance.
 
@@ -376,6 +377,18 @@ class ModelTrainer:
         lower absolute mean is dropped.  This prevents permutation importance
         from splitting credit among correlated features and erroneously
         dropping useful predictors.
+
+        The threshold was tightened from 0.90 to 0.80 to remove features
+        in the 0.80-0.89 correlation range that cause:
+        - Feature importance instability (correlated features split importance)
+        - Gradient boosting inefficiency (splits on redundant features)
+
+        Args:
+            X: Feature DataFrame.
+            threshold: Correlation threshold (default 0.80).
+            use_vif: If True, additionally prune features with VIF > 10
+                (Variance Inflation Factor) to detect multicollinearity
+                not captured by pairwise correlation.
         """
         if X.shape[1] <= 1:
             return X.columns.tolist()
@@ -393,6 +406,25 @@ class ModelTrainer:
                     to_drop.add(c)
                 else:
                     to_drop.add(col)
+
+        # Optional VIF check for multicollinearity beyond pairwise correlation
+        if use_vif and (X.shape[1] - len(to_drop)) > 5:
+            try:
+                from statsmodels.stats.outliers_influence import variance_inflation_factor
+                X_remaining = X.drop(columns=list(to_drop))
+                # Replace any NaN/inf for VIF computation
+                X_vif = X_remaining.fillna(X_remaining.median())
+                X_vif = X_vif.replace([np.inf, -np.inf], 0.0)
+                for i, col_name in enumerate(X_vif.columns):
+                    try:
+                        vif = variance_inflation_factor(X_vif.values, i)
+                        if vif > 10:
+                            to_drop.add(col_name)
+                    except (np.linalg.LinAlgError, ValueError):
+                        continue
+            except ImportError:
+                pass  # statsmodels not available; skip VIF
+
         kept = [c for c in X.columns if c not in to_drop]
         return kept if kept else X.columns[:1].tolist()
 
@@ -405,7 +437,7 @@ class ModelTrainer:
         """
         Feature selection: correlation pruning then permutation importance.
 
-        Step 1: Remove features with |correlation| >= 0.90 to prevent
+        Step 1: Remove features with |correlation| >= 0.80 to prevent
                 permutation importance from splitting credit.
         Step 2: Train a lightweight GBR on a temporal split.
         Step 3: Compute permutation importance on the validation set.
@@ -465,6 +497,66 @@ class ModelTrainer:
             selected = list(dict.fromkeys(selected + fallback))
 
         return selected[:max_feats], full_importances
+
+    def _compute_stable_features(
+        self,
+        fold_feature_sets: List[List[str]],
+        max_feats: int,
+        X_dev: pd.DataFrame,
+        y_dev: pd.Series,
+        stability_threshold: float = 0.80,
+    ) -> List[str]:
+        """Compute stable features selected in ≥ stability_threshold fraction of folds.
+
+        Features that consistently appear across multiple independent CV folds
+        are more likely to generalize than features selected by a single fold.
+
+        Args:
+            fold_feature_sets: List of feature name lists, one per CV fold.
+            max_feats: Maximum number of features to return.
+            X_dev: Development features (used for fallback importance ranking).
+            y_dev: Development targets (used for fallback importance ranking).
+            stability_threshold: Minimum fraction of folds a feature must appear
+                in to be considered "stable". Default 0.80 (≥80% of folds).
+
+        Returns:
+            List of stable feature names, capped at max_feats.
+        """
+        from collections import Counter
+
+        n_folds = len(fold_feature_sets)
+        if n_folds == 0:
+            return []
+
+        # Count how many folds selected each feature
+        feature_counts = Counter()
+        for feat_list in fold_feature_sets:
+            for feat in feat_list:
+                feature_counts[feat] += 1
+
+        min_folds = max(1, int(np.ceil(n_folds * stability_threshold)))
+        stable = [
+            feat for feat, count in feature_counts.most_common()
+            if count >= min_folds
+        ]
+
+        if len(stable) >= 3:
+            return stable[:max_feats]
+
+        # Fallback: if fewer than 3 stable features, relax to features
+        # appearing in ≥50% of folds, then rank by frequency
+        relaxed_min = max(1, n_folds // 2)
+        relaxed = [
+            feat for feat, count in feature_counts.most_common()
+            if count >= relaxed_min
+        ]
+
+        if len(relaxed) >= 3:
+            return relaxed[:max_feats]
+
+        # Last resort: use global selection on full dev set
+        selected, _ = self._select_features(X_dev, y_dev, max_feats=max_feats)
+        return selected
 
     def train_ensemble(
         self,
@@ -546,6 +638,7 @@ class ModelTrainer:
         regime_models = {}
         regime_scalers = {}
         regime_feature_sets = {}
+        skipped_regimes = {}  # Explicitly track skipped regimes with reasons
 
         for regime_code, regime_name in REGIME_NAMES.items():
             if rp is not None and f"regime_prob_{regime_code}" in rp.columns:
@@ -558,7 +651,16 @@ class ModelTrainer:
 
             if n_samples < MIN_REGIME_SAMPLES:
                 if verbose:
-                    print(f"\n── {regime_name} — SKIPPED ({n_samples} < {MIN_REGIME_SAMPLES} samples) ──")
+                    print(f"\n── {regime_name} — SKIPPED ({n_samples} < "
+                          f"{MIN_REGIME_SAMPLES} samples) ──")
+                    print(f"  Global model will be used for regime {regime_code} predictions.")
+                skipped_regimes[regime_code] = {
+                    "name": regime_name,
+                    "n_samples": int(n_samples),
+                    "min_required": MIN_REGIME_SAMPLES,
+                    "reason": "insufficient_samples",
+                }
+                regime_models[regime_code] = None  # Explicitly mark as unavailable
                 continue
 
             if verbose:
@@ -619,10 +721,16 @@ class ModelTrainer:
                 train_data_end=train_data_end,
             )
             # Fit and save confidence calibrator on holdout predictions vs outcomes
-            self._fit_calibrator(
+            cal_metrics = self._fit_calibrator(
                 global_model, global_scaler, global_features, global_result,
                 X, y, horizon, versioned,
             )
+            if cal_metrics and verbose:
+                ece_str = (f"{cal_metrics['ece']:.4f}"
+                           if cal_metrics.get('ece') is not None else "N/A")
+                print(f"  Calibration — ECE: {ece_str} "
+                      f"(fit={cal_metrics['n_cal_fit']}, "
+                      f"val={cal_metrics['n_cal_val']})")
         elif verbose:
             print("  Skipping model save — global model was rejected by quality gates.")
 
@@ -701,28 +809,6 @@ class ModelTrainer:
             warnings.append("Insufficient dev samples after temporal split")
             return None, None, None, []
 
-        if verbose:
-            print(f"  Feature selection ({X_dev.shape[1]} candidates)...", end="", flush=True)
-
-        selected, _ = self._select_features(X_dev, y_dev, max_feats=max_feats)
-
-        if len(selected) < 5:
-            # Insufficient signal — refuse to train rather than selecting noise
-            warnings.append(f"Only {len(selected)} positive-importance features; skipping model")
-            if verbose:
-                print(f" INSUFFICIENT SIGNAL ({len(selected)} features)")
-            # Return a degenerate result rather than training on noise
-            if len(selected) == 0:
-                return None, None, None, []
-            # If we have at least 1-4, use them but warn heavily
-            warnings.append("WARNING: Very few features — high overfitting risk")
-
-        if verbose:
-            print(f" selected {len(selected)} features")
-
-        X_dev_sel = X_dev[selected]
-        X_hold_sel = X_hold[selected]
-
         # ── Cross-validation with panel-safe purged date folds ──
         purge_gap = horizon
         embargo = max(1, horizon // 2)
@@ -737,14 +823,21 @@ class ModelTrainer:
             max_train_dates=WF_MAX_TRAIN_DATES,
         )
 
+        if verbose:
+            print(f"  Per-fold feature selection ({X_dev.shape[1]} candidates, "
+                  f"{len(folds)} folds)...", flush=True)
+
         cv_oos_scores = []
         cv_is_scores = []
+        fold_feature_sets: List[List[str]] = []
 
         for fold, (train_idx, test_idx) in enumerate(folds):
             if len(train_idx) < 100 or len(test_idx) < 20:
                 continue
 
-            # Fold-local selection to avoid leakage from future folds.
+            # Per-fold feature selection: each fold independently selects
+            # its best features from its own training data, preventing
+            # fold-1 selection bias from propagating to all folds.
             fold_selected, _ = self._select_features(
                 X_dev.iloc[train_idx],
                 y_dev.iloc[train_idx],
@@ -752,6 +845,8 @@ class ModelTrainer:
             )
             if len(fold_selected) < 3:
                 continue
+
+            fold_feature_sets.append(fold_selected)
 
             # Scale features INSIDE the CV fold (fit only on training fold)
             fold_scaler = StandardScaler()
@@ -771,6 +866,35 @@ class ModelTrainer:
 
             cv_is_scores.append(float(is_corr) if not np.isnan(is_corr) else 0.0)
             cv_oos_scores.append(float(oos_corr) if not np.isnan(oos_corr) else 0.0)
+
+        # ── Compute stable features: selected in ≥80% of CV folds ──
+        # This prevents any single fold from dictating the final feature set.
+        if fold_feature_sets:
+            selected = self._compute_stable_features(
+                fold_feature_sets, max_feats, X_dev, y_dev,
+            )
+        else:
+            # Fallback to global selection if no valid folds
+            selected, _ = self._select_features(X_dev, y_dev, max_feats=max_feats)
+
+        if len(selected) < 5:
+            # Insufficient signal — refuse to train rather than selecting noise
+            warnings.append(f"Only {len(selected)} positive-importance features; skipping model")
+            if verbose:
+                print(f"  INSUFFICIENT SIGNAL ({len(selected)} features)")
+            # Return a degenerate result rather than training on noise
+            if len(selected) == 0:
+                return None, None, None, []
+            # If we have at least 1-4, use them but warn heavily
+            warnings.append("WARNING: Very few features — high overfitting risk")
+
+        if verbose:
+            n_valid_folds = len(fold_feature_sets)
+            print(f"  Stable features: {len(selected)} selected "
+                  f"(from {n_valid_folds} valid folds)")
+
+        X_dev_sel = X_dev[selected]
+        X_hold_sel = X_hold[selected]
 
         if not cv_oos_scores:
             warnings.append("No valid CV folds")
@@ -1226,8 +1350,10 @@ class ModelTrainer:
         joblib.dump(global_model, f"{prefix}_global_model.pkl")
         joblib.dump(global_scaler, f"{prefix}_global_scaler.pkl")
 
-        # Regime models
+        # Regime models (skip None entries from regimes with insufficient samples)
         for code, model in regime_models.items():
+            if model is None:
+                continue
             joblib.dump(model, f"{prefix}_regime{code}_model.pkl")
             joblib.dump(regime_scalers[code], f"{prefix}_regime{code}_scaler.pkl")
 
@@ -1303,29 +1429,38 @@ class ModelTrainer:
         self,
         global_model, global_scaler, global_features, global_result,
         X: pd.DataFrame, y: pd.Series, horizon: int, versioned: bool,
-    ):
+    ) -> Optional[Dict]:
         """Fit isotonic regression calibrator on holdout predictions vs outcomes.
+
+        The holdout is split 50/50 into calibration-fit and calibration-validate
+        portions to prevent calibration overfitting. ECE (Expected Calibration
+        Error) is computed on the validation portion and returned.
 
         Saves calibrator.pkl alongside the model so the predictor can load and
         apply it to map raw confidence to empirical probability of correctness.
+
+        Returns:
+            Dict with calibration metrics (ece, n_cal_fit, n_cal_val) or None.
         """
+        from .calibration import compute_ece
+
         try:
             from sklearn.isotonic import IsotonicRegression
         except ImportError:
-            return  # sklearn not available
+            return None  # sklearn not available
 
         try:
             # Use the holdout portion to calibrate
             holdout_frac = HOLDOUT_FRACTION
             n = len(X)
-            n_holdout = max(20, int(n * holdout_frac))
+            n_holdout = max(40, int(n * holdout_frac))
             holdout_X = X.iloc[-n_holdout:]
             holdout_y = y.iloc[-n_holdout:]
 
             # Prepare features matching global model
             available = [c for c in global_features if c in holdout_X.columns]
             if not available:
-                return
+                return None
             X_cal = holdout_X[available].copy()
             for col in global_features:
                 if col not in X_cal.columns:
@@ -1346,11 +1481,38 @@ class ModelTrainer:
             if abs_preds.max() > 1e-10:
                 raw_confidence = abs_preds / abs_preds.max()
             else:
-                return
+                return None
 
-            # Fit isotonic regression: raw_confidence -> P(direction_correct)
-            calibrator = IsotonicRegression(out_of_bounds="clip")
-            calibrator.fit(raw_confidence, direction_correct)
+            # ── Split holdout 50/50: calibration-fit vs calibration-validate ──
+            # Use temporal ordering (first half for fitting, second half for validation)
+            # to prevent look-ahead in the calibration itself.
+            cal_split = len(raw_confidence) // 2
+            if cal_split < 10:
+                # Too few samples to split; fit on all but report no ECE
+                calibrator = IsotonicRegression(out_of_bounds="clip")
+                calibrator.fit(raw_confidence, direction_correct)
+                cal_metrics = {"ece": None, "n_cal_fit": len(raw_confidence), "n_cal_val": 0}
+            else:
+                # Fit on first half
+                cal_fit_conf = raw_confidence[:cal_split]
+                cal_fit_outcome = direction_correct[:cal_split]
+
+                # Validate on second half
+                cal_val_conf = raw_confidence[cal_split:]
+                cal_val_outcome = direction_correct[cal_split:]
+
+                calibrator = IsotonicRegression(out_of_bounds="clip")
+                calibrator.fit(cal_fit_conf, cal_fit_outcome)
+
+                # Compute ECE on validation half
+                cal_val_preds = calibrator.transform(cal_val_conf)
+                ece = compute_ece(cal_val_preds, cal_val_outcome)
+
+                cal_metrics = {
+                    "ece": float(ece),
+                    "n_cal_fit": int(cal_split),
+                    "n_cal_val": int(len(raw_confidence) - cal_split),
+                }
 
             # Save calibrator
             registry = ModelRegistry() if versioned else None
@@ -1361,8 +1523,10 @@ class ModelTrainer:
             if save_dir is not None:
                 calibrator_path = save_dir / f"ensemble_{horizon}d_calibrator.pkl"
                 joblib.dump(calibrator, str(calibrator_path))
+
+            return cal_metrics
         except (ValueError, RuntimeError, OSError):
-            pass  # Calibration is optional; don't fail training
+            return None  # Calibration is optional; don't fail training
 
     def _print_summary(self, result: EnsembleResult, regimes: Optional[pd.Series] = None,
                         targets: Optional[pd.Series] = None):

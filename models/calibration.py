@@ -219,3 +219,109 @@ class ConfidenceCalibrator:
             f"ConfidenceCalibrator(method='{self.method}', "
             f"status={status}, backend={backend})"
         )
+
+
+# ---------------------------------------------------------------------------
+# Expected Calibration Error (ECE)
+# ---------------------------------------------------------------------------
+
+def compute_ece(
+    predicted_probs: np.ndarray,
+    actual_outcomes: np.ndarray,
+    n_bins: int = 10,
+) -> float:
+    """Compute Expected Calibration Error.
+
+    ECE measures how well predicted probabilities match observed frequencies.
+    Lower ECE indicates better calibration. A perfectly calibrated model
+    has ECE = 0.
+
+    Parameters
+    ----------
+    predicted_probs : np.ndarray
+        Predicted probabilities in [0, 1].
+    actual_outcomes : np.ndarray
+        Binary outcomes (0 or 1).
+    n_bins : int
+        Number of equal-width bins to partition predictions into.
+
+    Returns
+    -------
+    float
+        ECE value in [0, 1].
+    """
+    predicted_probs = np.asarray(predicted_probs, dtype=float).ravel()
+    actual_outcomes = np.asarray(actual_outcomes, dtype=float).ravel()
+
+    if len(predicted_probs) == 0:
+        return 0.0
+
+    bins = np.linspace(0, 1, n_bins + 1)
+    ece = 0.0
+    total = len(predicted_probs)
+
+    for i in range(n_bins):
+        mask = (predicted_probs >= bins[i]) & (predicted_probs < bins[i + 1])
+        # Include upper boundary in last bin
+        if i == n_bins - 1:
+            mask = mask | (predicted_probs == bins[i + 1])
+        n_in_bin = mask.sum()
+        if n_in_bin > 0:
+            avg_pred = predicted_probs[mask].mean()
+            avg_actual = actual_outcomes[mask].mean()
+            ece += (n_in_bin / total) * abs(avg_pred - avg_actual)
+
+    return float(ece)
+
+
+def compute_reliability_curve(
+    predicted_probs: np.ndarray,
+    actual_outcomes: np.ndarray,
+    n_bins: int = 10,
+) -> dict:
+    """Compute reliability curve data for calibration diagnostics.
+
+    Parameters
+    ----------
+    predicted_probs : np.ndarray
+        Predicted probabilities in [0, 1].
+    actual_outcomes : np.ndarray
+        Binary outcomes (0 or 1).
+    n_bins : int
+        Number of bins.
+
+    Returns
+    -------
+    dict
+        Keys: 'bin_centers', 'observed_freq', 'avg_predicted', 'bin_counts'.
+    """
+    predicted_probs = np.asarray(predicted_probs, dtype=float).ravel()
+    actual_outcomes = np.asarray(actual_outcomes, dtype=float).ravel()
+
+    bins = np.linspace(0, 1, n_bins + 1)
+    bin_centers = []
+    observed_freq = []
+    avg_predicted = []
+    bin_counts = []
+
+    for i in range(n_bins):
+        mask = (predicted_probs >= bins[i]) & (predicted_probs < bins[i + 1])
+        if i == n_bins - 1:
+            mask = mask | (predicted_probs == bins[i + 1])
+        n_in_bin = int(mask.sum())
+        bin_counts.append(n_in_bin)
+        if n_in_bin > 0:
+            bin_centers.append(float((bins[i] + bins[i + 1]) / 2))
+            observed_freq.append(float(actual_outcomes[mask].mean()))
+            avg_predicted.append(float(predicted_probs[mask].mean()))
+        else:
+            bin_centers.append(float((bins[i] + bins[i + 1]) / 2))
+            observed_freq.append(np.nan)
+            avg_predicted.append(np.nan)
+
+    return {
+        "bin_centers": bin_centers,
+        "observed_freq": observed_freq,
+        "avg_predicted": avg_predicted,
+        "bin_counts": bin_counts,
+    }

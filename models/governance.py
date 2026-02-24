@@ -3,7 +3,7 @@ Champion/challenger governance for model versions.
 """
 import json
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -49,12 +49,49 @@ class ModelGovernance:
 
     @staticmethod
     def _score(metrics: Dict[str, float]) -> float:
-        """Internal helper for score."""
+        """Compute champion score from performance and validation metrics.
+
+        Scoring formula:
+            performance (75%): OOS Spearman, holdout Spearman, CV gap penalty
+            validation  (25%): DSR significance, PBO, Monte Carlo, calibration ECE
+
+        Validation metrics are optional — when absent, only the performance
+        portion contributes. This ensures backward compatibility with models
+        trained before validation integration was added.
+        """
+        # ── Base performance score (existing) ──
         oos = float(metrics.get("oos_spearman", 0.0))
         hold = float(metrics.get("holdout_spearman", 0.0))
         gap = float(metrics.get("cv_gap", 0.0))
         w = GOVERNANCE_SCORE_WEIGHTS
-        return w["oos_spearman"] * oos + w["holdout_spearman"] * hold + w["cv_gap_penalty"] * max(0.0, gap)
+        perf_score = (
+            w["oos_spearman"] * oos
+            + w["holdout_spearman"] * hold
+            + w["cv_gap_penalty"] * max(0.0, gap)
+        )
+
+        # ── Validation bonus/penalty (new) ──
+        val_score = 0.0
+
+        # DSR significance: bonus for statistical significance, penalty for failure
+        if "dsr_significant" in metrics:
+            val_score += 0.10 if metrics["dsr_significant"] else -0.10
+
+        # PBO (Probability of Backtest Overfitting): lower = better
+        if "pbo" in metrics:
+            pbo = float(metrics["pbo"])
+            val_score += 0.05 * (1.0 - min(1.0, max(0.0, pbo)))
+
+        # Monte Carlo significance: bonus for statistical significance
+        if "mc_significant" in metrics:
+            val_score += 0.05 if metrics["mc_significant"] else -0.05
+
+        # Calibration ECE: lower = better calibrated
+        if "ece" in metrics and metrics["ece"] is not None:
+            ece = float(metrics["ece"])
+            val_score += 0.05 * (1.0 - min(1.0, ece * 10))
+
+        return perf_score + val_score
 
     def get_champion_version(self, horizon: int) -> Optional[str]:
         """Return champion version."""
@@ -73,7 +110,7 @@ class ModelGovernance:
     ) -> Dict:
         """Evaluate and update."""
         payload = self._load()
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         score = self._score(metrics)
 
         h_key = str(horizon)
