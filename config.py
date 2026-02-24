@@ -168,7 +168,7 @@ REGIME_NAMES = {                                   # STATUS: ACTIVE — used in 
     3: "high_volatility",
 }
 MIN_REGIME_SAMPLES = 500                          # STATUS: ACTIVE — models/trainer.py; minimum training samples per regime model
-REGIME_MODEL_TYPE = "hmm"                         # STATUS: ACTIVE — regime/detector.py; "hmm" or "rule"
+REGIME_MODEL_TYPE = "jump"                        # STATUS: ACTIVE — regime/detector.py; "jump", "hmm", or "rule"
 REGIME_HMM_STATES = 4                             # STATUS: ACTIVE — regime/hmm.py; number of hidden states
 REGIME_HMM_MAX_ITER = 60                          # STATUS: ACTIVE — regime/hmm.py; EM iteration limit
 REGIME_HMM_STICKINESS = 0.92                      # STATUS: ACTIVE — regime/hmm.py; diagonal prior bias for sticky transitions
@@ -184,6 +184,16 @@ REGIME_JUMP_PENALTY = 0.02                        # STATUS: ACTIVE — regime/ju
 REGIME_EXPECTED_CHANGES_PER_YEAR = 4              # STATUS: ACTIVE — regime/jump_model.py; calibrate jump penalty from expected regime changes/yr
 REGIME_ENSEMBLE_ENABLED = True                    # STATUS: ACTIVE — regime/detector.py; combine HMM + JM + rule-based via majority vote
 REGIME_ENSEMBLE_CONSENSUS_THRESHOLD = 2           # STATUS: ACTIVE — regime/detector.py; require N of 3 methods to agree for transition
+
+# PyPI jumpmodels package configuration
+REGIME_JUMP_USE_PYPI_PACKAGE = True               # STATUS: ACTIVE — regime/jump_model_pypi.py; True=PyPI jumpmodels, False=legacy custom
+REGIME_JUMP_CV_FOLDS = 5                          # STATUS: ACTIVE — regime/jump_model_pypi.py; time-series CV folds for lambda selection
+REGIME_JUMP_LAMBDA_RANGE = (0.005, 0.15)          # STATUS: ACTIVE — regime/jump_model_pypi.py; search range for jump penalty
+REGIME_JUMP_LAMBDA_STEPS = 20                     # STATUS: ACTIVE — regime/jump_model_pypi.py; grid points for lambda search
+REGIME_JUMP_MAX_ITER = 50                         # STATUS: ACTIVE — regime/jump_model_pypi.py; coordinate descent iterations
+REGIME_JUMP_TOL = 1e-6                            # STATUS: ACTIVE — regime/jump_model_pypi.py; convergence tolerance
+REGIME_JUMP_USE_CONTINUOUS = True                  # STATUS: ACTIVE — regime/jump_model_pypi.py; continuous JM for soft probabilities
+REGIME_JUMP_MODE_LOSS_WEIGHT = 0.1                # STATUS: ACTIVE — regime/jump_model_pypi.py; mode loss penalty (continuous JM)
 
 # ── Kalshi Purge/Embargo by Event Type (E3) ─────────────────────────────
 KALSHI_PURGE_WINDOW_BY_EVENT = {"CPI": 14, "FOMC": 21, "NFP": 14, "GDP": 14}  # STATUS: PLACEHOLDER — defined but never imported

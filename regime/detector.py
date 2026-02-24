@@ -34,7 +34,7 @@ from .hmm import (
     map_raw_states_to_regimes,
     select_hmm_states_bic,
 )
-from .jump_model import StatisticalJumpModel
+from .jump_model_legacy import StatisticalJumpModel
 
 
 @dataclass
@@ -264,26 +264,26 @@ class RegimeDetector:
         )
 
     def _jump_detect(self, features: pd.DataFrame) -> RegimeOutput:
-        """Detect regimes using the Statistical Jump Model."""
+        """Detect regimes using the Statistical Jump Model.
+
+        When ``REGIME_JUMP_USE_PYPI_PACKAGE`` is True (default), uses the
+        ``jumpmodels`` PyPI package via :class:`PyPIJumpModel`.  Otherwise
+        falls back to the legacy in-repo ``StatisticalJumpModel``.
+        """
         if len(features) < 80:
             return self._rule_detect(features)
 
         obs_df = build_hmm_observation_matrix(features)
         X = obs_df.values.astype(float)
 
-        jump_penalty = StatisticalJumpModel.compute_jump_penalty_from_data(
-            REGIME_EXPECTED_CHANGES_PER_YEAR
-        )
-
-        model = StatisticalJumpModel(
-            n_regimes=min(self.hmm_states, 4),
-            jump_penalty=jump_penalty,
-            max_iter=50,
-        )
+        from ..config import REGIME_JUMP_USE_PYPI_PACKAGE
 
         try:
-            result = model.fit(X)
-        except (ValueError, RuntimeError) as e:
+            if REGIME_JUMP_USE_PYPI_PACKAGE:
+                result = self._jump_detect_pypi(X, features)
+            else:
+                result = self._jump_detect_legacy(X)
+        except (ValueError, RuntimeError, ImportError) as e:
             logger.warning("Jump model fit failed, falling back to rules: %s", e)
             return self._rule_detect(features)
 
@@ -320,6 +320,27 @@ class RegimeDetector:
             model_type="jump",
             uncertainty=uncertainty,
         )
+
+    def _jump_detect_pypi(self, X: np.ndarray, features: pd.DataFrame):
+        """Fit the PyPI JumpModel wrapper and return a JumpModelResult."""
+        from .jump_model_pypi import PyPIJumpModel
+
+        model = PyPIJumpModel(
+            n_regimes=min(self.hmm_states, 4),
+        )
+        return model.fit(X)
+
+    def _jump_detect_legacy(self, X: np.ndarray):
+        """Fit the legacy StatisticalJumpModel and return a JumpModelResult."""
+        jump_penalty = StatisticalJumpModel.compute_jump_penalty_from_data(
+            REGIME_EXPECTED_CHANGES_PER_YEAR
+        )
+        model = StatisticalJumpModel(
+            n_regimes=min(self.hmm_states, 4),
+            jump_penalty=jump_penalty,
+            max_iter=50,
+        )
+        return model.fit(X)
 
     def detect_ensemble(self, features: pd.DataFrame) -> RegimeOutput:
         """Ensemble regime detection using only genuinely independent methods.
