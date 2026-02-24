@@ -46,7 +46,7 @@ class ResearchFactorTests(unittest.TestCase):
         required_cols = [
             "OFI_20",
             "LOB_State",
-            "TSMom_63",
+            "TSMom_lag63",
             "SigL1_Return_20",
             "VolSurf_Level",
             "VolSurf_PC1",

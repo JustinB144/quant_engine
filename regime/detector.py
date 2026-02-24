@@ -264,27 +264,29 @@ class RegimeDetector:
         )
 
     def detect_ensemble(self, features: pd.DataFrame) -> RegimeOutput:
-        """Ensemble regime detection: run HMM, JM, and rule-based, then take majority vote.
+        """Ensemble regime detection using only genuinely independent methods.
 
-        Only declares a regime change when at least REGIME_ENSEMBLE_CONSENSUS_THRESHOLD
-        methods agree, reducing false switches.
+        Runs HMM and rule-based detection always, plus the statistical jump
+        model when REGIME_JUMP_MODEL_ENABLED is True.  Only declares a regime
+        change when at least ``REGIME_ENSEMBLE_CONSENSUS_THRESHOLD`` methods
+        agree (capped at ``n_methods``), reducing false switches.
+
+        With 2 methods the threshold becomes ``min(threshold, 2)`` which
+        requires unanimity — no phantom third vote inflates agreement.
         """
         rule_out = self._rule_detect(features)
         hmm_out = self._hmm_detect(features)
 
+        # Build the method list from genuinely independent detectors only.
+        method_outputs = [("rule", rule_out), ("hmm", hmm_out)]
         if REGIME_JUMP_MODEL_ENABLED:
-            jump_out = self._jump_detect(features)
-        else:
-            jump_out = rule_out  # duplicate rule-based as placeholder
+            method_outputs.append(("jump", self._jump_detect(features)))
+
+        n_methods = len(method_outputs)
+        threshold = min(REGIME_ENSEMBLE_CONSENSUS_THRESHOLD, n_methods)
 
         # Stack regime arrays: (T, n_methods)
-        methods = np.column_stack([
-            rule_out.regime.values,
-            hmm_out.regime.values,
-            jump_out.regime.values,
-        ])
-        n_methods = methods.shape[1]
-        threshold = min(REGIME_ENSEMBLE_CONSENSUS_THRESHOLD, n_methods)
+        methods = np.column_stack([m.regime.values for _, m in method_outputs])
 
         # Per-timestep majority vote
         T = len(features)
@@ -305,12 +307,10 @@ class RegimeDetector:
 
         regime = pd.Series(consensus, index=features.index, dtype=int)
 
-        # Blend probabilities from all methods (weighted: HMM 0.4, JM 0.35, Rule 0.25)
-        w_hmm, w_jm, w_rule = 0.4, 0.35, 0.25
-        probs = (
-            hmm_out.probabilities.fillna(0.0) * w_hmm
-            + jump_out.probabilities.fillna(0.0) * w_jm
-            + rule_out.probabilities.fillna(0.0) * w_rule
+        # Blend probabilities: equal weights across available methods
+        weight = 1.0 / n_methods
+        probs = sum(
+            m.probabilities.fillna(0.0) * weight for _, m in method_outputs
         )
         probs = probs.fillna(0.0)
         probs = probs.div(probs.sum(axis=1).replace(0, 1), axis=0)

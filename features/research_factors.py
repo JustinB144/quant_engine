@@ -207,6 +207,13 @@ def compute_time_series_momentum_factors(
 ) -> pd.DataFrame:
     """
     Vol-scaled time-series momentum factors (Moskowitz/Ooi/Pedersen style).
+
+    All momentum computations are **backward-looking** (causal):
+        mom_h = close / close.shift(h) - 1
+    This compares the current price to the price h bars ago.
+
+    Column naming uses ``TSMom_lag{h}`` to explicitly signal that these
+    are lagged (causal) features, not forward-looking.
     """
     close, _, _, _, _ = _required_ohlcv(df)
     lookbacks = tuple(int(x) for x in config.tsmom_lookbacks if int(x) > 1)
@@ -218,16 +225,16 @@ def compute_time_series_momentum_factors(
     out = pd.DataFrame(index=df.index)
     lb_cols: list[str] = []
     for lb in lookbacks:
+        # Backward-looking momentum: close / close.shift(lb) - 1
         raw = _safe_pct_change(close, lb)
         scaled = raw / (vol * np.sqrt(lb / 252.0) + _EPS)
-        col = f"TSMom_{lb}"
+        col = f"TSMom_lag{lb}"
         out[col] = scaled
         lb_cols.append(col)
 
-    if 252 in lookbacks:
-        out["TSMom_12m1m"] = close.shift(21) / close.shift(252) - 1.0
-    else:
-        out["TSMom_12m1m"] = close.shift(21) / close.shift(252) - 1.0
+    # 12-month minus 1-month momentum (already backward-looking)
+    # shift(21) = 21 bars ago, shift(252) = 252 bars ago
+    out["TSMom_12m1m"] = close.shift(21) / close.shift(252) - 1.0
 
     if lb_cols:
         mat = out[lb_cols]
