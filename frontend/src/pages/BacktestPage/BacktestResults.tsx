@@ -4,6 +4,7 @@ import ChartContainer from '@/components/charts/ChartContainer'
 import MetricCard from '@/components/ui/MetricCard'
 import LineChart from '@/components/charts/LineChart'
 import TradeTable from '@/components/tables/TradeTable'
+import { SignificanceBadgeRow } from '@/components/ui/SignificanceBadge'
 import { useLatestBacktest, useTrades, useEquityCurve } from '@/api/queries/useBacktests'
 import { useFilterStore } from '@/store/filterStore'
 
@@ -92,6 +93,20 @@ export default function BacktestResults() {
           </span>
         )}
       </div>
+
+      {/* Statistical significance badges */}
+      {(bt.sharpe_pvalue != null || bt.spa_pvalue != null || bt.dsr_pvalue != null) && (
+        <div className="mb-3">
+          <SignificanceBadgeRow
+            tests={[
+              { name: 'Sharpe', pValue: bt.sharpe_pvalue },
+              { name: 'SPA', pValue: bt.spa_pvalue },
+              { name: 'DSR', pValue: bt.dsr_pvalue },
+              { name: 'IC', pValue: bt.ic_pvalue },
+            ].filter((t) => t.pValue != null)}
+          />
+        </div>
+      )}
 
       <TabGroup tabs={TABS} activeKey={tab} onChange={setTab} />
 

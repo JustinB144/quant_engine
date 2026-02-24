@@ -8,6 +8,7 @@ import SignalControls from './SignalDeskPage/SignalControls'
 import SignalRankingsPanel from './SignalDeskPage/SignalRankingsPanel'
 import SignalDistribution from './SignalDeskPage/SignalDistribution'
 import ConfidenceScatter from './SignalDeskPage/ConfidenceScatter'
+import EnsembleDisagreement from './SignalDeskPage/EnsembleDisagreement'
 import { useLatestSignals } from '@/api/queries/useSignals'
 import { useFilterStore } from '@/store/filterStore'
 
@@ -47,6 +48,9 @@ export default function SignalDeskPage() {
           <div className="grid grid-cols-2 gap-3">
             <SignalDistribution signals={signals} />
             <ConfidenceScatter signals={signals} />
+          </div>
+          <div className="mt-3">
+            <EnsembleDisagreement signals={signals} />
           </div>
         </>
       )}

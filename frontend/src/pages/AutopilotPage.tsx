@@ -5,6 +5,7 @@ import TabGroup from '@/components/ui/TabGroup'
 import AlertBanner from '@/components/ui/AlertBanner'
 import StrategyCandidatesTab from './AutopilotPage/StrategyCandidatesTab'
 import PaperTradingTab from './AutopilotPage/PaperTradingTab'
+import PaperPnLTracker from './AutopilotPage/PaperPnLTracker'
 import KalshiEventsTab from './AutopilotPage/KalshiEventsTab'
 import LifecycleTimeline from './AutopilotPage/LifecycleTimeline'
 import { useLatestCycle } from '@/api/queries/useAutopilot'
@@ -12,6 +13,7 @@ import { useLatestCycle } from '@/api/queries/useAutopilot'
 const TABS = [
   { key: 'strategies', label: 'Strategy Candidates' },
   { key: 'paper', label: 'Paper Trading' },
+  { key: 'pnl', label: 'Live P&L' },
   { key: 'kalshi', label: 'Kalshi Events' },
   { key: 'lifecycle', label: 'Lifecycle' },
 ]
@@ -77,6 +79,7 @@ export default function AutopilotPage() {
       <TabGroup tabs={TABS} activeKey={tab} onChange={setTab} />
       {tab === 'strategies' && <StrategyCandidatesTab />}
       {tab === 'paper' && <PaperTradingTab />}
+      {tab === 'pnl' && <PaperPnLTracker />}
       {tab === 'kalshi' && <KalshiEventsTab />}
       {tab === 'lifecycle' && <LifecycleTimeline />}
     </PageContainer>

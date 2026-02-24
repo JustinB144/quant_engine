@@ -22,6 +22,11 @@ from ..config import (
     REGIME_HMM_AUTO_SELECT_STATES,
     REGIME_HMM_MIN_STATES,
     REGIME_HMM_MAX_STATES,
+    REGIME_JUMP_MODEL_ENABLED,
+    REGIME_JUMP_PENALTY,
+    REGIME_EXPECTED_CHANGES_PER_YEAR,
+    REGIME_ENSEMBLE_ENABLED,
+    REGIME_ENSEMBLE_CONSENSUS_THRESHOLD,
 )
 from .hmm import (
     GaussianHMM,
@@ -29,6 +34,7 @@ from .hmm import (
     map_raw_states_to_regimes,
     select_hmm_states_bic,
 )
+from .jump_model import StatisticalJumpModel
 
 
 @dataclass
@@ -193,6 +199,120 @@ class RegimeDetector:
             uncertainty=uncertainty,
         )
 
+    def _jump_detect(self, features: pd.DataFrame) -> RegimeOutput:
+        """Detect regimes using the Statistical Jump Model."""
+        if len(features) < 80:
+            return self._rule_detect(features)
+
+        obs_df = build_hmm_observation_matrix(features)
+        X = obs_df.values.astype(float)
+
+        jump_penalty = StatisticalJumpModel.compute_jump_penalty_from_data(
+            REGIME_EXPECTED_CHANGES_PER_YEAR
+        )
+
+        model = StatisticalJumpModel(
+            n_regimes=min(self.hmm_states, 4),
+            jump_penalty=jump_penalty,
+            max_iter=50,
+        )
+
+        try:
+            result = model.fit(X)
+        except (ValueError, RuntimeError) as e:
+            logger.warning("Jump model fit failed, falling back to rules: %s", e)
+            return self._rule_detect(features)
+
+        # Map raw states to semantic regimes using the same approach as HMM
+        mapping = map_raw_states_to_regimes(result.regime_sequence, features)
+        regime_vals = np.array(
+            [mapping.get(int(s), 2) for s in result.regime_sequence], dtype=int
+        )
+        regime = pd.Series(regime_vals, index=features.index, dtype=int)
+
+        # Build canonical 4-regime probability matrix
+        probs = pd.DataFrame(
+            0.0, index=features.index, columns=[f"regime_prob_{i}" for i in range(4)]
+        )
+        for raw_s in range(result.regime_probs.shape[1]):
+            reg = mapping.get(raw_s, 2)
+            probs[f"regime_prob_{reg}"] += result.regime_probs[:, raw_s]
+        probs = probs.div(probs.sum(axis=1).replace(0, 1), axis=0)
+        confidence = probs.max(axis=1).clip(0.0, 1.0)
+        uncertainty = self.get_regime_uncertainty(probs)
+
+        return RegimeOutput(
+            regime=regime,
+            confidence=confidence.astype(float),
+            probabilities=probs.astype(float),
+            transition_matrix=None,
+            model_type="jump",
+            uncertainty=uncertainty,
+        )
+
+    def detect_ensemble(self, features: pd.DataFrame) -> RegimeOutput:
+        """Ensemble regime detection: run HMM, JM, and rule-based, then take majority vote.
+
+        Only declares a regime change when at least REGIME_ENSEMBLE_CONSENSUS_THRESHOLD
+        methods agree, reducing false switches.
+        """
+        rule_out = self._rule_detect(features)
+        hmm_out = self._hmm_detect(features)
+
+        if REGIME_JUMP_MODEL_ENABLED:
+            jump_out = self._jump_detect(features)
+        else:
+            jump_out = rule_out  # duplicate rule-based as placeholder
+
+        # Stack regime arrays: (T, n_methods)
+        methods = np.column_stack([
+            rule_out.regime.values,
+            hmm_out.regime.values,
+            jump_out.regime.values,
+        ])
+        n_methods = methods.shape[1]
+        threshold = min(REGIME_ENSEMBLE_CONSENSUS_THRESHOLD, n_methods)
+
+        # Per-timestep majority vote
+        T = len(features)
+        consensus = np.full(T, 2, dtype=int)  # default: mean_reverting
+        vote_confidence = np.full(T, 0.5, dtype=float)
+
+        for t in range(T):
+            votes = methods[t]
+            unique, counts = np.unique(votes, return_counts=True)
+            best_idx = np.argmax(counts)
+            if counts[best_idx] >= threshold:
+                consensus[t] = unique[best_idx]
+                vote_confidence[t] = counts[best_idx] / n_methods
+            else:
+                # No consensus — use HMM prediction as tiebreaker (most sophisticated)
+                consensus[t] = hmm_out.regime.iloc[t]
+                vote_confidence[t] = 1.0 / n_methods
+
+        regime = pd.Series(consensus, index=features.index, dtype=int)
+
+        # Blend probabilities from all methods (weighted: HMM 0.4, JM 0.35, Rule 0.25)
+        w_hmm, w_jm, w_rule = 0.4, 0.35, 0.25
+        probs = (
+            hmm_out.probabilities * w_hmm
+            + jump_out.probabilities * w_jm
+            + rule_out.probabilities * w_rule
+        )
+        probs = probs.div(probs.sum(axis=1).replace(0, 1), axis=0)
+
+        confidence = pd.Series(vote_confidence, index=features.index, dtype=float)
+        uncertainty = self.get_regime_uncertainty(probs)
+
+        return RegimeOutput(
+            regime=regime,
+            confidence=confidence,
+            probabilities=probs.astype(float),
+            transition_matrix=hmm_out.transition_matrix,
+            model_type="ensemble",
+            uncertainty=uncertainty,
+        )
+
     def detect_with_confidence(self, features: pd.DataFrame) -> tuple:
         """detect with confidence."""
         out = self.detect_full(features)
@@ -200,8 +320,12 @@ class RegimeDetector:
 
     def detect_full(self, features: pd.DataFrame) -> RegimeOutput:
         """detect full."""
+        if REGIME_ENSEMBLE_ENABLED and self.method == "hmm":
+            return self.detect_ensemble(features)
         if self.method == "hmm":
             return self._hmm_detect(features)
+        if self.method == "jump":
+            return self._jump_detect(features)
         return self._rule_detect(features)
 
     def regime_features(self, features: pd.DataFrame) -> pd.DataFrame:

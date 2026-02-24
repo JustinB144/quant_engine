@@ -155,6 +155,11 @@ REGIME_HMM_COVARIANCE_TYPE = "full"  # "full" (captures return-vol correlation) 
 REGIME_HMM_AUTO_SELECT_STATES = True  # Use BIC to select optimal number of states
 REGIME_HMM_MIN_STATES = 2
 REGIME_HMM_MAX_STATES = 6
+REGIME_JUMP_MODEL_ENABLED = True       # Use Statistical Jump Model alongside HMM
+REGIME_JUMP_PENALTY = 0.02             # Jump penalty λ (higher → fewer transitions)
+REGIME_EXPECTED_CHANGES_PER_YEAR = 4   # Calibrate jump penalty from expected regime changes/yr
+REGIME_ENSEMBLE_ENABLED = True         # Combine HMM + JM + rule-based via majority vote
+REGIME_ENSEMBLE_CONSENSUS_THRESHOLD = 2  # Require N of 3 methods to agree for transition
 
 # ── Kalshi Purge/Embargo by Event Type (E3) ─────────────────────────────
 KALSHI_PURGE_WINDOW_BY_EVENT = {"CPI": 14, "FOMC": 21, "NFP": 14, "GDP": 14}
