@@ -11,6 +11,8 @@ Components:
     - PortfolioOptimizer: mean-variance optimisation with turnover penalty
     - Attribution: performance decomposition (market, factor, alpha)
     - StressTest: scenario analysis and historical drawdown replay
+    - FactorExposureMonitor: track unintended factor tilts
+    - CostBudget: transaction cost budget optimization
 """
 from .position_sizer import PositionSizer
 from .portfolio_risk import PortfolioRiskManager
@@ -28,6 +30,8 @@ from .stress_test import (
     factor_stress_test,
     CRISIS_SCENARIOS,
 )
+from .factor_monitor import FactorExposureMonitor
+from .cost_budget import optimize_rebalance_cost
 
 __all__ = [
     "PositionSizer",
@@ -49,4 +53,6 @@ __all__ = [
     "correlation_stress_test",
     "factor_stress_test",
     "CRISIS_SCENARIOS",
+    "FactorExposureMonitor",
+    "optimize_rebalance_cost",
 ]

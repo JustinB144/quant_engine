@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from ..config import MODEL_DIR, REGIME_NAMES
+from .conformal import ConformalPredictor
 from .governance import ModelGovernance
 from .versioning import ModelRegistry
 
@@ -139,6 +140,17 @@ class EnsemblePredictor:
                 self.calibrator = joblib.load(str(calibrator_path))
             except (OSError, ValueError):
                 self.calibrator = None
+
+        # Conformal predictor (optional — provides prediction intervals)
+        self.conformal: Optional[ConformalPredictor] = None
+        conformal_path = resolved_dir / f"ensemble_{self.horizon}d_conformal.json"
+        if conformal_path.exists():
+            try:
+                with open(conformal_path, "r") as f:
+                    conformal_data = json.load(f)
+                self.conformal = ConformalPredictor.from_dict(conformal_data)
+            except (OSError, ValueError, json.JSONDecodeError):
+                self.conformal = None
 
         # Regime models
         self.regime_models = {}
@@ -332,6 +344,21 @@ class EnsemblePredictor:
         if self.calibrator is not None:
             result["confidence"] = self._calibrate_confidence(result["confidence"].values)
 
+        # ── Prediction intervals (conformal prediction) ──
+        if self.conformal is not None and self.conformal.is_calibrated:
+            intervals = self.conformal.predict_intervals_batch(blended)
+            result["prediction_lower"] = intervals[:, 0]
+            result["prediction_upper"] = intervals[:, 1]
+            result["prediction_interval_width"] = intervals[:, 1] - intervals[:, 0]
+            result["uncertainty_scalar"] = self.conformal.uncertainty_scalars(
+                intervals[:, 1] - intervals[:, 0]
+            )
+        else:
+            result["prediction_lower"] = np.nan
+            result["prediction_upper"] = np.nan
+            result["prediction_interval_width"] = np.nan
+            result["uncertainty_scalar"] = 1.0
+
         # ── Regime 2 suppression ──
         # When regime == 2 (high_vol), suppress predictions by zeroing
         # confidence and flagging the row.  This centralizes the trade gate
@@ -357,6 +384,59 @@ class EnsemblePredictor:
             return np.clip(calibrated, 0.0, 1.0)
         except (ValueError, AttributeError):
             return raw_confidence
+
+    @staticmethod
+    def blend_multi_horizon(
+        predictions: Dict[int, np.ndarray],
+        regime: int,
+        custom_weights: Optional[Dict[int, Dict[int, float]]] = None,
+    ) -> np.ndarray:
+        """Blend predictions from multiple horizon models.
+
+        Regime-adaptive blending weights give more weight to shorter horizons
+        in high-volatility regimes (faster mean-reversion) and longer horizons
+        in trending regimes (momentum persists).
+
+        Args:
+            predictions: {horizon_days: prediction_array} for each horizon.
+            regime: Current regime code (0-3).
+            custom_weights: Optional override {regime: {horizon: weight}}.
+
+        Returns:
+            Blended prediction array.
+        """
+        # Default regime-aware blending weights
+        # Keys: regime code, Values: {horizon_days: weight}
+        default_weights: Dict[int, Dict[int, float]] = {
+            0: {5: 0.10, 10: 0.30, 20: 0.60},  # trending_bull: momentum persists
+            1: {5: 0.30, 10: 0.40, 20: 0.30},  # trending_bear: balanced
+            2: {5: 0.50, 10: 0.30, 20: 0.20},  # mean_reverting: quick reversals
+            3: {5: 0.60, 10: 0.30, 20: 0.10},  # high_volatility: short-term focus
+        }
+
+        weights = (custom_weights or default_weights).get(
+            regime, {5: 0.33, 10: 0.34, 20: 0.33}
+        )
+
+        available_horizons = sorted(set(predictions.keys()) & set(weights.keys()))
+        if not available_horizons:
+            # Fall back to equal weighting of whatever horizons are available
+            n = len(predictions)
+            if n == 0:
+                return np.array([])
+            return np.mean(list(predictions.values()), axis=0)
+
+        # Normalize weights to sum to 1.0 for available horizons
+        total_weight = sum(weights[h] for h in available_horizons)
+        if total_weight <= 0:
+            total_weight = 1.0
+
+        blended = np.zeros_like(list(predictions.values())[0], dtype=float)
+        for h in available_horizons:
+            w = weights[h] / total_weight
+            blended += w * predictions[h]
+
+        return blended
 
     def predict_single(
         self,

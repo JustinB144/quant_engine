@@ -1596,3 +1596,62 @@ class ModelTrainer:
 
         print(f"\n  Training time: {result.train_time_seconds:.1f}s")
         print(f"{'─'*60}")
+
+    @staticmethod
+    def compute_shared_features(
+        features: pd.DataFrame,
+        targets_dict: Dict[int, pd.Series],
+        max_features: int = MAX_FEATURES_SELECTED,
+    ) -> List[str]:
+        """Identify features with predictive power across multiple horizons.
+
+        Trains a lightweight model per horizon and selects features that are
+        important for ANY horizon.  This finds features with persistent
+        predictive power across time scales, enabling multi-horizon
+        information sharing.
+
+        Args:
+            features: Full feature DataFrame.
+            targets_dict: {horizon_days: target_series} for each horizon.
+            max_features: Maximum number of shared features to select.
+
+        Returns:
+            List of shared feature names ranked by cross-horizon importance.
+        """
+        if GradientBoostingRegressor is None:
+            return features.columns[:max_features].tolist()
+
+        importance_sum = pd.Series(0.0, index=features.columns)
+        n_horizons = 0
+
+        for horizon, targets in targets_dict.items():
+            valid = targets.notna() & features.notna().any(axis=1)
+            X_h = features[valid]
+            y_h = targets[valid]
+            if len(X_h) < 100:
+                continue
+
+            # Quick GBR for feature importance
+            quick_model = GradientBoostingRegressor(
+                n_estimators=100,
+                max_depth=3,
+                min_samples_leaf=30,
+                learning_rate=0.1,
+                subsample=0.8,
+                random_state=42,
+            )
+            X_filled = X_h.fillna(X_h.median())
+            quick_model.fit(X_filled.values, y_h.values)
+            imp = pd.Series(
+                quick_model.feature_importances_, index=features.columns
+            )
+            importance_sum += imp
+            n_horizons += 1
+
+        if n_horizons == 0:
+            return features.columns[:max_features].tolist()
+
+        # Average importance across horizons
+        avg_importance = importance_sum / n_horizons
+        shared = avg_importance.nlargest(max_features).index.tolist()
+        return shared

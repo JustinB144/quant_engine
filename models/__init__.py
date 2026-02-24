@@ -8,6 +8,8 @@ from .calibration import ConfidenceCalibrator
 from .neural_net import TabularNet
 from .walk_forward import walk_forward_select
 from .feature_stability import FeatureStabilityTracker
+from .shift_detection import DistributionShiftDetector
+from .conformal import ConformalPredictor
 
 __all__ = [
     "ModelGovernance",
@@ -17,4 +19,6 @@ __all__ = [
     "TabularNet",
     "walk_forward_select",
     "FeatureStabilityTracker",
+    "DistributionShiftDetector",
+    "ConformalPredictor",
 ]

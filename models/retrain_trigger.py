@@ -29,6 +29,7 @@ from typing import Tuple, List, Dict, Optional
 import numpy as np
 
 from ..config import MODEL_DIR
+from .shift_detection import DistributionShiftDetector
 
 
 _DEFAULT_METADATA_PATH = str(MODEL_DIR / "retrain_metadata.json")
@@ -47,6 +48,7 @@ class RetrainTrigger:
         min_acceptable_sharpe: float = 0.3,
         min_acceptable_ic: float = 0.02,
         lookback_trades: int = 30,
+        shift_detector: Optional[DistributionShiftDetector] = None,
     ):
         """
         Args:
@@ -67,6 +69,7 @@ class RetrainTrigger:
         self.min_sharpe = min_acceptable_sharpe
         self.min_ic = min_acceptable_ic
         self.lookback = lookback_trades
+        self.shift_detector = shift_detector or DistributionShiftDetector()
 
         self.metadata = self._load_metadata()
 
@@ -132,6 +135,51 @@ class RetrainTrigger:
                 self.metadata['recent_ic_values'][-max_history:]
 
         self._save_metadata()
+
+    def check_shift(
+        self,
+        prediction_errors: Optional[np.ndarray] = None,
+        current_features: Optional["pd.DataFrame"] = None,
+    ) -> Tuple[bool, List[str]]:
+        """Check distribution shift triggers.
+
+        When a shift is detected, the effective retrain interval is halved,
+        making schedule-based retraining more aggressive.
+
+        Args:
+            prediction_errors: Recent prediction errors for CUSUM detection.
+            current_features: Current features for PSI detection.
+
+        Returns:
+            Tuple of (shift_detected, reasons).
+        """
+        import pandas as pd
+
+        reasons: List[str] = []
+        if prediction_errors is not None:
+            errors_series = pd.Series(prediction_errors)
+            cusum_result = self.shift_detector.check_cusum(errors_series)
+            if cusum_result.shift_detected:
+                reasons.append(
+                    f"CUSUM shift detected (statistic={cusum_result.cusum_statistic:.3f}, "
+                    f"threshold={cusum_result.threshold:.3f}, "
+                    f"direction={cusum_result.direction})."
+                )
+
+        if current_features is not None:
+            psi_result = self.shift_detector.check_psi(current_features)
+            if psi_result.shift_detected:
+                top_feats = ", ".join(
+                    f"{name}={score:.3f}"
+                    for name, score in psi_result.top_shifted_features[:3]
+                )
+                reasons.append(
+                    f"PSI shift detected (avg={psi_result.avg_psi:.3f}, "
+                    f"threshold={psi_result.threshold:.3f}). "
+                    f"Top shifted: {top_feats}."
+                )
+
+        return len(reasons) > 0, reasons
 
     def check(self) -> Tuple[bool, List[str]]:
         """

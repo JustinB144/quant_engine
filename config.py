@@ -336,6 +336,9 @@ FEATURE_MODE_DEFAULT = "core"                     # STATUS: ACTIVE — run_backt
 REGIME_2_TRADE_ENABLED = False                    # STATUS: ACTIVE — backtest/engine.py, api/routers/signals.py; suppress mean-revert regime entries (Sharpe -0.91)
 REGIME_2_SUPPRESSION_MIN_CONFIDENCE = 0.5         # STATUS: ACTIVE — backtest/engine.py; only suppress when confidence exceeds this
 
+# ── Regime Strategy Allocation ──────────────────────────────────────
+REGIME_STRATEGY_ALLOCATION_ENABLED = True            # STATUS: ACTIVE — autopilot/strategy_allocator.py; adapt parameters by regime
+
 # ── Drawdown Tiers ──────────────────────────────────────────────────
 DRAWDOWN_WARNING_THRESHOLD = -0.05                # STATUS: ACTIVE — risk/stop_loss.py; -5% drawdown: reduce sizing 50%
 DRAWDOWN_CAUTION_THRESHOLD = -0.10                # STATUS: ACTIVE — risk/stop_loss.py; -10% drawdown: no new entries, 25% sizing
