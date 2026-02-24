@@ -1,16 +1,20 @@
 # Kalshi Storage Schema Reference
 
-This document is a source-derived reference of the event-time storage schema defined in `kalshi/storage.py` (`EventTimeStore.init_schema`).
+Source-derived schema reference for `kalshi/storage.py` (`EventTimeStore.init_schema`).
+
+Notes:
+- Tables and indexes are parsed from the SQL DDL strings in source.
+- This reflects the stable schema initialized by `EventTimeStore` for both DuckDB and sqlite backends.
 
 ## Tables
 
 ### `event_market_map_versions`
 
-Purpose: Versioned event-to-market mapping with effective windows.
+Purpose: Versioned event-to-market mappings with effective windows.
 
 - Columns: 8
-- Constraints captured: 1
-- Indexes captured: 1
+- Constraints: 1
+- Indexes: 1
 
 | Column | Type | Extra |
 |---|---|---|
@@ -31,11 +35,11 @@ Indexes:
 
 ### `event_outcomes`
 
-Purpose: Legacy unified event outcome table (compatibility).
+Purpose: Legacy unified outcomes table retained for compatibility.
 
 - Columns: 6
-- Constraints captured: 1
-- Indexes captured: 0
+- Constraints: 1
+- Indexes: 0
 
 | Column | Type | Extra |
 |---|---|---|
@@ -51,11 +55,11 @@ Constraints:
 
 ### `event_outcomes_first_print`
 
-Purpose: First-print event outcomes (point-in-time).
+Purpose: First-print outcomes (point-in-time labels).
 
 - Columns: 6
-- Constraints captured: 1
-- Indexes captured: 0
+- Constraints: 1
+- Indexes: 0
 
 | Column | Type | Extra |
 |---|---|---|
@@ -71,11 +75,11 @@ Constraints:
 
 ### `event_outcomes_revised`
 
-Purpose: Revised event outcomes (point-in-time).
+Purpose: Revised outcomes (point-in-time labels).
 
 - Columns: 6
-- Constraints captured: 1
-- Indexes captured: 0
+- Constraints: 1
+- Indexes: 0
 
 | Column | Type | Extra |
 |---|---|---|
@@ -91,11 +95,11 @@ Constraints:
 
 ### `kalshi_contract_specs`
 
-Purpose: Historical contract spec snapshots for reproducibility.
+Purpose: Historical contract spec versions for reproducibility.
 
 - Columns: 10
-- Constraints captured: 1
-- Indexes captured: 0
+- Constraints: 1
+- Indexes: 0
 
 | Column | Type | Extra |
 |---|---|---|
@@ -115,11 +119,11 @@ Constraints:
 
 ### `kalshi_contracts`
 
-Purpose: Latest contract catalog state and bin/threshold metadata.
+Purpose: Latest contract catalog state including bin/threshold metadata.
 
 - Columns: 13
-- Constraints captured: 0
-- Indexes captured: 0
+- Constraints: 0
+- Indexes: 0
 
 | Column | Type | Extra |
 |---|---|---|
@@ -139,11 +143,11 @@ Purpose: Latest contract catalog state and bin/threshold metadata.
 
 ### `kalshi_coverage_diagnostics`
 
-Purpose: Coverage/quality diagnostics for distribution materialization.
+Purpose: Coverage and data-quality diagnostics for distribution materialization.
 
-- Columns: 8
-- Constraints captured: 2
-- Indexes captured: 0
+- Columns: 9
+- Constraints: 1
+- Indexes: 0
 
 | Column | Type | Extra |
 |---|---|---|
@@ -154,19 +158,19 @@ Purpose: Coverage/quality diagnostics for distribution materialization.
 | `missing_fraction` | `REAL` |  |
 | `average_spread` | `REAL` |  |
 | `median_quote_age_seconds` | `REAL` |  |
+| `constraint_violations` | `REAL` |  |
 | `quality_score` | `REAL` |  |
 
 Constraints:
-- `constraint_violations REAL`
 - `PRIMARY KEY (market_id, asof_date)`
 
 ### `kalshi_daily_health_report`
 
-Purpose: Daily aggregate health report across coverage + ingestion metrics.
+Purpose: Daily aggregated health metrics across ingestion and distribution quality.
 
 - Columns: 10
-- Constraints captured: 0
-- Indexes captured: 0
+- Constraints: 0
+- Indexes: 0
 
 | Column | Type | Extra |
 |---|---|---|
@@ -183,11 +187,11 @@ Purpose: Daily aggregate health report across coverage + ingestion metrics.
 
 ### `kalshi_data_provenance`
 
-Purpose: Source/provenance records for ingestions by date and endpoint.
+Purpose: Per-date ingestion provenance by market/endpoint.
 
 - Columns: 7
-- Constraints captured: 1
-- Indexes captured: 0
+- Constraints: 1
+- Indexes: 0
 
 | Column | Type | Extra |
 |---|---|---|
@@ -204,11 +208,11 @@ Constraints:
 
 ### `kalshi_distributions`
 
-Purpose: Computed market-level probability distribution snapshots + quality metadata.
+Purpose: Computed market-level probability distribution snapshots and quality metrics.
 
-- Columns: 34
-- Constraints captured: 2
-- Indexes captured: 1
+- Columns: 35
+- Constraints: 1
+- Indexes: 1
 
 | Column | Type | Extra |
 |---|---|---|
@@ -224,6 +228,7 @@ Purpose: Computed market-level probability distribution snapshots + quality meta
 | `median_spread` | `REAL` |  |
 | `median_quote_age_seconds` | `REAL` |  |
 | `volume_oi_proxy` | `REAL` |  |
+| `constraint_violation_score` | `REAL` |  |
 | `tail_p_1` | `REAL` |  |
 | `tail_p_2` | `REAL` |  |
 | `tail_p_3` | `REAL` |  |
@@ -248,7 +253,6 @@ Purpose: Computed market-level probability distribution snapshots + quality meta
 | `quality_low` | `INTEGER` |  |
 
 Constraints:
-- `constraint_violation_score REAL`
 - `PRIMARY KEY (market_id, ts)`
 
 Indexes:
@@ -256,11 +260,11 @@ Indexes:
 
 ### `kalshi_fees`
 
-Purpose: Effective fee history by market/contract/time.
+Purpose: Fee schedule history by market/contract effective timestamp.
 
 - Columns: 4
-- Constraints captured: 1
-- Indexes captured: 0
+- Constraints: 1
+- Indexes: 0
 
 | Column | Type | Extra |
 |---|---|---|
@@ -274,11 +278,11 @@ Constraints:
 
 ### `kalshi_ingestion_checkpoints`
 
-Purpose: Idempotent ingestion checkpoints by market/date/endpoint.
+Purpose: Sync checkpoints for incremental ingestion jobs.
 
 - Columns: 5
-- Constraints captured: 2
-- Indexes captured: 0
+- Constraints: 2
+- Indexes: 0
 
 | Column | Type | Extra |
 |---|---|---|
@@ -294,11 +298,11 @@ Constraints:
 
 ### `kalshi_ingestion_logs`
 
-Purpose: Endpoint-level ingestion logs and quality counters.
+Purpose: Ingestion attempt logs and error counts by date.
 
 - Columns: 11
-- Constraints captured: 1
-- Indexes captured: 1
+- Constraints: 1
+- Indexes: 1
 
 | Column | Type | Extra |
 |---|---|---|
@@ -322,11 +326,11 @@ Indexes:
 
 ### `kalshi_market_specs`
 
-Purpose: Historical market spec/rules snapshots for reproducibility.
+Purpose: Historical market spec versions for reproducibility.
 
 - Columns: 6
-- Constraints captured: 1
-- Indexes captured: 0
+- Constraints: 1
+- Indexes: 0
 
 | Column | Type | Extra |
 |---|---|---|
@@ -342,11 +346,11 @@ Constraints:
 
 ### `kalshi_markets`
 
-Purpose: Latest market catalog state (current spec snapshot per market).
+Purpose: Latest Kalshi market state snapshots (one row per market_id).
 
 - Columns: 13
-- Constraints captured: 0
-- Indexes captured: 0
+- Constraints: 0
+- Indexes: 0
 
 | Column | Type | Extra |
 |---|---|---|
@@ -366,11 +370,11 @@ Purpose: Latest market catalog state (current spec snapshot per market).
 
 ### `kalshi_quotes`
 
-Purpose: Quote time series by contract and timestamp.
+Purpose: Event-time quote history keyed by (contract_id, ts).
 
 - Columns: 9
-- Constraints captured: 1
-- Indexes captured: 2
+- Constraints: 1
+- Indexes: 2
 
 | Column | Type | Extra |
 |---|---|---|
@@ -393,11 +397,11 @@ Indexes:
 
 ### `macro_events`
 
-Purpose: Authoritative latest macro event calendar rows.
+Purpose: Authoritative latest macro event calendar.
 
 - Columns: 8
-- Constraints captured: 0
-- Indexes captured: 1
+- Constraints: 0
+- Indexes: 1
 
 | Column | Type | Extra |
 |---|---|---|
@@ -415,11 +419,11 @@ Indexes:
 
 ### `macro_events_versioned`
 
-Purpose: Versioned macro event snapshots for point-in-time event schedule auditing.
+Purpose: Versioned macro calendar snapshots for point-in-time reconstruction.
 
 - Columns: 9
-- Constraints captured: 1
-- Indexes captured: 0
+- Constraints: 1
+- Indexes: 0
 
 | Column | Type | Extra |
 |---|---|---|

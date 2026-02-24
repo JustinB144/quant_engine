@@ -1,211 +1,253 @@
-cd# CLI and Workflow Runbook
+# CLI and Workflow Runbook
 
-## What This Document Covers
+Operator runbook for root `run_*.py` entrypoints plus web app startup (FastAPI + React/Vite). This document is regenerated from current source and should match the CLI parser definitions in each script.
 
-This is the operator runbook for the root `run_*.py` scripts.
-It explains what each entry point is for, when to use it, and what to check before/after running it.
+## Web App Startup (Current Stack)
 
-## CLI Entry Point Summary
+### Development (recommended)
 
-| Script | Purpose (module doc) | `argparse` Options Detected |
+1. Backend API: `python run_server.py --reload` (or `python run_server.py`)
+2. Frontend Vite dev server: `cd frontend && npm run dev`
+3. Open the Vite URL (default `http://localhost:5173`) — `/api` calls proxy to the backend on port `8000`.
+
+### Production-like local serving (single process)
+
+1. Build frontend: `cd frontend && npm run build`
+2. Serve API + static SPA: `python run_server.py --static --host 0.0.0.0 --port 8000`
+
+### Python package script entrypoints (`pyproject.toml`) 
+
+- `qe-server` -> `api.main:run_server`
+
+## Root CLI Entrypoint Summary
+
+| Script | Module Docstring | `add_argument()` Options |
 |---|---|---:|
 | `run_autopilot.py` | Run one full autopilot cycle: | 11 |
 | `run_backtest.py` | Backtest the trained model on historical data. | 16 |
-| `run_dash.py` | Quant Engine -- Dash Dashboard Launcher. | 3 |
 | `run_kalshi_event_pipeline.py` | Run the integrated Kalshi event-time pipeline inside quant_engine. | 21 |
 | `run_predict.py` | Generate predictions using trained ensemble model. | 8 |
 | `run_rehydrate_cache_metadata.py` | Backfill cache metadata sidecars for existing OHLCV cache files. | 6 |
 | `run_retrain.py` | Retrain the quant engine model — checks triggers and retrains if needed. | 12 |
+| `run_server.py` | Combined API + frontend static serving entry point. | 5 |
 | `run_train.py` | Train the regime-conditional ensemble model. | 10 |
 | `run_wrds_daily_refresh.py` | Re-download all daily OHLCV data from WRDS CRSP to replace old cache files | 6 |
 
 ## Standard Workflow Sequences
 
-### A. Health / Monitoring Session
-1. Launch `run_dash.py`
-2. Review `/system-health` in the UI
-3. Review `/dashboard` summary cards
-4. Use `/data-explorer` if quality or coverage looks off
-5. Check `/autopilot` for registry/paper-trading/event workflow status
+### A. Web Monitoring / Inspection Session
 
-### B. Model Development Session
-1. Validate data quality and availability
-2. Run `run_train.py`
-3. Run `run_predict.py`
-4. Run `run_backtest.py`
-5. Inspect results in `results/` and Dash pages (`/signal-desk`, `/backtest-risk`, `/model-lab`)
+1. Start backend + frontend (dev) or `run_server.py --static` (prod-like).
+2. Check `/system-health` and `/dashboard` first for broad system state.
+3. Use `/data-explorer` for cache freshness/coverage and per-ticker OHLCV quality.
+4. Use `/model-lab`, `/signal-desk`, `/backtest-risk`, `/autopilot` for workflow-specific investigation.
 
-### C. Strategy Lifecycle Session (Autopilot)
-1. Run `run_autopilot.py`
-2. Review promotion outcomes and active registry state
-3. Review paper-trading state/equity
-4. Investigate promotion failures by contract metrics, not only returns
+### B. Model Development / Evaluation Session
+
+1. `run_train.py` (train versioned models).
+2. `run_predict.py` (write prediction artifacts).
+3. `run_backtest.py` (write backtest summary/trades, optionally validation/advanced validation).
+4. Inspect `results/` and the frontend dashboard/signal/backtest pages via API-backed views.
+
+### C. Autopilot Cycle Session
+
+1. `run_autopilot.py` (or `/api/autopilot/run-cycle` via UI).
+2. Review `results/autopilot/latest_cycle.json` and registry/paper state files.
+3. Inspect `/autopilot` page tabs for candidates, paper state, P&L, and lifecycle view.
 
 ### D. Kalshi Event Research Session
-1. Run `run_kalshi_event_pipeline.py`
-2. Confirm ingestion/distribution/feature generation outputs
-3. Review walk-forward metrics and promotion decision
-4. Inspect event visuals via `/autopilot` page in Dash
 
-## Pre-Run Checklist (Applies to Most Workflows)
+1. `run_kalshi_event_pipeline.py` with the desired sync/build flags.
+2. Validate DuckDB/sqlite storage state and distribution/event feature outputs.
+3. Review walk-forward and promotion outputs in generated artifacts; consult `docs/reference/KALSHI_STORAGE_SCHEMA_REFERENCE.md` for schema details.
 
-- Confirm data/cache freshness if results look stale
-- Confirm the intended model version/champion (for prediction/backtests)
-- Confirm the workflow should operate on current config values (`config.py`)
-- Confirm you are using the active UI stack (`run_dash.py`, not legacy UI)
+## Pre-Run Checklist
 
-## Post-Run Checklist (Applies to Most Workflows)
+- Confirm `config.py` values (or runtime-patched API config values) match the intended experiment/operation.
+- Confirm data cache freshness (`/api/data/status` or `Data Explorer`).
+- Confirm model artifact availability/version selection for predict/backtest/autopilot workflows.
+- Confirm WRDS/Kalshi credentials and feature flags if using live providers.
 
-- Review generated artifacts/results and timestamps
-- Validate metrics against expectations (especially if behavior changed)
-- For backtests/autopilot: inspect drawdown and robustness metrics, not just total return
-- For Kalshi: inspect quality/coverage and no-leakage assumptions if outputs look anomalous
+## Post-Run Checklist
 
-## Script Details (Static Source Parse)
+- Verify generated files in `results/` / `trained_models/` and timestamps.
+- Review drawdown, robustness, and quality metrics (not only total return or headline score).
+- For API/UI-triggered jobs, inspect `/api/jobs`, SSE progress, and logs (`/api/logs`) for hidden failures.
+
+## Script Details (Source-Derived Argparse Parse)
 
 ### `run_autopilot.py`
 
-Purpose: Run one full autopilot cycle:
+- Module doc: Run one full autopilot cycle:
+- `argparse` description: `'Run quant_engine autopilot cycle'`
+- Detected options: 11
 
-Argument parser options detected: 11
-- `--full`; help: Use full configured universe
-- `--tickers`; help: Explicit ticker list
-- `--horizon`; help: Holding/prediction horizon; default: `10`
-- `--years`; help: History window for evaluation; default: `15`
-- `--version`; help: Model version (champion, latest, or explicit version id); default: `champion`
-- `--max-candidates`; help: Limit candidate count
-- `--feature-mode`; help: Feature profile for autopilot evaluation; default: `AUTOPILOT_FEATURE_MODE`
-- `--no-survivorship`; help: Opt out of survivorship-bias-free point-in-time universe
-- `--no-walkforward`; help: Use single-split training instead of rolling walk-forward
-- `--allow-in-sample`; help: Disable strict out-of-sample filtering
-- `--quiet`
+| Options | Default | Action/Type | Help |
+|---|---|---|---|
+| `--full` | `` | `store_true` | Use full configured universe |
+| `--tickers` | `` | `` | Explicit ticker list |
+| `--horizon` | `10` | `int` | Holding/prediction horizon |
+| `--years` | `15` | `int` | History window for evaluation |
+| `--version` | `champion` | `str` | Model version (champion, latest, or explicit version id) |
+| `--max-candidates` | `` | `int` | Limit candidate count |
+| `--feature-mode` | `AUTOPILOT_FEATURE_MODE` | `` | Feature profile for autopilot evaluation |
+| `--no-survivorship` | `` | `store_true` | Opt out of survivorship-bias-free point-in-time universe |
+| `--no-walkforward` | `` | `store_true` | Use single-split training instead of rolling walk-forward |
+| `--allow-in-sample` | `` | `store_true` | Disable strict out-of-sample filtering |
+| `--quiet` | `` | `store_true` |  |
 
 ### `run_backtest.py`
 
-Purpose: Backtest the trained model on historical data.
+- Module doc: Backtest the trained model on historical data.
+- `argparse` description: `'Backtest the trained ensemble model'`
+- Detected options: 16
 
-Argument parser options detected: 16
-- `--full`; help: Use full universe
-- `--tickers`; help: Specific tickers
-- `--horizon`; help: Prediction/holding horizon (days); default: `10`
-- `--no-validate`; help: Skip walk-forward validation
-- `--years`; help: Years of data for backtest; default: `15`
-- `--feature-mode`; help: Feature profile: core (reduced complexity) or full; default: `FEATURE_MODE_DEFAULT`
-- `--risk`; help: Enable risk management (dynamic sizing, stops, drawdown controls)
-- `--advanced`; help: Run advanced validation (Deflated Sharpe, Monte Carlo, PBO, capacity)
-- `--n-trials`; help: Number of strategy variants tested (for Deflated Sharpe); default: `1`
-- `--version`; help: Model version to test (default: latest); default: `latest`
-- `--no-survivorship`; help: Opt out of survivorship-bias-free universe (use static universe instead)
-- `--allow-in-sample`; help: Allow scoring dates that overlap model training history
-- `--min-confidence`; help: Minimum model confidence to enter (default: config CONFIDENCE_THRESHOLD)
-- `--min-predicted`; help: Minimum predicted return to enter (default: config ENTRY_THRESHOLD)
-- `--output`; help: Save trade log to CSV
-- `--quiet`
-
-### `run_dash.py`
-
-Purpose: Quant Engine -- Dash Dashboard Launcher.
-
-Argument parser options detected: 3
-- `--port`; help: Server port (default: 8050); default: `8050`
-- `--host`; help: Server host (default: 127.0.0.1); default: `127.0.0.1`
-- `--no-debug`; help: Disable debug mode
+| Options | Default | Action/Type | Help |
+|---|---|---|---|
+| `--full` | `` | `store_true` | Use full universe |
+| `--tickers` | `` | `` | Specific tickers |
+| `--horizon` | `10` | `int` | Prediction/holding horizon (days) |
+| `--no-validate` | `` | `store_true` | Skip walk-forward validation |
+| `--years` | `15` | `int` | Years of data for backtest |
+| `--feature-mode` | `FEATURE_MODE_DEFAULT` | `` | Feature profile: minimal (~20 indicators), core (reduced complexity), or full |
+| `--risk` | `` | `store_true` | Enable risk management (dynamic sizing, stops, drawdown controls) |
+| `--advanced` | `` | `store_true` | Run advanced validation (Deflated Sharpe, Monte Carlo, PBO, capacity) |
+| `--n-trials` | `1` | `int` | Number of strategy variants tested (for Deflated Sharpe) |
+| `--version` | `latest` | `str` | Model version to test (default: latest) |
+| `--no-survivorship` | `` | `store_true` | Opt out of survivorship-bias-free universe (use static universe instead) |
+| `--allow-in-sample` | `` | `store_true` | Allow scoring dates that overlap model training history |
+| `--min-confidence` | `` | `float` | Minimum model confidence to enter (default: config CONFIDENCE_THRESHOLD) |
+| `--min-predicted` | `` | `float` | Minimum predicted return to enter (default: config ENTRY_THRESHOLD) |
+| `--output` | `` | `str` | Save trade log to CSV |
+| `--quiet` | `` | `store_true` |  |
 
 ### `run_kalshi_event_pipeline.py`
 
-Purpose: Run the integrated Kalshi event-time pipeline inside quant_engine.
+- Module doc: Run the integrated Kalshi event-time pipeline inside quant_engine.
+- `argparse` description: `'Kalshi event-time pipeline'`
+- Detected options: 21
 
-Argument parser options detected: 21
-- `--db-path`; default: `str(KALSHI_DB_PATH)`
-- `--backend`; default: `duckdb`
-- `--start-ts`
-- `--end-ts`
-- `--sync-reference`
-- `--sync-quotes`
-- `--build-distributions`
-- `--build-event-features`
-- `--event-map`; help: CSV/Parquet with event_id/event_type + market_id
-- `--options-reference`; help: CSV/Parquet options panel for disagreement features
-- `--options-ts-col`; help: Timestamp column in options reference panel; default: `ts`
-- `--output`; default: `str(RESULTS_DIR / "kalshi_event_features.parquet")`
-- `--labels-first-print`
-- `--labels-revised`
-- `--run-walkforward`
-- `--disable-promotion-gate`
-- `--strategy-id`; default: `kalshi_event_default`
-- `--build-health-report`; help: Materialize daily health report aggregates
-- `--print-health-report`; help: Print latest daily health report table
-- `--health-report-output`; help: CSV/Parquet output path for health report
-- `--quiet`
+| Options | Default | Action/Type | Help |
+|---|---|---|---|
+| `--db-path` | `str(KALSHI_DB_PATH)` | `str` |  |
+| `--backend` | `duckdb` | `` |  |
+| `--start-ts` | `` | `str` |  |
+| `--end-ts` | `` | `str` |  |
+| `--sync-reference` | `` | `store_true` |  |
+| `--sync-quotes` | `` | `store_true` |  |
+| `--build-distributions` | `` | `store_true` |  |
+| `--build-event-features` | `` | `store_true` |  |
+| `--event-map` | `` | `str` | CSV/Parquet with event_id/event_type + market_id |
+| `--options-reference` | `` | `str` | CSV/Parquet options panel for disagreement features |
+| `--options-ts-col` | `ts` | `str` | Timestamp column in options reference panel |
+| `--output` | `str(RESULTS_DIR / 'kalshi_event_features.parquet')` | `str` |  |
+| `--labels-first-print` | `` | `str` |  |
+| `--labels-revised` | `` | `str` |  |
+| `--run-walkforward` | `` | `store_true` |  |
+| `--disable-promotion-gate` | `` | `store_true` |  |
+| `--strategy-id` | `kalshi_event_default` | `str` |  |
+| `--build-health-report` | `` | `store_true` | Materialize daily health report aggregates |
+| `--print-health-report` | `` | `store_true` | Print latest daily health report table |
+| `--health-report-output` | `` | `str` | CSV/Parquet output path for health report |
+| `--quiet` | `` | `store_true` |  |
 
 ### `run_predict.py`
 
-Purpose: Generate predictions using trained ensemble model.
+- Module doc: Generate predictions using trained ensemble model.
+- `argparse` description: `'Generate predictions from trained ensemble'`
+- Detected options: 8
 
-Argument parser options detected: 8
-- `--full`; help: Use full universe
-- `--tickers`; help: Specific symbols (resolved to PERMNO)
-- `--horizon`; help: Prediction horizon (days); default: `10`
-- `--version`; help: Model version to use; default: `latest`
-- `--feature-mode`; help: Feature profile: core (reduced complexity) or full; default: `FEATURE_MODE_DEFAULT`
-- `--output`; help: Save predictions to CSV
-- `--top`; help: Show top N signals; default: `20`
-- `--quiet`
+| Options | Default | Action/Type | Help |
+|---|---|---|---|
+| `--full` | `` | `store_true` | Use full universe |
+| `--tickers` | `` | `` | Specific symbols (resolved to PERMNO) |
+| `--horizon` | `10` | `int` | Prediction horizon (days) |
+| `--version` | `latest` | `str` | Model version to use |
+| `--feature-mode` | `FEATURE_MODE_DEFAULT` | `` | Feature profile: core (reduced complexity) or full |
+| `--output` | `` | `str` | Save predictions to CSV |
+| `--top` | `20` | `int` | Show top N signals |
+| `--quiet` | `` | `store_true` |  |
 
 ### `run_rehydrate_cache_metadata.py`
 
-Purpose: Backfill cache metadata sidecars for existing OHLCV cache files.
+- Module doc: Backfill cache metadata sidecars for existing OHLCV cache files.
+- `argparse` description: `'Backfill quant_engine cache metadata sidecars'`
+- Detected options: 6
 
-Argument parser options detected: 6
-- `--roots`; help: Optional cache roots to scan. Defaults to standard quant_engine roots.
-- `--root-source`; help: Root source override in the form '<path>=<source>' (can repeat).; default: `[]`
-- `--default-source`; help: Default source label for unmapped roots.; default: `unknown`
-- `--force`; help: Rewrite metadata even when sidecar already exists.
-- `--overwrite-source`; help: When rewriting metadata, replace existing source labels.
-- `--dry-run`; help: Scan and report only; do not write metadata.
+| Options | Default | Action/Type | Help |
+|---|---|---|---|
+| `--roots` | `` | `` | Optional cache roots to scan. Defaults to standard quant_engine roots. |
+| `--root-source` | `[]` | `append` | Root source override in the form '<path>=<source>' (can repeat). |
+| `--default-source` | `unknown` | `` | Default source label for unmapped roots. |
+| `--force` | `` | `store_true` | Rewrite metadata even when sidecar already exists. |
+| `--overwrite-source` | `` | `store_true` | When rewriting metadata, replace existing source labels. |
+| `--dry-run` | `` | `store_true` | Scan and report only; do not write metadata. |
 
 ### `run_retrain.py`
 
-Purpose: Retrain the quant engine model — checks triggers and retrains if needed.
+- Module doc: Retrain the quant engine model — checks triggers and retrains if needed.
+- `argparse` description: `'Retrain the quant engine model'`
+- Detected options: 12
 
-Argument parser options detected: 12
-- `--force`; help: Force retrain regardless of triggers
-- `--status`; help: Show retrain status and exit
-- `--versions`; help: List all model versions
-- `--rollback`; help: Rollback to a specific version ID
-- `--survivorship`; help: Use WRDS survivorship-bias-free universe
-- `--full`; help: Use full universe
-- `--tickers`; help: Specific tickers
-- `--horizon`; help: Prediction horizons; default: `[10]`
-- `--years`; help: Years of data; default: `15`
-- `--feature-mode`; help: Feature profile: core (reduced complexity) or full; default: `FEATURE_MODE_DEFAULT`
-- `--recency`; help: Apply exponential recency weighting
-- `--quiet`
+| Options | Default | Action/Type | Help |
+|---|---|---|---|
+| `--force` | `` | `store_true` | Force retrain regardless of triggers |
+| `--status` | `` | `store_true` | Show retrain status and exit |
+| `--versions` | `` | `store_true` | List all model versions |
+| `--rollback` | `` | `str` | Rollback to a specific version ID |
+| `--survivorship` | `` | `store_true` | Use WRDS survivorship-bias-free universe |
+| `--full` | `` | `store_true` | Use full universe |
+| `--tickers` | `` | `` | Specific tickers |
+| `--horizon` | `[10]` | `int` | Prediction horizons |
+| `--years` | `15` | `int` | Years of data |
+| `--feature-mode` | `FEATURE_MODE_DEFAULT` | `` | Feature profile: core (reduced complexity) or full |
+| `--recency` | `` | `store_true` | Apply exponential recency weighting |
+| `--quiet` | `` | `store_true` |  |
+
+### `run_server.py`
+
+- Module doc: Combined API + frontend static serving entry point.
+- `argparse` description: `'Quant Engine API Server'`
+- Detected options: 5
+
+| Options | Default | Action/Type | Help |
+|---|---|---|---|
+| `--host` | `0.0.0.0` | `` | Bind address (default: 0.0.0.0) |
+| `--port` | `8000` | `int` | Port (default: 8000) |
+| `--static` | `` | `store_true` | Serve frontend/dist as static files |
+| `--reload` | `` | `store_true` | Enable auto-reload for development |
+| `--log-level` | `info` | `` |  |
 
 ### `run_train.py`
 
-Purpose: Train the regime-conditional ensemble model.
+- Module doc: Train the regime-conditional ensemble model.
+- `argparse` description: `'Train regime-conditional gradient boosting ensemble'`
+- Detected options: 10
 
-Argument parser options detected: 10
-- `--full`; help: Use full universe
-- `--tickers`; help: Specific tickers to train on
-- `--horizon`; help: Forward return horizons (days); default: `[10]`
-- `--years`; help: f"Years of historical data (default: {LOOKBACK_YEARS})"; default: `LOOKBACK_YEARS`
-- `--no-interactions`; help: Skip interaction features
-- `--feature-mode`; help: Feature profile: core (reduced complexity) or full; default: `FEATURE_MODE_DEFAULT`
-- `--survivorship`; help: Use WRDS survivorship-bias-free universe
-- `--recency`; help: Apply exponential recency weighting
-- `--no-version`; help: Skip model versioning (save flat)
-- `--quiet`; help: Minimal output
+| Options | Default | Action/Type | Help |
+|---|---|---|---|
+| `--full` | `` | `store_true` | Use full universe |
+| `--tickers` | `` | `` | Specific tickers to train on |
+| `--horizon` | `[10]` | `int` | Forward return horizons (days) |
+| `--years` | `LOOKBACK_YEARS` | `int` | f'Years of historical data (default: {LOOKBACK_YEARS})' |
+| `--no-interactions` | `` | `store_true` | Skip interaction features |
+| `--feature-mode` | `FEATURE_MODE_DEFAULT` | `` | Feature profile: minimal (~20 indicators), core (reduced complexity), or full |
+| `--survivorship` | `` | `store_true` | Use WRDS survivorship-bias-free universe |
+| `--recency` | `` | `store_true` | Apply exponential recency weighting |
+| `--no-version` | `` | `store_true` | Skip model versioning (save flat) |
+| `--quiet` | `` | `store_true` | Minimal output |
 
 ### `run_wrds_daily_refresh.py`
 
-Purpose: Re-download all daily OHLCV data from WRDS CRSP to replace old cache files
+- Module doc: Re-download all daily OHLCV data from WRDS CRSP to replace old cache files
+- `argparse` description: `'Re-download daily OHLCV from WRDS CRSP to fix O=H=L=C cache files'`
+- Detected options: 6
 
-Argument parser options detected: 6
-- `--dry-run`; help: Preview what would be downloaded without downloading
-- `--skip-cleanup`; help: Download new files but keep old _daily_ files
-- `--tickers`; help: Comma-separated ticker list (default: all ~183)
-- `--years`; help: Lookback years (default: 20); default: `20`
-- `--batch-size`; help: Tickers per WRDS query (default: 50); default: `50`
-- `--verify-only`; help: Only run verification on existing _1d.parquet files
+| Options | Default | Action/Type | Help |
+|---|---|---|---|
+| `--dry-run` | `` | `store_true` | Preview what would be downloaded without downloading |
+| `--skip-cleanup` | `` | `store_true` | Download new files but keep old _daily_ files |
+| `--tickers` | `` | `str` | Comma-separated ticker list (default: all ~183) |
+| `--years` | `20` | `int` | Lookback years (default: 20) |
+| `--batch-size` | `50` | `int` | Tickers per WRDS query (default: 50) |
+| `--verify-only` | `` | `store_true` | Only run verification on existing _1d.parquet files |

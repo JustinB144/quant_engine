@@ -1,143 +1,174 @@
 # System Architecture and Flows
 
-## What This Document Covers
+## Scope
 
-This document explains how `quant_engine` is structured as a system, how data and decisions flow through it, and why the major subsystems are separated the way they are.
+This document describes the current runtime architecture of `quant_engine` as implemented in source today: FastAPI backend (`api/`) plus React/Vite frontend (`frontend/`), alongside the root CLI orchestration scripts (`run_*.py`).
 
-For exhaustive component listings, use:
-- `../reference/SOURCE_API_REFERENCE.md`
-- `../reports/QUANT_ENGINE_SYSTEM_INTENT_COMPONENT_AUDIT.md`
+It intentionally does not describe removed UI stacks (`dash_ui`, tkinter desktop app) except as historical context in archived reports.
 
-## System Purpose (Architecture View)
-
-`quant_engine` combines research, validation, strategy lifecycle management, and UI observability into one repository.
-The architecture is intentionally layered so that:
-- data concerns stay separate from modeling concerns,
-- modeling stays separate from execution simulation,
-- promotion/governance stays separate from raw performance,
-- event-market research (Kalshi) stays isolated but can reuse validation standards,
-- UI can consume artifacts/results without owning core strategy logic.
-
-## High-Level Architecture (Layered)
+## Top-Level Runtime Architecture
 
 ```mermaid
 flowchart TD
-    A["Data Providers & Cache
-WRDS / Cache / Fallbacks / Kalshi API"] --> B["Data Layer
-data/* + kalshi/provider/storage"]
-    B --> C["Feature Layer
-features/* + kalshi/events/distribution"]
-    C --> D["Regime Layer
-regime/* + kalshi/regimes"]
-    D --> E["Model Layer
-models/trainer + models/predictor"]
-    E --> F["Backtest & Risk
-backtest/* + risk/*"]
-    E --> G["Autopilot Lifecycle
-autopilot/*"]
-    F --> G
-    B --> H["Artifacts / Results / Registries
-trained_models/, results/, JSON registries"]
-    E --> H
-    F --> H
-    G --> H
-    H --> I["Dash UI
-dash_ui/*"]
-    B --> I
-    G --> I
+    A[CLI Entrypoints\nrun_train / run_predict / run_backtest / run_autopilot / run_kalshi_event_pipeline] --> B[Core Engine Packages\ndata / features / regime / models / backtest / risk / autopilot / kalshi]
+    B --> C[Artifacts & State\ntrained_models/\nresults/\ndata/cache/\ndata/kalshi.duckdb]
+    D[FastAPI App\napi/main.py] --> E[Routers\napi/routers/*]
+    E --> F[Services & Orchestrator\napi/services/* + api/orchestrator.py]
+    F --> B
+    F --> C
+    E --> G[Job System\napi/jobs/* (SQLite + SSE)]
+    G --> F
+    H[React Frontend\nfrontend/src/*] -->|HTTP /api + SSE /api/jobs/*/events| D
+    I[run_server.py] --> D
+    I -->|--static| H
 ```
 
-## Primary System Flows
+## Core Layers (Source-Verified)
 
-### 1. Equity Research / Strategy Flow
+- `data/`: provider abstraction, cache IO, WRDS integration, quality checks, survivorship controls.
+- `features/`: feature/target computation pipeline plus macro/options/intraday/research factors.
+- `regime/`: rule/HMM/jump/correlation regime detection and regime feature outputs.
+- `models/`: training, prediction, versioning, governance, IV models, retrain triggers.
+- `backtest/`: execution-aware trade simulation, validation, advanced validation, optimal execution helpers.
+- `risk/`: reusable risk sizing/limits/stops/attribution/covariance/optimization/stress analytics.
+- `autopilot/`: strategy discovery, promotion gate, registry, paper trader, autopilot cycle engine.
+- `kalshi/`: event-market ingestion/storage/distribution/event features/walk-forward/promotion helpers.
 
-1. `run_train.py`
-- Loads historical data via `data.loader`
-- Builds feature panels via `features.pipeline`
-- Builds regime features via `regime.detector` and correlation regime detector
-- Trains/version models via `models.trainer`
+## Backend Web Stack (FastAPI)
 
-2. `run_predict.py`
-- Resolves model version/champion
-- Rebuilds features/regimes for latest data
-- Produces predictions + confidence + regime-aware outputs via `models.predictor`
+### App Lifecycle
 
-3. `run_backtest.py`
-- Converts predictions into simulated trades via `backtest.engine.Backtester`
-- Applies execution assumptions and risk controls
-- Produces performance/validation outputs and diagnostics
+- `api/main.py` creates the FastAPI app, registers CORS and error handlers, and lazily mounts routers from `api/routers/__init__.py`.
+- Startup lifecycle initializes the async `JobStore` and launches a background retrain-monitor loop that invalidates dashboard caches when models become overdue.
+- `api/deps/providers.py` exposes singleton providers for `ApiSettings`, `RuntimeConfig`, `JobStore`, `JobRunner`, and `CacheManager`.
 
-### 2. Strategy Lifecycle / Autopilot Flow
+### Routers / Services / Jobs Split
 
-1. `run_autopilot.py`
-- Ensures predictor baseline exists (or uses fallback heuristic predictor)
-- Builds latest and/or walk-forward OOS predictions
-- Generates execution-parameter strategy candidates (`autopilot.strategy_discovery`)
-- Evaluates candidates with backtest + advanced validation
-- Applies promotion gating (`autopilot.promotion_gate`)
-- Persists active strategies (`autopilot.registry`)
-- Runs paper execution (`autopilot.paper_trader`)
+- Routers (`api/routers/*`) are thin: validate input, call services (often via `asyncio.to_thread`), wrap in `ApiResponse`, and submit jobs for long-running compute.
+- Services (`api/services/*`) are synchronous adapters around engine packages and result files (`results/`, `trained_models/`, cache files).
+- Long-running compute endpoints (`/api/models/train`, `/api/models/predict`, `/api/backtests/run`, `/api/autopilot/run-cycle`) create job records and execute in background threads through `api/jobs/runner.py`.
+- `api/orchestrator.py` consolidates data->features->regimes->train/predict/backtest flows for API job executors.
 
-Why this is separate from training:
-- It evaluates strategy deployment behavior and robustness, not just model fit quality.
+### Caching
 
-### 3. Kalshi Event-Market Research Flow
+- `api/cache/manager.py` is an in-memory per-process TTL cache.
+- `api/cache/invalidation.py` provides event-driven invalidation hooks for train/backtest/data-refresh/config changes.
+- Caches are used by read-heavy endpoints (dashboard, signals, health, benchmark, model health, feature importance, data status).
 
-1. `run_kalshi_event_pipeline.py`
-- Ingests Kalshi markets/contracts/quotes with signed client + provider + event-time storage
-- Reconstructs distribution snapshots from contract quotes (`kalshi.distribution`)
-- Builds leak-safe event feature panels (`kalshi.events`)
-- Runs event walk-forward evaluation (`kalshi.walkforward`)
-- Applies event promotion checks via `kalshi.promotion` + shared promotion gate
+### Jobs & Streaming
 
-Why this subsystem is isolated:
-- Contract/quote/distribution/event timing semantics are materially different from the equity stack.
+- `api/jobs/store.py`: SQLite-backed job persistence (`api_jobs.db` by default, configurable via `QE_API_JOB_DB_PATH`).
+- `api/jobs/runner.py`: bounded-concurrency background execution + SSE event fanout.
+- `api/routers/jobs.py`: list/get/cancel plus SSE event stream at `/api/jobs/{job_id}/events`.
 
-### 4. UI / Observability Flow
+## Frontend Stack (React/Vite)
 
-`run_dash.py` launches the Dash app (`dash_ui`).
+- `frontend/src/main.tsx`: React 19 bootstrap with TanStack Query and `BrowserRouter`.
+- `frontend/src/App.tsx`: lazy route loading with `AppShell` and `ErrorBoundary` keyed by route path.
+- `frontend/src/api/client.ts`: wraps fetch, prefixes `/api`, and expects the shared `ApiResponse` envelope (`ok`, `data`, `meta`, `error`).
+- `frontend/src/api/queries/*` and `frontend/src/api/mutations/*`: all page data access lives in query/mutation hooks.
+- `frontend/src/hooks/useSSE.ts` + `useJobProgress.ts`: combines SSE and polling for background job progress.
+- `frontend/src/store/*`: Zustand stores for UI/filter state.
 
-The UI consumes:
-- artifacts and model outputs,
-- results and diagnostics,
-- health summaries,
-- backtest outputs,
-- autopilot/paper-trading state,
-- Kalshi outputs,
-- and on-demand live calculations / demos.
+## Primary End-to-End Flows
 
-Why the UI is decoupled:
-- UI changes should not alter core research/execution behavior.
-- Core workflows remain scriptable without the UI.
+### 1. Train Model (CLI)
 
-## Why the Packages Are Separated
+1. `run_train.py` parses CLI args (universe/horizon/years/feature mode/survivorship/recency).
+2. Loads OHLCV via `data.loader` (`load_universe` or survivorship-safe path).
+3. Builds features/targets via `features.pipeline.FeaturePipeline.compute_universe`.
+4. Detects regimes via `regime.detector.RegimeDetector`.
+5. Trains ensemble models via `models.trainer.ModelTrainer.train_ensemble`.
+6. Writes artifacts under `trained_models/` and updates version/registry metadata.
 
-- `data/`: source normalization, caching, survivorship-safe loading
-- `features/`: feature definitions and panel assembly
-- `regime/`: market state context generation
-- `models/`: training, inference, versioning, governance
-- `backtest/`: trade simulation and validation
-- `risk/`: reusable risk components and analytics
-- `autopilot/`: strategy lifecycle orchestration
-- `kalshi/`: event-market vertical (ingest + feature + eval + promotion)
-- `dash_ui/`: human interface only
+### 2. Predict Signals (CLI or API Job)
+
+1. `run_predict.py` or `api/jobs/predict_job.py` -> `api/orchestrator.PipelineOrchestrator.predict`.
+2. Loads latest data + features + regimes, resolves model version, runs `models.predictor.EnsemblePredictor`.
+3. Writes `results/predictions_{horizon}d.csv`.
+4. `/api/signals/latest` serves the persisted predictions via `api/services/results_service.py`.
+
+### 3. Backtest (CLI or API Job)
+
+1. `run_backtest.py` or `api/jobs/backtest_job.py` -> orchestrator backtest path.
+2. Uses `backtest.engine.Backtester` and optional validation/advanced validation modules.
+3. Writes `results/backtest_{horizon}d_summary.json` + `results/backtest_{horizon}d_trades.csv`.
+4. Dashboard/benchmark/backtests endpoints read these artifacts through `api/services/backtest_service.py` and `api/services/data_helpers.py`.
+
+### 4. Autopilot Cycle (CLI or API Job)
+
+1. `run_autopilot.py` or `api/jobs/autopilot_job.py` invokes `autopilot.engine.AutopilotEngine.run_cycle`.
+2. Ensures predictor availability (ensemble or heuristic fallback), generates candidate variants, validates, promotes, and runs paper trading.
+3. Persists outputs to `results/autopilot/latest_cycle.json`, `strategy_registry.json`, and `paper_state.json`.
+4. `/api/autopilot/*` endpoints and the React `/autopilot` page consume those persisted states.
+
+### 5. Kalshi Event Pipeline (CLI)
+
+1. `run_kalshi_event_pipeline.py` orchestrates Kalshi API sync, storage writes, distribution reconstruction, event feature materialization, and optional walk-forward evaluation.
+2. Persistent event-time state lives in `data/kalshi.duckdb` (default `KALSHI_DB_PATH`) via `kalshi.storage.EventTimeStore`.
+3. Kalshi outputs are currently CLI/artifact-driven; there is no mounted FastAPI Kalshi router in `api/routers/__init__.py`.
+
+### 6. Web App Runtime (Dev / Prod)
+
+- Dev mode: run FastAPI (`python run_server.py`) and Vite (`cd frontend && npm run dev`). Vite proxies `/api` to port 8000.
+- Prod-like mode: build frontend (`cd frontend && npm run build`) then `python run_server.py --static` to serve API + static SPA from one process/port.
+
+## Mounted API Endpoint Inventory (Current)
+
+| Method | Path | Handler | Router |
+|---|---|---|---|
+| `GET` | `/api/autopilot/latest-cycle` | `latest_cycle` | `api/routers/autopilot.py` |
+| `GET` | `/api/autopilot/paper-state` | `paper_state` | `api/routers/autopilot.py` |
+| `POST` | `/api/autopilot/run-cycle` | `run_cycle` | `api/routers/autopilot.py` |
+| `GET` | `/api/autopilot/strategies` | `strategies` | `api/routers/autopilot.py` |
+| `GET` | `/api/backtests/latest` | `latest_backtest` | `api/routers/backtests.py` |
+| `GET` | `/api/backtests/latest/equity-curve` | `equity_curve` | `api/routers/backtests.py` |
+| `GET` | `/api/backtests/latest/trades` | `latest_trades` | `api/routers/backtests.py` |
+| `POST` | `/api/backtests/run` | `run_backtest` | `api/routers/backtests.py` |
+| `GET` | `/api/benchmark/comparison` | `benchmark_comparison` | `api/routers/benchmark.py` |
+| `GET` | `/api/benchmark/equity-curves` | `benchmark_equity_curves` | `api/routers/benchmark.py` |
+| `GET` | `/api/benchmark/rolling-metrics` | `benchmark_rolling_metrics` | `api/routers/benchmark.py` |
+| `GET` | `/api/config` | `get_config` | `api/routers/config_mgmt.py` |
+| `PATCH` | `/api/config` | `patch_config` | `api/routers/config_mgmt.py` |
+| `GET` | `/api/config/status` | `get_config_status` | `api/routers/config_mgmt.py` |
+| `GET` | `/api/config/validate` | `validate_config_endpoint` | `api/routers/config_mgmt.py` |
+| `GET` | `/api/dashboard/attribution` | `attribution` | `api/routers/dashboard.py` |
+| `GET` | `/api/dashboard/equity` | `equity_with_benchmark` | `api/routers/dashboard.py` |
+| `GET` | `/api/dashboard/regime` | `dashboard_regime` | `api/routers/dashboard.py` |
+| `GET` | `/api/dashboard/returns-distribution` | `returns_distribution` | `api/routers/dashboard.py` |
+| `GET` | `/api/dashboard/rolling-risk` | `rolling_risk` | `api/routers/dashboard.py` |
+| `GET` | `/api/dashboard/summary` | `dashboard_summary` | `api/routers/dashboard.py` |
+| `GET` | `/api/data/status` | `get_data_status` | `api/routers/data_explorer.py` |
+| `GET` | `/api/data/ticker/{ticker}` | `get_ticker` | `api/routers/data_explorer.py` |
+| `GET` | `/api/data/universe` | `get_universe` | `api/routers/data_explorer.py` |
+| `GET` | `/api/health` | `quick_health` | `api/routers/system_health.py` |
+| `GET` | `/api/health/detailed` | `detailed_health` | `api/routers/system_health.py` |
+| `GET` | `/api/iv-surface/arb-free-svi` | `arb_free_svi_surface` | `api/routers/iv_surface.py` |
+| `GET` | `/api/jobs` | `list_jobs` | `api/routers/jobs.py` |
+| `GET` | `/api/jobs/{job_id}` | `get_job` | `api/routers/jobs.py` |
+| `POST` | `/api/jobs/{job_id}/cancel` | `cancel_job` | `api/routers/jobs.py` |
+| `GET` | `/api/jobs/{job_id}/events` | `job_events` | `api/routers/jobs.py` |
+| `GET` | `/api/logs` | `get_logs` | `api/routers/logs.py` |
+| `GET` | `/api/models/features/correlations` | `feature_correlations` | `api/routers/model_lab.py` |
+| `GET` | `/api/models/features/importance` | `feature_importance` | `api/routers/model_lab.py` |
+| `GET` | `/api/models/health` | `model_health` | `api/routers/model_lab.py` |
+| `POST` | `/api/models/predict` | `predict_model` | `api/routers/model_lab.py` |
+| `POST` | `/api/models/train` | `train_model` | `api/routers/model_lab.py` |
+| `GET` | `/api/models/versions` | `list_versions` | `api/routers/model_lab.py` |
+| `GET` | `/api/signals/latest` | `latest_signals` | `api/routers/signals.py` |
+| `GET` | `/api/v1/system/data-mode` | `data_mode` | `api/routers/system_health.py` |
+| `GET` | `/api/v1/system/model-age` | `model_age` | `api/routers/system_health.py` |
 
 ## Artifact and State Boundaries
 
-Key persisted state locations (from config + runtime conventions):
-- `trained_models/`: model artifacts + registries
-- `results/`: backtest/prediction/autopilot outputs
-- `data/cache/`: local data cache and metadata sidecars
-- `data/kalshi.duckdb` (or configured path): Kalshi event-time research store
-- autopilot registry/paper state JSONs (paths defined in `config.py`)
+- `trained_models/`: model artifacts, version metadata, registry/champion records.
+- `results/`: predictions, backtests, autopilot reports/state, health/support artifacts.
+- `data/cache/`: cached OHLCV files and metadata sidecars consumed by loaders and data status endpoints.
+- `data/kalshi.duckdb`: event-time Kalshi/macroeconomic research store (DuckDB preferred, sqlite fallback supported by `EventTimeStore`).
+- `api_jobs.db` (default): async compute job lifecycle store for the web API.
 
-Why this matters:
-- It allows script-driven workflows and the UI to share a common persisted state without direct process coupling.
+## Architecture Notes / Caveats
 
-## Architecture Design Goals (Observed in Source)
-
-- Correctness over convenience (identity/time alignment guards)
-- Graceful fallback behavior for missing providers/dependencies
-- Research reproducibility via artifact registries and manifests
-- Promotion discipline (quality gates > raw backtest performance)
-- Modularity for extending one subsystem without rewriting the system
+- The API is intentionally resilient to missing optional dependencies by lazy-importing routers and services; unavailable routers are skipped with a warning.
+- Cache state is in-process memory only; running multiple API processes does not share cache entries.
+- `api/services/kalshi_service.py` exists but is not routed, so Kalshi web UI functionality relies on persisted artifacts and autopilot page tabs rather than a dedicated `/api/kalshi/*` contract.

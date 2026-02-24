@@ -1,361 +1,137 @@
 # Quant Engine Human System Guide
 
-## What This Is
+Operator-oriented overview of the current Quant Engine system. This guide describes what exists in source now (FastAPI backend + React frontend), how the major components fit together, and how to use the main workflows without reading code first.
 
-This is the human-use version of the system audit.
-It explains what the system is trying to do, how the major components fit together, and how to use the Dash UI and operational scripts without needing to read code first.
+## What The System Is
 
-For the full source-derived component inventory, use:
-- `docs/reports/QUANT_ENGINE_SYSTEM_INTENT_COMPONENT_AUDIT.md`
+`quant_engine` is a research and operations workspace for:
+- equity data ingestion and survivorship-safe loading,
+- feature engineering and regime detection,
+- model training/prediction/versioning,
+- execution-aware backtesting and validation,
+- autopilot strategy lifecycle and paper trading,
+- Kalshi event-market ingestion/research,
+- and web-based observability/controls via a React UI backed by FastAPI.
 
-## System Purpose (Plain English)
+## Current Runtime Interfaces
 
-`quant_engine` is a research and operations framework for:
-- building predictive signals for equities,
-- detecting market regimes,
-- backtesting strategies with realistic risk/execution assumptions,
-- managing a strategy lifecycle (discovery -> validation -> promotion -> paper trading),
-- and researching event-market signals (Kalshi) in a leak-safe way.
+### CLI / Scripts
+- Root `run_*.py` scripts are the primary orchestration entrypoints for training, prediction, backtesting, autopilot, retraining, cache metadata rehydration, WRDS refresh, server startup, and Kalshi event pipeline runs.
+- See `docs/operations/CLI_AND_WORKFLOW_RUNBOOK.md` for exact flags and workflows.
 
-The system is designed to avoid common research mistakes:
-- survivorship bias,
-- look-ahead leakage,
-- overfitting via too many variants,
-- fragile ticker-based joins,
-- and promoting strategies just because a backtest looks good.
+### Web App (Current UI)
+- Frontend stack: React/Vite in `frontend/` (not Dash, not tkinter).
+- Backend stack: FastAPI in `api/`.
+- Dev mode: Vite frontend + FastAPI backend; Prod-like local mode: `run_server.py --static` serves both.
 
-## Core Mental Model (How the System Works)
+## Major Subsystems
 
-The system is easiest to understand as a pipeline:
+1. Data (`data/`)
+Loads and normalizes market data from WRDS/cache/providers, enforces quality checks and survivorship controls.
+2. Features (`features/`)
+Builds feature panels and targets for training/prediction (core + macro/options/intraday/research factors).
+3. Regime (`regime/`)
+Computes market regime labels and probabilities used across training, inference, risk, and UI diagnostics.
+4. Models (`models/`)
+Trains and serves regime-conditional ensembles, maintains versioning and champion governance, provides IV surface models.
+5. Backtest + Risk (`backtest/`, `risk/`)
+Simulates trades with execution costs and risk controls; runs validation and analytics.
+6. Autopilot (`autopilot/`)
+Generates candidate strategy variants, applies promotion gate, persists registry, and runs paper trading.
+7. Kalshi (`kalshi/`)
+Handles event-market ingestion, event-time storage, distribution reconstruction, event features, and walk-forward evaluation.
+8. API + Frontend (`api/`, `frontend/`)
+Provides operator-facing web UI and API endpoints over persisted artifacts and background jobs.
 
-1. Data
-- Historical price/fundamental/options data is loaded and normalized.
-- Point-in-time handling and data quality checks happen here.
+## Where Results And State Live
 
-2. Features
-- Market and research features are engineered from the raw data.
-- This includes technical, cross-asset, macro, options, and optional intraday-style features.
+- `trained_models/`: model artifacts + registries (versioned and flat artifacts may coexist).
+- `results/`: predictions/backtests/autopilot outputs and support metrics files.
+- `data/cache/`: local OHLCV cache files and metadata sidecars.
+- `data/kalshi.duckdb`: Kalshi event-time storage (default path, configurable in `config.py`).
+- `api_jobs.db`: API background job store (default, configurable via `QE_API_JOB_DB_PATH`).
 
-3. Regimes
-- The market state is classified (bull/bear/mean-reverting/high-vol), with confidence.
-- Correlation regime features can also be added.
+## Web UI Route Guide (Current React App)
 
-4. Model
-- A predictive model (with global + regime-aware behavior) is trained and versioned.
-- Predictions include confidence and can be filtered/gated.
+### `/` → `DashboardPage`
 
-5. Backtest + Risk
-- Signals are converted into trades with execution costs and risk controls.
-- Performance and robustness metrics are computed.
+- Tabs: `Portfolio Overview`, `Regime State`, `Model Performance`, `Feature Importance`, `Trade Log`, `Risk Metrics`
+- Main page-local panels/components: `EquityCurveTab`, `FeatureImportanceTab`, `KPIGrid`, `ModelHealthTab`, `RegimeTab`, `RiskTab`, `TradeLogTab`, `useDashboardData`
 
-6. Autopilot (optional)
-- Execution parameter variants are discovered and evaluated.
-- Only robust variants are promoted.
-- Promoted strategies can be paper traded.
+### `/system-health` → `SystemHealthPage`
 
-7. UI (Dash)
-- The Dash app is the current UI to inspect health, data, models, backtests, IV surfaces, and autopilot/Kalshi workflows.
+- Main page-local panels/components: `HealthCheckPanel`, `HealthRadar`, `HealthScoreCards`
+- Data hooks (top-level imports): `useDetailedHealth`
 
-## Most Important System Rules (You Should Know These)
+### `/system-logs` → `LogsPage`
 
-### 1. PERMNO-first identity
-The system is built to prefer stable security identity keys (`permno`) over tickers.
+- Main page-local panels/components: `LogFilters`, `LogStream`
 
-Why this matters:
-- Tickers can change or be reused.
-- Historical joins and backtests are safer with stable identifiers.
+### `/data-explorer` → `DataExplorerPage`
 
-Practical implication:
-- If something looks wrong in joins or predictions, check identity handling first.
+- Main page-local panels/components: `CacheStatusPanel`, `CandlestickPanel`, `DataQualityReport`, `UniverseSelector`
 
-### 2. Strict time alignment (no leakage)
-The system is designed to avoid using future information when building features or labels.
+### `/model-lab` → `ModelLabPage`
 
-Why this matters:
-- Leakage creates fake performance.
-- This is especially critical in the Kalshi/event pipeline.
+- Tabs: `Features`, `Feature Diff`, `Regime`, `Training`
+- Main page-local panels/components: `FeatureDiffViewer`, `FeaturesTab`, `RegimeTab`, `TrainingTab`
 
-Practical implication:
-- Any new feature or label logic must preserve strict as-of behavior.
+### `/signal-desk` → `SignalDeskPage`
 
-### 3. Promotion gating is stricter than backtest performance
-A strategy can have a decent backtest and still fail promotion.
+- Main page-local panels/components: `ConfidenceScatter`, `EnsembleDisagreement`, `SignalControls`, `SignalDistribution`, `SignalRankingsPanel`
+- Data hooks (top-level imports): `useLatestSignals`
 
-Why this matters:
-- The system checks robustness (walk-forward behavior, advanced validation, capacity constraints, etc.).
+### `/backtest-risk` → `BacktestPage`
 
-Practical implication:
-- “Why wasn’t it promoted?” is often answered by the promotion gate, not by the backtest summary.
+- Main page-local panels/components: `BacktestConfigPanel`, `BacktestResults`, `RunBacktestButton`
+- Data hooks (top-level imports): `useConfig`
 
-## Operational Scripts (What To Run)
+### `/iv-surface` → `IVSurfacePage`
 
-These are the primary operator entry points:
+- Tabs: `SVI Surface`, `Heston Surface`, `Arb-Aware SVI`
+- Main page-local panels/components: `ArbAwareSVITab`, `HestonSurfaceTab`, `SVISurfaceTab`
 
-- `run_dash.py`
-  - Launches the current Dash UI (`dash_ui`)
+### `/sp-comparison` → `BenchmarkPage`
 
-- `run_train.py`
-  - Trains and saves model artifacts
+- Main page-local panels/components: `BenchmarkChartGrid`, `BenchmarkMetricCards`
+- Data hooks (top-level imports): `useBenchmarkComparison`, `useBenchmarkEquityCurves`, `useBenchmarkRollingMetrics`
 
-- `run_predict.py`
-  - Generates predictions from a saved model version
+### `/autopilot` → `AutopilotPage`
 
-- `run_backtest.py`
-  - Runs backtests using predictions and price data
+- Tabs: `Strategy Candidates`, `Paper Trading`, `Live P&L`, `Kalshi Events`, `Lifecycle`
+- Main page-local panels/components: `KalshiEventsTab`, `LifecycleTimeline`, `PaperPnLTracker`, `PaperTradingTab`, `StrategyCandidatesTab`
+- Data hooks (top-level imports): `useLatestCycle`
 
-- `run_retrain.py`
-  - Runs retrain governance / controlled retraining workflows
+## Typical Operator Workflows
 
-- `run_autopilot.py`
-  - Runs strategy discovery, validation, promotion, and paper trading cycle
+### Inspect system health
+1. Start the web app (`docs/guides/WEB_APP_QUICK_START.md`).
+2. Open `/system-health`.
+3. Review domain scores/checks, then drill into `/data-explorer` or `/dashboard` as needed.
 
-- `run_kalshi_event_pipeline.py`
-  - Runs Kalshi event-market ingestion / feature / walk-forward / promotion workflow
+### Train / predict / backtest using the UI
+1. Use `/model-lab` to submit training or prediction jobs (background jobs).
+2. Monitor progress via job panels/SSE updates.
+3. Use `/signal-desk` and `/backtest-risk` to inspect resulting artifacts served through the API.
 
-- `run_wrds_daily_refresh.py`
-  - Refreshes WRDS-derived caches/data pipelines
+### Run autopilot cycle
+1. Use `/autopilot` to trigger a cycle (or run `run_autopilot.py`).
+2. Review candidate/paper/lifecycle tabs.
+3. Inspect `results/autopilot/*` for persisted source-of-truth state.
 
-## Dash UI Guide (Current UI)
+### Run Kalshi event research
+1. Run `run_kalshi_event_pipeline.py` from CLI (there is no dedicated mounted Kalshi API router today).
+2. Inspect generated artifacts/DB state and the autopilot/Kalshi UI tab surfaces that read persisted outputs.
 
-The active UI is Dash (`dash_ui`).
-The old `ui/` system has been removed.
+## Important Caveats (Current Source)
 
-### Dashboard (`/`)
-What it is for:
-- Quick overview of portfolio/system state
-- KPI cards and high-level status signals
+- Historical docs/reports may reference removed Dash/tkinter UI stacks; use this guide + source-derived references as current truth.
+- The frontend job type definitions currently drift from backend job status names (`pending/completed` vs `queued/succeeded`); the backend models in `api/jobs/models.py` are the canonical API contract.
+- `api/services/kalshi_service.py` exists but is not mounted by `api/routers/__init__.py`.
 
-Use it when:
-- You want a fast top-level pulse check before deeper analysis
+## Where To Go Next
 
-### System Health (`/system-health`)
-What it is for:
-- Health/quality checks across system dimensions
-- Operational readiness and diagnostics
-
-Use it when:
-- You want to confirm the system is in a good state before training/backtesting/autopilot runs
-
-### Data Explorer (`/data-explorer`)
-What it is for:
-- Inspect loaded OHLCV data and quality details
-- Verify what data is actually available before modeling/backtesting
-
-Use it when:
-- Data looks suspicious
-- A run fails due to missing data
-- You need to inspect a specific ticker/asset series visually
-
-### Model Lab (`/model-lab`)
-What it is for:
-- Feature inspection
-- Regime detection visualization
-- Training workflow experiments and diagnostics
-
-Use it when:
-- You are iterating on features/regimes/model settings
-- You want to inspect regime probabilities and transitions visually
-
-### Signal Desk (`/signal-desk`)
-What it is for:
-- Generate and inspect ranked predictions/signals
-- Review prediction distributions and confidence patterns
-
-Use it when:
-- You want to see what the model is currently predicting and how confident it is
-
-### Backtest & Risk (`/backtest-risk`)
-What it is for:
-- Run backtests (UI-driven parameter experiments)
-- Inspect equity curve, drawdown, returns distribution, and trade/regime analytics
-
-Use it when:
-- You want a fast strategy behavior check without leaving the UI
-
-### IV Surface (`/iv-surface`)
-What it is for:
-- Explore implied volatility surfaces (SVI, Heston, arbitrage-aware SVI)
-- Visualize smiles and surface changes
-
-Use it when:
-- You are researching options/volatility structure or validating IV modeling behavior
-
-### S&P Comparison (`/sp-comparison`)
-What it is for:
-- Compare strategy behavior vs S&P benchmark metrics/curves
-- Benchmark-oriented diagnostics (alpha/beta/tracking behavior)
-
-Use it when:
-- You want to evaluate strategy behavior relative to a market benchmark, not just absolute returns
-
-### Autopilot & Events (`/autopilot`)
-What it is for:
-- View strategy discovery/promotion funnel
-- Inspect paper-trading outputs
-- Explore Kalshi event-market visuals and walk-forward outputs
-
-Use it when:
-- You are operating the strategy lifecycle or reviewing event-market research outputs
-
-## Subsystem Guide (What Each Area Is Meant To Do)
-
-### `data/`
-Purpose:
-- Fetch, cache, and normalize data from providers (especially WRDS) with quality/provenance control.
-
-Why it exists:
-- So every downstream workflow uses the same trusted loading behavior.
-
-### `features/`
-Purpose:
-- Build model-ready feature panels from market and related data.
-
-Why it exists:
-- Centralizes feature definitions and keeps train/predict/backtest consistent.
-
-### `regime/`
-Purpose:
-- Detect market regime and regime confidence.
-
-Why it exists:
-- Model behavior and risk behavior should change with market conditions.
-
-### `models/`
-Purpose:
-- Train, version, load, and govern predictive models.
-
-Why it exists:
-- Separates ML lifecycle concerns from data and backtest logic.
-
-### `backtest/`
-Purpose:
-- Simulate strategy behavior from predictions under realistic constraints.
-
-Why it exists:
-- Converts signal quality into trading performance evidence.
-
-### `risk/`
-Purpose:
-- Position sizing, risk limits, drawdown controls, portfolio risk, stress testing, attribution.
-
-Why it exists:
-- Keeps risk logic reusable and consistent across backtest/autopilot workflows.
-
-### `autopilot/`
-Purpose:
-- Strategy lifecycle management: discovery, promotion, registry, paper trading.
-
-Why it exists:
-- Moves the system from manual strategy tweaking to a repeatable validation/promotion process.
-
-### `kalshi/`
-Purpose:
-- Event-market data ingestion, distribution building, event features, walk-forward validation, event strategy promotion.
-
-Why it exists:
-- Event-market research has different data/timing semantics and needs its own isolated pipeline.
-
-### `dash_ui/`
-Purpose:
-- Operational/research interface for humans.
-
-Why it exists:
-- Centralized visibility and control without repeatedly running scripts blind.
-
-## Regime Detection (Human Version)
-
-The system uses regimes to describe market behavior and adapt decisions.
-
-Canonical regime labels used across the system:
-- `0` = bull trend
-- `1` = bear trend
-- `2` = mean-reverting / neutral-ish
-- `3` = high volatility / stressed
-
-There are two ways regime detection can run:
-- Rule-based (deterministic thresholds)
-- HMM-based (probabilistic hidden-state model)
-
-Why both exist:
-- Rule-based is simple and robust as a fallback.
-- HMM-based is better for latent/noisy state transitions and confidence/posteriors.
-
-How it affects the rest of the system:
-- Prediction blending/weighting
-- Confidence handling
-- Risk sizing and gating
-- Backtest trade filtering in some conditions
-- Autopilot/paper trading exposure behavior
-
-## Autopilot (Human Version)
-
-Autopilot does not create an entirely new predictive model by itself.
-It mostly searches execution-layer variants around a predictive model.
-
-What it does in practice:
-- Ensures a baseline predictor exists (or uses a fallback predictor if necessary)
-- Generates strategy candidates (thresholds, risk mode, max positions)
-- Backtests candidates
-- Applies promotion gates (quality and robustness rules)
-- Stores promoted strategies in a registry
-- Runs paper trading for active promoted strategies
-
-How to think about it:
-- It is a strategy operations layer sitting on top of the ML prediction stack.
-
-## Kalshi Event Pipeline (Human Version)
-
-The Kalshi subsystem converts event-market quotes into structured, time-safe event features.
-
-High-level process:
-- pull markets/contracts/quotes,
-- build probability-like distribution snapshots from contract prices,
-- build pre-event features for known macro events,
-- run event walk-forward validation,
-- apply promotion gating to event strategies.
-
-What makes it special:
-- Very strict timestamp handling (feature rows must be pre-release)
-- Data-quality and quote-staleness logic is built into the feature generation path
-- Promotion uses advanced validation concepts, not just raw average return
-
-## Typical Human Workflows
-
-### Daily/regular health workflow
-1. Launch `run_dash.py`
-2. Check `/system-health`
-3. Check `/dashboard`
-4. Use `/data-explorer` if data quality looks off
-5. Use `/autopilot` to inspect promotion/paper-trading state
-
-### Model iteration workflow
-1. Inspect data in `/data-explorer`
-2. Inspect features/regimes in `/model-lab`
-3. Train via `run_train.py` (or use Model Lab UI tools for inspection)
-4. Generate signals in `/signal-desk`
-5. Backtest in `/backtest-risk` or `run_backtest.py`
-
-### Autopilot review workflow
-1. Run `run_autopilot.py`
-2. Open `/autopilot`
-3. Review strategy table, promotion funnel, and paper equity/positions
-4. Investigate failures via promotion-gate metrics (not just returns)
-
-### Kalshi/event research workflow
-1. Run `run_kalshi_event_pipeline.py`
-2. Open `/autopilot` (Kalshi sections)
-3. Review probability/disagreement/walk-forward visuals
-4. Confirm event feature quality and promotion outcomes
-
-## What Changed in This Cleanup (Important)
-
-- Legacy UI (`ui/` + `run_dashboard.py`) was removed.
-- The Dash UI (`dash_ui`) is the only active UI stack.
-- Loose root docs were organized into `docs/guides`, `docs/reports`, `docs/plans`, and `docs/notes`.
-
-## Recommended Reading Order (Human)
-
-1. `docs/guides/QUANT_ENGINE_HUMAN_SYSTEM_GUIDE.md` (this file)
-2. `docs/reports/QUANT_ENGINE_SYSTEM_INTENT_COMPONENT_AUDIT.md` (deep source-based audit)
-3. `docs/guides/DASH_QUICK_START.md` (UI-specific usage)
-4. `docs/guides/DASH_FOUNDATION_SUMMARY.md` (UI architecture summary)
+- `docs/architecture/SYSTEM_ARCHITECTURE_AND_FLOWS.md` for system internals and flow diagrams
+- `docs/reference/FRONTEND_UI_REFERENCE.md` for route/page/hook/component details
+- `docs/reference/CONFIG_REFERENCE.md` for configuration and runtime patching
+- Package `README.md` files for subsystem deep dives
