@@ -83,39 +83,46 @@ def compute_option_surface_factors(df: pd.DataFrame) -> pd.DataFrame:
     return out.replace([np.inf, -np.inf], np.nan)
 
 
-def compute_iv_shock_features(df: pd.DataFrame, window: int = 1) -> pd.DataFrame:
+def compute_iv_shock_features(df: pd.DataFrame, window: int = 5) -> pd.DataFrame:
     """
-    Event-centric IV shock features (G3).
+    Causal IV change features (G3).
 
-    Measures IV surface changes around events by computing pre/post deltas:
-      delta_atm_iv_pre_post: ATM IV(t+window) - ATM IV(t-window)
-      skew_steepening: skew(t+window) - skew(t-window)
-      term_structure_kink: change in short_IV / long_IV ratio
+    All features are **backward-looking only** — they compare the current
+    value to the value ``window`` bars ago.  No future data is used.
+
+    Features produced (all causal):
+      delta_atm_iv_change_{w}d : iv30 - iv30.shift(window)
+      delta_atm_iv_velocity_{w}d : acceleration of IV change
+      skew_change_{w}d : skew - skew.shift(window)
+      term_structure_change_{w}d : change in short/long IV ratio
 
     Args:
         df: DataFrame with iv_atm_30, iv_atm_90, skew_25d columns (or opt_ prefixed).
-        window: lookback/forward period in rows (default 1 = adjacent bars).
+        window: lookback period in rows (default 5 = 1 trading week).
     """
     out = pd.DataFrame(index=df.index)
+    w = int(window)
 
     iv30 = _pick_numeric(df, ["iv_atm_30", "opt_iv_atm_30"])
     iv90 = _pick_numeric(df, ["iv_atm_90", "opt_iv_atm_90"])
     skew = _pick_numeric(df, ["skew_25d", "opt_skew_25d"])
 
     if iv30 is not None:
-        iv30_pre = iv30.shift(window)
-        iv30_post = iv30.shift(-window)
-        out["delta_atm_iv_pre_post"] = iv30_post - iv30_pre
+        # Recent IV change: current minus W bars ago (causal)
+        delta_atm_iv_change = iv30 - iv30.shift(w)
+        out[f"delta_atm_iv_change_{w}d"] = delta_atm_iv_change
+
+        # IV acceleration: change-of-change (causal)
+        delta_atm_iv_velocity = delta_atm_iv_change - delta_atm_iv_change.shift(w)
+        out[f"delta_atm_iv_velocity_{w}d"] = delta_atm_iv_velocity
 
     if skew is not None:
-        skew_pre = skew.shift(window)
-        skew_post = skew.shift(-window)
-        out["skew_steepening"] = skew_post - skew_pre
+        # Skew change: current minus W bars ago (causal)
+        out[f"skew_change_{w}d"] = skew - skew.shift(w)
 
     if iv30 is not None and iv90 is not None:
-        ratio = iv30 / iv90.replace(0.0, np.nan)
-        ratio_pre = ratio.shift(window)
-        ratio_post = ratio.shift(-window)
-        out["term_structure_kink"] = ratio_post - ratio_pre
+        # Term structure ratio change (causal)
+        term_ratio = iv30 / iv90.replace(0.0, np.nan)
+        out[f"term_structure_change_{w}d"] = term_ratio - term_ratio.shift(w)
 
     return out.replace([np.inf, -np.inf], np.nan)
