@@ -86,6 +86,10 @@ def _build_config_status() -> Dict[str, Dict[str, Any]]:
             "retrain_min_win_rate": _annotated(cfg.RETRAIN_MIN_WIN_RATE, "placeholder"),
             "retrain_min_correlation": _annotated(cfg.RETRAIN_MIN_CORRELATION, "placeholder"),
         },
+        "training": {
+            "forward_horizons": _annotated(cfg.FORWARD_HORIZONS, "active"),
+            "feature_mode": _annotated(cfg.AUTOPILOT_FEATURE_MODE, "active"),
+        },
         "autopilot": {
             "feature_mode": _annotated(cfg.AUTOPILOT_FEATURE_MODE, "active"),
             "promotion_min_sharpe": _annotated(cfg.PROMOTION_MIN_SHARPE, "active"),

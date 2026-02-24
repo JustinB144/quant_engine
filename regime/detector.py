@@ -83,6 +83,52 @@ class RegimeDetector:
         """detect."""
         return self.detect_with_confidence(features)[0]
 
+    def _apply_min_duration(
+        self, regime: pd.Series, confidence: pd.Series,
+    ) -> pd.Series:
+        """Merge regime runs shorter than ``min_duration`` into adjacent regimes.
+
+        Matches the HSMM-like smoothing in ``GaussianHMM._smooth_duration``
+        but operates on ``pd.Series`` instead of ``np.ndarray``.  For each
+        short run, the side (left or right neighbor) with higher mean
+        confidence on the short segment wins.
+        """
+        if len(regime) == 0 or self.min_duration <= 1:
+            return regime
+
+        vals = regime.values.copy()
+        conf = confidence.values
+        n = len(vals)
+
+        i = 0
+        while i < n:
+            j = i + 1
+            while j < n and vals[j] == vals[i]:
+                j += 1
+            run_len = j - i
+            if run_len < self.min_duration:
+                left_state = int(vals[i - 1]) if i > 0 else None
+                right_state = int(vals[j]) if j < n else None
+
+                if left_state is None and right_state is None:
+                    i = j
+                    continue
+                if left_state is None:
+                    repl = right_state
+                elif right_state is None:
+                    repl = left_state
+                else:
+                    left_score = float(conf[i:j].mean()) if left_state == int(vals[max(0, i - 1)]) else 0.0
+                    right_score = float(conf[i:j].mean()) if right_state == int(vals[min(j, n - 1)]) else 0.0
+                    # Prefer the neighbor whose confidence for the short segment is higher.
+                    # When tied, prefer left (earlier regime persists).
+                    repl = left_state if left_score >= right_score else right_state
+
+                vals[i:j] = repl
+            i = j
+
+        return pd.Series(vals, index=regime.index, dtype=int)
+
     def _rule_detect(self, features: pd.DataFrame) -> RegimeOutput:
         """Internal helper for rule detect."""
         n = len(features)
@@ -117,6 +163,10 @@ class RegimeDetector:
             natr.rolling(252, min_periods=60).std() + 1e-10
         )
         confidence[vol_mask] = np.clip(0.5 + vol_z[vol_mask] * 0.2, 0.3, 1.0)
+
+        # Enforce minimum regime duration to prevent 1-bar flickers.
+        if self.min_duration > 1:
+            regime = self._apply_min_duration(regime, confidence)
 
         probs = pd.DataFrame(index=features.index)
         for code in range(4):

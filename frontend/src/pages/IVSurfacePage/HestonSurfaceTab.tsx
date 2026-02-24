@@ -1,7 +1,5 @@
 import React, { useState } from 'react'
 import IVControls from './IVControls'
-import ChartContainer from '@/components/charts/ChartContainer'
-import EmptyState from '@/components/ui/EmptyState'
 import AlertBanner from '@/components/ui/AlertBanner'
 
 // Exact Heston presets from iv_surface.py:44-48
@@ -45,22 +43,6 @@ export default function HestonSurfaceTab() {
             { id: 'sigma', label: 'sigma (vol-of-vol)', min: 0.05, max: 1.50, step: 0.05, value: sigma, onChange: setSigma },
             { id: 'rho', label: 'rho (correlation)', min: -0.95, max: 0.50, step: 0.05, value: rho, onChange: setRho },
           ]}
-          actionButton={
-            <button
-              className="w-full py-2 rounded-md font-mono mt-2"
-              style={{
-                backgroundColor: 'var(--accent-blue)',
-                color: 'var(--text-primary)',
-                fontSize: 12,
-                border: 'none',
-                cursor: 'not-allowed',
-                opacity: 0.5,
-              }}
-              disabled
-            >
-              Compute Surface
-            </button>
-          }
         />
       </div>
       <div className="col-span-9 lg:col-span-10">
@@ -71,12 +53,22 @@ export default function HestonSurfaceTab() {
             detail={`2 * kappa * theta (${(2 * kappa * theta).toFixed(3)}) < sigma^2 (${(sigma * sigma).toFixed(3)}). Variance process may reach zero.`}
           />
         )}
-        <ChartContainer title="Heston Implied Volatility Surface">
-          <EmptyState message="Heston computation requires server-side HestonModel (Python). A backend endpoint for Heston IV is not yet available." />
-        </ChartContainer>
-        <ChartContainer title="Heston Smile Curves">
-          <EmptyState message="Heston smiles will appear after server-side computation" />
-        </ChartContainer>
+        <div className="card-panel" style={{ padding: 24 }}>
+          <div className="font-mono" style={{ fontSize: 14, color: 'var(--text-primary)', marginBottom: 12 }}>
+            Heston Surface — Coming Soon
+          </div>
+          <p className="font-mono" style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.6, marginBottom: 16 }}>
+            The Heston stochastic volatility model requires server-side computation
+            that is not yet connected to the API. The model code exists in
+            <span style={{ color: 'var(--text-secondary)' }}> models/iv/models.py</span> but
+            needs an API endpoint.
+          </p>
+          <div className="font-mono" style={{ fontSize: 11, lineHeight: 1.8 }}>
+            <div><span style={{ color: 'var(--accent-green)' }}>&#10003;</span> <span style={{ color: 'var(--text-secondary)' }}>SVI parametric surface (fully functional)</span></div>
+            <div><span style={{ color: 'var(--accent-green)' }}>&#10003;</span> <span style={{ color: 'var(--text-secondary)' }}>Arbitrage-free SVI (fully functional)</span></div>
+            <div><span style={{ color: 'var(--text-tertiary)' }}>&#9744;</span> <span style={{ color: 'var(--text-tertiary)' }}>Heston model computation endpoint</span></div>
+          </div>
+        </div>
       </div>
     </div>
   )

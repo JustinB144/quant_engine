@@ -56,6 +56,7 @@ export const JOBS_CANCEL = (id: string) => `/jobs/${id}/cancel`
 
 // Config
 export const CONFIG = '/config'
+export const CONFIG_STATUS = '/config/status'
 
 // IV Surface
 export const IV_SURFACE_ARB_FREE = '/iv-surface/arb-free-svi'

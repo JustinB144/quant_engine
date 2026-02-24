@@ -1,13 +1,21 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import ChartContainer from '@/components/charts/ChartContainer'
 import DataTable from '@/components/tables/DataTable'
 import JobMonitor from '@/components/job/JobMonitor'
 import { useTrainModel } from '@/api/mutations/useTrainModel'
 import { useModelVersions } from '@/api/queries/useModels'
+import { useConfigStatus } from '@/api/queries/useConfig'
 import { createColumnHelper } from '@tanstack/react-table'
 import { Play } from 'lucide-react'
 import type { TrainRequest } from '@/types/compute'
 import type { ModelVersionInfo } from '@/types/models'
+
+const FALLBACK_DEFAULTS: TrainRequest = {
+  horizons: [5, 10, 20],
+  feature_mode: 'full',
+  survivorship_filter: true,
+  full_universe: false,
+}
 
 const col = createColumnHelper<ModelVersionInfo>()
 const columns = [
@@ -23,14 +31,29 @@ const columns = [
 export default function TrainingTab() {
   const trainModel = useTrainModel()
   const { data: versionsData, isLoading } = useModelVersions()
+  const { data: statusData } = useConfigStatus()
   const versions = versionsData?.data ?? []
   const [jobId, setJobId] = useState<string | null>(null)
-  const [config, setConfig] = useState<TrainRequest>({
-    horizons: [5, 10, 20],
-    feature_mode: 'full',
-    survivorship_filter: true,
-    full_universe: false,
-  })
+  const [config, setConfig] = useState<TrainRequest>(FALLBACK_DEFAULTS)
+  const [usingServerDefaults, setUsingServerDefaults] = useState(false)
+
+  useEffect(() => {
+    if (!statusData?.data) return
+    const training = statusData.data.training
+    const autopilot = statusData.data.autopilot
+    if (!training && !autopilot) return
+
+    const horizons = training?.forward_horizons?.value
+    const featureMode = (training?.feature_mode?.value ?? autopilot?.feature_mode?.value) as string | undefined
+
+    setConfig({
+      horizons: Array.isArray(horizons) ? horizons : FALLBACK_DEFAULTS.horizons,
+      feature_mode: typeof featureMode === 'string' ? featureMode : FALLBACK_DEFAULTS.feature_mode,
+      survivorship_filter: true,
+      full_universe: false,
+    })
+    setUsingServerDefaults(true)
+  }, [statusData])
 
   const handleTrain = () => {
     trainModel.mutate(config, {
@@ -44,7 +67,14 @@ export default function TrainingTab() {
   return (
     <div>
       <div className="card-panel mb-4">
-        <div className="card-panel-header">Training Configuration</div>
+        <div className="card-panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          Training Configuration
+          {usingServerDefaults && (
+            <span className="font-mono" style={{ fontSize: 10, color: 'var(--accent-green)', opacity: 0.7 }}>
+              Using server defaults
+            </span>
+          )}
+        </div>
         <div className="grid grid-cols-4 gap-3 mb-3">
           <div>
             <label className="font-mono block mb-1" style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>Feature Mode</label>
