@@ -2,6 +2,7 @@
 Stateful paper-trading engine for promoted strategies.
 """
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -22,7 +23,11 @@ from ..config import (
     REGIME_RISK_MULTIPLIER,
 )
 from ..risk.position_sizer import PositionSizer
+from ..risk.stop_loss import StopLossManager
+from ..risk.portfolio_risk import PortfolioRiskManager
 from .registry import ActiveStrategy
+
+logger = logging.getLogger(__name__)
 
 
 class PaperTrader:
@@ -61,6 +66,44 @@ class PaperTrader:
         from ..risk.drawdown import DrawdownController
         self._dd_controller = DrawdownController(initial_equity=self.initial_capital)
         self._prev_equity: Optional[float] = None
+
+        # Stop loss manager — ATR stops, trailing stops, hard stops, regime-change stops
+        self._stop_mgr = StopLossManager()
+
+        # Portfolio risk manager — sector, correlation, single-name, volatility limits
+        self._risk_mgr = PortfolioRiskManager()
+
+        # A/B test registry — lazily loaded to avoid circular imports
+        self._ab_registry = None
+
+    def _get_active_ab_test(self):
+        """Return the active A/B test, if any.
+
+        Lazily initializes the ABTestRegistry on first call to avoid
+        circular imports at module load time.
+        """
+        try:
+            if self._ab_registry is None:
+                from ..api.ab_testing import ABTestRegistry
+                self._ab_registry = ABTestRegistry()
+            return self._ab_registry.get_active_test()
+        except Exception as e:
+            logger.debug("A/B test registry unavailable: %s", e)
+            return None
+
+    def _record_trade_to_ab_test(
+        self, ab_test, variant: str, trade_record: Dict,
+    ) -> None:
+        """Record a closed trade to the active A/B test variant."""
+        if ab_test is None or not variant:
+            return
+        try:
+            ab_test.record_trade(variant, trade_record)
+            # Persist after recording
+            if self._ab_registry is not None:
+                self._ab_registry._save()
+        except Exception as e:
+            logger.warning("Failed to record trade to A/B test: %s", e)
 
     def _load_state(self) -> Dict:
         """Internal helper to load state."""
@@ -235,6 +278,93 @@ class PaperTrader:
             "price": price,
         }
 
+    @staticmethod
+    def _compute_atr(
+        ticker: str,
+        as_of: pd.Timestamp,
+        price_data: Dict[str, pd.DataFrame],
+        lookback: int = 14,
+    ) -> float:
+        """Compute Average True Range for stop loss evaluation."""
+        df = price_data.get(ticker)
+        if df is None or len(df) < 2:
+            return 0.0
+
+        hist = df[df.index <= as_of]
+        if len(hist) < 2:
+            return 0.0
+
+        close = hist["Close"].astype(float)
+        high = hist["High"].astype(float)
+        low = hist["Low"].astype(float)
+
+        tr = pd.concat(
+            [
+                high - low,
+                (high - close.shift(1)).abs(),
+                (low - close.shift(1)).abs(),
+            ],
+            axis=1,
+        ).max(axis=1).dropna()
+
+        if len(tr) == 0:
+            return float(close.iloc[-1] * 0.02)
+
+        return float(tr.iloc[-lookback:].mean())
+
+    def _update_equity_curve(
+        self,
+        state: Dict,
+        as_of_str: str,
+        equity: float,
+        daily_pnl: float,
+        dd_status,
+    ) -> Dict:
+        """Append to equity curve and compute risk metrics if enough data.
+
+        Returns a dict of risk metrics (empty if fewer than 20 data points).
+        """
+        if "equity_curve" not in state:
+            state["equity_curve"] = []
+
+        state["equity_curve"].append({
+            "date": as_of_str,
+            "equity": float(equity),
+            "cash": float(state.get("cash", 0.0)),
+            "positions_value": float(equity) - float(state.get("cash", 0.0)),
+            "n_positions": len(state.get("positions", [])),
+            "daily_pnl": float(daily_pnl),
+            "drawdown": float(dd_status.current_drawdown),
+            "dd_state": dd_status.state.name,
+        })
+
+        # Cap equity curve to last 2520 entries (10 years of daily data)
+        if len(state["equity_curve"]) > 2520:
+            state["equity_curve"] = state["equity_curve"][-2520:]
+
+        # Compute risk metrics if enough data
+        risk_metrics: Dict = {}
+        if len(state["equity_curve"]) >= 20:
+            equity_series = pd.Series(
+                [e["equity"] for e in state["equity_curve"]]
+            )
+            returns_series = equity_series.pct_change().dropna()
+            if len(returns_series) > 0 and returns_series.std() > 0:
+                ann_return = float(returns_series.mean() * 252)
+                ann_vol = float(returns_series.std() * np.sqrt(252))
+                current_dd = float(dd_status.current_drawdown)
+                risk_metrics = {
+                    "sharpe": float(ann_return / ann_vol) if ann_vol > 0 else 0.0,
+                    "max_drawdown": current_dd,
+                    "volatility": ann_vol,
+                    "calmar": float(ann_return / abs(current_dd)) if current_dd < 0 else 0.0,
+                    "win_rate": float(
+                        sum(1 for r in returns_series if r > 0) / len(returns_series)
+                    ),
+                }
+
+        return risk_metrics
+
     def _position_size_pct(
         self,
         state: Dict,
@@ -297,6 +427,9 @@ class PaperTrader:
         pred_map = self._latest_predictions_by_id(latest_predictions)
         state = self._load_state()
 
+        # ── A/B test routing ──
+        active_ab_test = self._get_active_ab_test()
+
         # ── Drawdown controller update ──
         current_equity = self._mark_to_market(state, as_of, price_data)
         if self._prev_equity is not None and self._prev_equity > 0:
@@ -324,9 +457,12 @@ class PaperTrader:
                 entry_notional = float(pos["shares"]) * float(pos["entry_price"])
                 pnl = proceeds - entry_notional
                 net_return = float(pnl / entry_notional) if entry_notional > 0 else 0.0
+                entry_regime = int(pos.get("entry_regime", pos.get("regime", 2)))
+                pred_row = pred_map.get(permno)
+                current_regime = int(pred_row.get("regime", entry_regime)) if pred_row else entry_regime
                 state["cash"] = float(state.get("cash", 0.0)) + proceeds
                 state["realized_pnl"] = float(state.get("realized_pnl", 0.0)) + pnl
-                state.setdefault("trades", []).append({
+                trade_record = {
                     "strategy_id": pos["strategy_id"],
                     "permno": permno,
                     "ticker": pos.get("ticker"),
@@ -340,15 +476,27 @@ class PaperTrader:
                     "holding_days": int(pos.get("holding_days", 0)) + 1,
                     "reason": "drawdown_liquidation",
                     "position_size_pct": float(pos.get("position_size_pct", 0.0)),
-                    "regime": int(pos.get("regime", 2)),
-                })
+                    "entry_regime": entry_regime,
+                    "exit_regime": current_regime,
+                    "regime_changed": entry_regime != current_regime,
+                    "transaction_cost": float(tx),
+                }
+                state.setdefault("trades", []).append(trade_record)
+                # Record to A/B test if position was part of one
+                ab_variant = pos.get("ab_variant", "")
+                self._record_trade_to_ab_test(
+                    active_ab_test, ab_variant, trade_record,
+                )
                 exits += 1
             state["positions"] = remaining_positions
             state["last_update"] = datetime.now(timezone.utc).isoformat()
             equity = self._mark_to_market(state, as_of, price_data)
             self._prev_equity = equity
+            risk_metrics = self._update_equity_curve(
+                state, str(as_of.date()), equity, daily_pnl, dd_status,
+            )
             self._save_state(state)
-            return {
+            result = {
                 "as_of": str(as_of.date()),
                 "entries": 0,
                 "exits": exits,
@@ -359,8 +507,11 @@ class PaperTrader:
                 "active_strategies": len(active_strategies),
                 "drawdown_state": dd_status.state.value,
             }
+            if risk_metrics:
+                result["risk_metrics"] = risk_metrics
+            return result
 
-        # 1) Evaluate exits.
+        # 1) Evaluate exits — stop losses first, then signal decay / timeout.
         for pos in state.get("positions", []):
             permno = self._position_id(pos)
             px = self._current_price(permno, as_of, price_data)
@@ -369,43 +520,89 @@ class PaperTrader:
                 continue
 
             pos["holding_days"] = int(pos.get("holding_days", 0)) + 1
-            pred_row = pred_map.get(permno)
-            weak_signal = (
-                pred_row is None
-                or float(pred_row.get("predicted_return", 0.0)) < float(pos["entry_threshold"]) * 0.25
-                or float(pred_row.get("confidence", 0.0)) < float(pos["confidence_threshold"]) * 0.75
+            entry_price = float(pos["entry_price"])
+
+            # ── Track highest price for trailing stop ──
+            highest_price = max(
+                float(pos.get("highest_price", entry_price)), px
             )
-            timed_out = pos["holding_days"] >= int(pos["max_holding_days"])
-            if not (weak_signal or timed_out):
+            pos["highest_price"] = highest_price
+
+            # ── Resolve regimes ──
+            entry_regime = int(pos.get("entry_regime", pos.get("regime", 2)))
+            pred_row = pred_map.get(permno)
+            current_regime = (
+                int(pred_row.get("regime", entry_regime))
+                if pred_row else entry_regime
+            )
+
+            # ── Evaluate stop losses FIRST ──
+            atr = self._compute_atr(permno, as_of, price_data)
+            stop_result = self._stop_mgr.evaluate(
+                entry_price=entry_price,
+                current_price=px,
+                highest_price=highest_price,
+                atr=atr,
+                bars_held=pos["holding_days"],
+                entry_regime=entry_regime,
+                current_regime=current_regime,
+            )
+
+            exit_reason = None
+            if stop_result.should_exit:
+                exit_reason = stop_result.reason.value
+            else:
+                # Secondary: check signal decay and timeout (unchanged logic)
+                weak_signal = (
+                    pred_row is None
+                    or float(pred_row.get("predicted_return", 0.0))
+                    < float(pos["entry_threshold"]) * 0.25
+                    or float(pred_row.get("confidence", 0.0))
+                    < float(pos["confidence_threshold"]) * 0.75
+                )
+                timed_out = pos["holding_days"] >= int(pos["max_holding_days"])
+                if weak_signal:
+                    exit_reason = "signal_decay"
+                elif timed_out:
+                    exit_reason = "time_exit"
+
+            if exit_reason is None:
                 remaining_positions.append(pos)
                 continue
 
+            # ── Execute exit ──
             gross = float(pos["shares"]) * px
             tx = gross * self.tx_cost
             proceeds = gross - tx
-            entry_notional = float(pos["shares"]) * float(pos["entry_price"])
+            entry_notional = float(pos["shares"]) * entry_price
             pnl = proceeds - entry_notional
             state["cash"] = float(state.get("cash", 0.0)) + proceeds
             state["realized_pnl"] = float(state.get("realized_pnl", 0.0)) + pnl
-            entry_notional_for_return = float(pos["shares"]) * float(pos["entry_price"])
-            net_return = float(pnl / entry_notional_for_return) if entry_notional_for_return > 0 else 0.0
-            state.setdefault("trades", []).append(
-                {
-                    "strategy_id": pos["strategy_id"],
-                    "permno": permno,
-                    "ticker": pos.get("ticker"),
-                    "entry_date": pos["entry_date"],
-                    "exit_date": str(as_of.date()),
-                    "entry_price": float(pos["entry_price"]),
-                    "exit_price": float(px),
-                    "shares": float(pos["shares"]),
-                    "pnl": float(pnl),
-                    "net_return": net_return,
-                    "holding_days": int(pos["holding_days"]),
-                    "reason": "time_exit" if timed_out else "signal_decay",
-                    "position_size_pct": float(pos.get("position_size_pct", 0.0)),
-                    "regime": int(pos.get("regime", 2)),
-                },
+            net_return = float(pnl / entry_notional) if entry_notional > 0 else 0.0
+            trade_record = {
+                "strategy_id": pos["strategy_id"],
+                "permno": permno,
+                "ticker": pos.get("ticker"),
+                "entry_date": pos["entry_date"],
+                "exit_date": str(as_of.date()),
+                "entry_price": entry_price,
+                "exit_price": float(px),
+                "shares": float(pos["shares"]),
+                "pnl": float(pnl),
+                "net_return": net_return,
+                "holding_days": int(pos["holding_days"]),
+                "reason": exit_reason,
+                "position_size_pct": float(pos.get("position_size_pct", 0.0)),
+                "entry_regime": entry_regime,
+                "exit_regime": current_regime,
+                "regime_changed": entry_regime != current_regime,
+                "transaction_cost": float(tx),
+            }
+            state.setdefault("trades", []).append(trade_record)
+            # Record to A/B test if position was part of one
+            ab_variant = pos.get("ab_variant", "")
+            self._record_trade_to_ab_test(
+                active_ab_test, ab_variant, trade_record,
             )
             exits += 1
 
@@ -416,9 +613,12 @@ class PaperTrader:
         if len(all_trades) >= 20:
             recent_trades = all_trades[-self.kelly_lookback_trades:]
             trade_df = pd.DataFrame(recent_trades)
-            if "net_return" in trade_df.columns and "regime" in trade_df.columns:
-                self._persistent_sizer.update_regime_stats(trade_df)
-                self._persistent_sizer.update_kelly_bayesian(trade_df)
+            if "net_return" in trade_df.columns:
+                # Support both old "regime" and new "entry_regime" trade formats
+                regime_col = "entry_regime" if "entry_regime" in trade_df.columns else "regime"
+                if regime_col in trade_df.columns:
+                    self._persistent_sizer.update_regime_stats(trade_df, regime_col=regime_col)
+                    self._persistent_sizer.update_kelly_bayesian(trade_df, regime_col=regime_col)
 
         # 2) Evaluate entries — skip entirely if drawdown controller blocks new entries.
         if active_strategies and dd_status.allow_new_entries:
@@ -458,23 +658,60 @@ class PaperTrader:
                     if px is None:
                         continue
 
+                    regime = int(row.get("regime", 2))
+                    confidence = float(row.get("confidence", 0.5))
+
+                    # ── A/B test variant routing ──
+                    ab_variant = ""
+                    eff_entry_threshold = entry_threshold
+                    eff_confidence_threshold = confidence_threshold
+                    eff_max_holding_days = max_holding_days
+                    eff_base_size = base_position_size_pct
+                    eff_kelly_fraction = self.kelly_fraction
+
+                    if active_ab_test is not None:
+                        ticker_label = (
+                            str(row.get("ticker", permno))
+                            if "ticker" in row.index else permno
+                        )
+                        ab_variant = active_ab_test.assign_variant(ticker_label)
+                        variant_config = active_ab_test.get_variant_config(ab_variant)
+                        eff_entry_threshold = float(
+                            variant_config.get("entry_threshold", entry_threshold)
+                        )
+                        eff_confidence_threshold = float(
+                            variant_config.get("confidence_threshold", confidence_threshold)
+                        )
+                        eff_max_holding_days = int(
+                            variant_config.get("max_holding_days", max_holding_days)
+                        )
+                        eff_base_size = float(
+                            variant_config.get("position_size_pct", base_position_size_pct)
+                        )
+                        eff_kelly_fraction = float(
+                            variant_config.get("kelly_fraction", self.kelly_fraction)
+                        )
+
+                        # Re-check eligibility with variant-specific thresholds
+                        pred_return = float(row.get("predicted_return", 0.0))
+                        pred_confidence = float(row.get("confidence", 0.0))
+                        if (pred_return <= eff_entry_threshold
+                                or pred_confidence <= eff_confidence_threshold):
+                            continue
+
                     position_size_pct = self._position_size_pct(
                         state=state,
                         strategy_id=sid,
-                        base_position_size_pct=base_position_size_pct,
-                        max_holding_days=max_holding_days,
-                        confidence=float(row.get("confidence", 0.5)),
-                        regime=int(row.get("regime", 2)),
+                        base_position_size_pct=eff_base_size,
+                        max_holding_days=eff_max_holding_days,
+                        confidence=confidence,
+                        regime=regime,
                         ticker=permno,
                         as_of=as_of,
                         price_data=price_data,
                     )
 
-                    # ── Confidence-weighted position sizing (NEW 3) ──
-                    # Scale the computed position size by the calibrated
-                    # confidence score.  High-confidence predictions keep
-                    # full size; low-confidence predictions get reduced
-                    # exposure.  Defaults to 1.0 when not available.
+                    # ── Confidence-weighted position sizing ──
                     confidence_weight = float(row.get("confidence_weight", 1.0))
                     if not np.isfinite(confidence_weight) or confidence_weight < 0.0:
                         confidence_weight = 1.0
@@ -483,6 +720,24 @@ class PaperTrader:
 
                     # Apply drawdown controller size multiplier
                     position_size_pct *= dd_status.size_multiplier
+
+                    # ── Portfolio risk check before entry ──
+                    portfolio_weights: Dict[str, float] = {}
+                    for existing_pos in state.get("positions", []):
+                        pos_id = self._position_id(existing_pos)
+                        pos_px = self._current_price(pos_id, as_of, price_data)
+                        if pos_px is not None and current_equity > 0:
+                            pos_value = float(existing_pos["shares"]) * pos_px
+                            portfolio_weights[pos_id] = pos_value / current_equity
+
+                    risk_check = self._risk_mgr.check_new_position(
+                        ticker=permno,
+                        position_size=position_size_pct,
+                        current_positions=portfolio_weights,
+                        price_data=price_data,
+                    )
+                    if not risk_check.passed:
+                        continue  # Risk check blocked entry
 
                     notional = current_equity * position_size_pct
                     tx = notional * self.tx_cost
@@ -500,11 +755,15 @@ class PaperTrader:
                         "entry_price": float(px),
                         "shares": float(shares),
                         "holding_days": 0,
-                        "max_holding_days": max_holding_days,
-                        "entry_threshold": entry_threshold,
-                        "confidence_threshold": confidence_threshold,
+                        "max_holding_days": eff_max_holding_days,
+                        "entry_threshold": eff_entry_threshold,
+                        "confidence_threshold": eff_confidence_threshold,
                         "position_size_pct": float(position_size_pct),
-                        "regime": int(row.get("regime", 2)),
+                        "regime": regime,
+                        "entry_regime": regime,
+                        "confidence": confidence,
+                        "highest_price": float(px),
+                        "ab_variant": ab_variant,
                     }
                     state["positions"].append(position)
                     held_permnos.add(permno)
@@ -514,9 +773,15 @@ class PaperTrader:
         state["last_update"] = datetime.now(timezone.utc).isoformat()
         equity = self._mark_to_market(state, as_of, price_data)
         self._prev_equity = equity
+
+        # ── Equity curve tracking ──
+        risk_metrics = self._update_equity_curve(
+            state, str(as_of.date()), equity, daily_pnl, dd_status,
+        )
+
         self._save_state(state)
 
-        return {
+        result = {
             "as_of": str(as_of.date()),
             "entries": entries,
             "exits": exits,
@@ -527,3 +792,25 @@ class PaperTrader:
             "active_strategies": len(active_strategies),
             "drawdown_state": dd_status.state.value,
         }
+        if risk_metrics:
+            result["risk_metrics"] = risk_metrics
+
+        # ── A/B test early stopping check ──
+        if active_ab_test is not None:
+            try:
+                early_stop = active_ab_test.check_early_stopping()
+                result["ab_test"] = {
+                    "test_id": active_ab_test.test_id,
+                    "name": active_ab_test.name,
+                    "early_stopping": early_stop,
+                }
+                if early_stop.get("stop"):
+                    logger.info(
+                        "A/B test %s early stopping triggered: %s",
+                        active_ab_test.test_id,
+                        early_stop.get("reason", ""),
+                    )
+            except Exception as e:
+                logger.debug("A/B early stopping check failed: %s", e)
+
+        return result
