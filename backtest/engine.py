@@ -33,6 +33,7 @@ from ..config import (
     EXEC_VOL_IMPACT_BETA,
     REQUIRE_PERMNO,
     ALMGREN_CHRISS_ENABLED, ALMGREN_CHRISS_ADV_THRESHOLD,
+    ALMGREN_CHRISS_RISK_AVERSION,
     MAX_ANNUALIZED_TURNOVER,
     ALMGREN_CHRISS_FALLBACK_VOL, REGIME_2_TRADE_ENABLED, REGIME_2_SUPPRESSION_MIN_CONFIDENCE,
 )
@@ -717,6 +718,12 @@ class Backtester:
         open_positions: Dict[str, dict] = {}
         ticker_last_exit: Dict[str, pd.Timestamp] = {}
 
+        # Residual positions being unwound over multiple bars due to volume
+        # constraints.  Keyed by ticker; each value tracks remaining shares,
+        # cumulative fill records, and original entry data for final trade
+        # recording once fully exited.
+        residual_positions: Dict[str, dict] = {}
+
         # Also add intermediate dates from price data for daily stop evaluation
         all_trading_dates = set()
         for ticker in price_data:
@@ -735,6 +742,85 @@ class Backtester:
         completed_returns = []
 
         for dt in all_trading_dates:
+            # ── 0. Process residual exits (volume-constrained multi-bar unwinding) ──
+            residual_closed = []
+            for ticker, res in residual_positions.items():
+                if ticker not in price_data:
+                    continue
+                ohlcv = price_data[ticker]
+                if dt not in ohlcv.index:
+                    continue
+                dt_idx = ohlcv.index.get_loc(dt)
+
+                remaining = res["remaining_shares"]
+                ref_price = float(ohlcv["Close"].iloc[dt_idx])
+                vol = float(ohlcv["Volume"].iloc[dt_idx]) if "Volume" in ohlcv.columns else 0.0
+                daily_dollar_vol = max(1e-9, ref_price * vol)
+                max_exit_notional = daily_dollar_vol * self.execution_model.max_participation
+                remaining_notional = remaining * ref_price
+
+                if remaining_notional <= max_exit_notional:
+                    shares_this_bar = remaining
+                else:
+                    shares_this_bar = max_exit_notional / max(1e-9, ref_price)
+
+                if shares_this_bar <= 0:
+                    continue
+
+                exit_fill = self._simulate_exit(
+                    ohlcv=ohlcv, exit_idx=dt_idx,
+                    shares=shares_this_bar, force_full=True,
+                )
+
+                res["exit_fills"].append((float(exit_fill["exit_price"]), float(shares_this_bar)))
+                res["remaining_shares"] -= shares_this_bar
+                res["bars_since_exit_start"] += 1
+
+                # Fully exited or max 20 bars of unwinding
+                if res["remaining_shares"] <= 1e-6 or res["bars_since_exit_start"] > 20:
+                    total_fill_shares = sum(s for _, s in res["exit_fills"])
+                    vwap_exit = (
+                        sum(p * s for p, s in res["exit_fills"])
+                        / max(1e-9, total_fill_shares)
+                    )
+                    exit_ref = float(ohlcv["Close"].iloc[dt_idx])
+                    actual_return = self._trade_realized_return(
+                        ohlcv=ohlcv,
+                        entry_idx=res["entry_idx"],
+                        exit_idx=dt_idx,
+                        entry_price=res["entry_price"],
+                        exit_price=vwap_exit,
+                    )
+                    net_return = actual_return - self.tx_cost
+                    total_holding = res["bars_held_at_stop"] + res["bars_since_exit_start"]
+
+                    trades.append(Trade(
+                        ticker=ticker,
+                        entry_date=res["entry_date_str"],
+                        exit_date=str(dt.date()) if hasattr(dt, "date") else str(dt),
+                        entry_price=res["entry_price"],
+                        exit_price=float(vwap_exit),
+                        predicted_return=res["predicted_return"],
+                        actual_return=float(actual_return),
+                        net_return=float(net_return),
+                        regime=res["regime"],
+                        confidence=res["confidence"],
+                        holding_days=total_holding,
+                        position_size=res["size"],
+                        exit_reason=res["exit_reason"],
+                        fill_ratio=total_fill_shares / max(1e-9, res["total_shares"]),
+                        entry_impact_bps=res.get("entry_impact_bps", 0.0),
+                        exit_impact_bps=float(exit_fill["exit_impact_bps"]),
+                        entry_reference_price=res.get("entry_reference_price", 0.0),
+                        exit_reference_price=exit_ref,
+                    ))
+                    completed_returns.append(net_return)
+                    ticker_last_exit[ticker] = dt
+                    residual_closed.append(ticker)
+
+            for ticker in residual_closed:
+                del residual_positions[ticker]
+
             # ── 1. Evaluate stops on all open positions ──
             closed_tickers = []
             for ticker, pos in list(open_positions.items()):
@@ -785,47 +871,94 @@ class Backtester:
                 )
 
                 if stop_result.should_exit:
-                    # Close position
+                    # Volume-aware exit: check if position can fully exit
+                    # within daily participation limits.
+                    shares_to_exit = pos.get("shares", 0.0)
+                    exit_ref_price = float(ohlcv["Close"].iloc[dt_idx])
+                    exit_vol = float(ohlcv["Volume"].iloc[dt_idx]) if "Volume" in ohlcv.columns else 0.0
+                    daily_dollar_vol = max(1e-9, exit_ref_price * exit_vol)
+                    max_exit_notional = daily_dollar_vol * self.execution_model.max_participation
+                    position_notional = shares_to_exit * exit_ref_price
+
+                    if position_notional > max_exit_notional and max_exit_notional > 0:
+                        # Partial fill — volume constraint binds
+                        exit_fill_pct = max_exit_notional / position_notional
+                        shares_this_bar = shares_to_exit * exit_fill_pct
+                        remaining_shares = shares_to_exit - shares_this_bar
+                        logger.debug(
+                            "Partial exit for %s: %.0f%% of position (volume constraint)",
+                            ticker, exit_fill_pct * 100,
+                        )
+                    else:
+                        shares_this_bar = shares_to_exit
+                        remaining_shares = 0.0
+
                     exit_fill = self._simulate_exit(
                         ohlcv=ohlcv,
                         exit_idx=dt_idx,
-                        shares=pos.get("shares", 0.0),
+                        shares=shares_this_bar,
                         force_full=True,
                     )
-                    exit_price = float(exit_fill["exit_price"])
-                    exit_ref = float(ohlcv["Close"].iloc[dt_idx])
-                    actual_return = self._trade_realized_return(
-                        ohlcv=ohlcv,
-                        entry_idx=int(pos.get("entry_idx", max(0, dt_idx - max(1, pos.get("bars_held", 1))))),
-                        exit_idx=dt_idx,
-                        entry_price=float(pos["entry_price"]),
-                        exit_price=exit_price,
-                    )
-                    net_return = actual_return - self.tx_cost
 
-                    trades.append(Trade(
-                        ticker=ticker,
-                        entry_date=pos["entry_date_str"],
-                        exit_date=str(dt.date()) if hasattr(dt, "date") else str(dt),
-                        entry_price=pos["entry_price"],
-                        exit_price=float(exit_price),
-                        predicted_return=pos["predicted_return"],
-                        actual_return=float(actual_return),
-                        net_return=float(net_return),
-                        regime=pos["regime"],
-                        confidence=pos["confidence"],
-                        holding_days=pos["bars_held"],
-                        position_size=pos["size"],
-                        exit_reason=stop_result.reason.value,
-                        fill_ratio=pos.get("fill_ratio", 1.0),
-                        entry_impact_bps=pos.get("entry_impact_bps", 0.0),
-                        exit_impact_bps=float(exit_fill["exit_impact_bps"]),
-                        entry_reference_price=pos.get("entry_reference_price", 0.0),
-                        exit_reference_price=exit_ref,
-                    ))
-                    completed_returns.append(net_return)
+                    entry_idx_val = int(pos.get("entry_idx", max(0, dt_idx - max(1, pos.get("bars_held", 1)))))
+
+                    if remaining_shares > 1e-6:
+                        # Multi-bar exit: track residual, record trade when fully unwound
+                        residual_positions[ticker] = {
+                            "remaining_shares": remaining_shares,
+                            "total_shares": shares_to_exit,
+                            "exit_fills": [(float(exit_fill["exit_price"]), float(shares_this_bar))],
+                            "entry_price": pos["entry_price"],
+                            "entry_date_str": pos["entry_date_str"],
+                            "entry_idx": entry_idx_val,
+                            "predicted_return": pos["predicted_return"],
+                            "confidence": pos["confidence"],
+                            "regime": pos["regime"],
+                            "size": pos["size"],
+                            "fill_ratio": pos.get("fill_ratio", 1.0),
+                            "entry_impact_bps": pos.get("entry_impact_bps", 0.0),
+                            "entry_reference_price": pos.get("entry_reference_price", 0.0),
+                            "exit_reason": stop_result.reason.value,
+                            "bars_held_at_stop": pos["bars_held"],
+                            "bars_since_exit_start": 0,
+                        }
+                    else:
+                        # Full exit — record trade immediately
+                        exit_price = float(exit_fill["exit_price"])
+                        exit_ref = float(ohlcv["Close"].iloc[dt_idx])
+                        actual_return = self._trade_realized_return(
+                            ohlcv=ohlcv,
+                            entry_idx=entry_idx_val,
+                            exit_idx=dt_idx,
+                            entry_price=float(pos["entry_price"]),
+                            exit_price=exit_price,
+                        )
+                        net_return = actual_return - self.tx_cost
+
+                        trades.append(Trade(
+                            ticker=ticker,
+                            entry_date=pos["entry_date_str"],
+                            exit_date=str(dt.date()) if hasattr(dt, "date") else str(dt),
+                            entry_price=pos["entry_price"],
+                            exit_price=float(exit_price),
+                            predicted_return=pos["predicted_return"],
+                            actual_return=float(actual_return),
+                            net_return=float(net_return),
+                            regime=pos["regime"],
+                            confidence=pos["confidence"],
+                            holding_days=pos["bars_held"],
+                            position_size=pos["size"],
+                            exit_reason=stop_result.reason.value,
+                            fill_ratio=pos.get("fill_ratio", 1.0),
+                            entry_impact_bps=pos.get("entry_impact_bps", 0.0),
+                            exit_impact_bps=float(exit_fill["exit_impact_bps"]),
+                            entry_reference_price=pos.get("entry_reference_price", 0.0),
+                            exit_reference_price=exit_ref,
+                        ))
+                        completed_returns.append(net_return)
+                        ticker_last_exit[ticker] = dt
+
                     closed_tickers.append(ticker)
-                    ticker_last_exit[ticker] = dt
 
             for ticker in closed_tickers:
                 del open_positions[ticker]
@@ -839,10 +972,23 @@ class Backtester:
                     if pd.notna(bar_ret):
                         daily_pnl += float(bar_ret) * pos["size"]
 
+            # Include residual positions in drawdown tracking — they still
+            # have market exposure until fully unwound.
+            for ticker, res in residual_positions.items():
+                if ticker in price_data and dt in price_data[ticker].index:
+                    ret_series = self._effective_return_series(price_data[ticker])
+                    bar_ret = ret_series.loc[dt]
+                    if pd.notna(bar_ret):
+                        # Residual exposure is proportional to remaining shares
+                        residual_frac = res["remaining_shares"] / max(1e-9, res["total_shares"])
+                        daily_pnl += float(bar_ret) * res["size"] * residual_frac
+
             dd_status = self._drawdown_ctrl.update(daily_pnl)
 
             # CRITICAL state: force-close all open positions at the earliest
             # available mark so circuit-breakers are actually enforced.
+            # Exits respect volume constraints — positions too large for a
+            # single bar are moved to residual tracking for multi-bar unwinding.
             if dd_status.force_liquidate and open_positions:
                 for ticker, pos in list(open_positions.items()):
                     ohlcv = price_data.get(ticker)
@@ -859,45 +1005,86 @@ class Backtester:
                         exit_date = ohlcv.index[next_idx]
                         exit_idx = int(next_idx)
 
+                    # Volume-aware circuit breaker exit
+                    shares_to_exit = pos.get("shares", 0.0)
+                    cb_ref_price = float(ohlcv["Close"].iloc[exit_idx])
+                    cb_vol = float(ohlcv["Volume"].iloc[exit_idx]) if "Volume" in ohlcv.columns else 0.0
+                    cb_daily_dollar_vol = max(1e-9, cb_ref_price * cb_vol)
+                    cb_max_exit = cb_daily_dollar_vol * self.execution_model.max_participation
+                    cb_position_notional = shares_to_exit * cb_ref_price
+
+                    if cb_position_notional > cb_max_exit and cb_max_exit > 0:
+                        cb_fill_pct = cb_max_exit / cb_position_notional
+                        shares_this_bar = shares_to_exit * cb_fill_pct
+                        cb_remaining = shares_to_exit - shares_this_bar
+                    else:
+                        shares_this_bar = shares_to_exit
+                        cb_remaining = 0.0
+
                     exit_fill = self._simulate_exit(
                         ohlcv=ohlcv,
                         exit_idx=exit_idx,
-                        shares=pos.get("shares", 0.0),
+                        shares=shares_this_bar,
                         force_full=True,
                     )
-                    exit_price = float(exit_fill["exit_price"])
-                    exit_ref = float(ohlcv["Close"].iloc[exit_idx])
-                    actual_return = self._trade_realized_return(
-                        ohlcv=ohlcv,
-                        entry_idx=int(pos.get("entry_idx", max(0, exit_idx - max(1, pos.get("bars_held", 1))))),
-                        exit_idx=exit_idx,
-                        entry_price=float(pos["entry_price"]),
-                        exit_price=exit_price,
-                    )
-                    net_return = actual_return - self.tx_cost
 
-                    trades.append(Trade(
-                        ticker=ticker,
-                        entry_date=pos["entry_date_str"],
-                        exit_date=str(exit_date.date()) if hasattr(exit_date, "date") else str(exit_date),
-                        entry_price=pos["entry_price"],
-                        exit_price=float(exit_price),
-                        predicted_return=pos["predicted_return"],
-                        actual_return=float(actual_return),
-                        net_return=float(net_return),
-                        regime=pos["regime"],
-                        confidence=pos["confidence"],
-                        holding_days=max(1, pos.get("bars_held", 0)),
-                        position_size=pos["size"],
-                        exit_reason="circuit_breaker",
-                        fill_ratio=pos.get("fill_ratio", 1.0),
-                        entry_impact_bps=pos.get("entry_impact_bps", 0.0),
-                        exit_impact_bps=float(exit_fill["exit_impact_bps"]),
-                        entry_reference_price=pos.get("entry_reference_price", 0.0),
-                        exit_reference_price=exit_ref,
-                    ))
-                    completed_returns.append(net_return)
-                    ticker_last_exit[ticker] = pd.Timestamp(exit_date)
+                    cb_entry_idx = int(pos.get("entry_idx", max(0, exit_idx - max(1, pos.get("bars_held", 1)))))
+
+                    if cb_remaining > 1e-6:
+                        # Multi-bar circuit breaker exit
+                        residual_positions[ticker] = {
+                            "remaining_shares": cb_remaining,
+                            "total_shares": shares_to_exit,
+                            "exit_fills": [(float(exit_fill["exit_price"]), float(shares_this_bar))],
+                            "entry_price": pos["entry_price"],
+                            "entry_date_str": pos["entry_date_str"],
+                            "entry_idx": cb_entry_idx,
+                            "predicted_return": pos["predicted_return"],
+                            "confidence": pos["confidence"],
+                            "regime": pos["regime"],
+                            "size": pos["size"],
+                            "fill_ratio": pos.get("fill_ratio", 1.0),
+                            "entry_impact_bps": pos.get("entry_impact_bps", 0.0),
+                            "entry_reference_price": pos.get("entry_reference_price", 0.0),
+                            "exit_reason": "circuit_breaker",
+                            "bars_held_at_stop": max(1, pos.get("bars_held", 0)),
+                            "bars_since_exit_start": 0,
+                        }
+                    else:
+                        exit_price = float(exit_fill["exit_price"])
+                        exit_ref = float(ohlcv["Close"].iloc[exit_idx])
+                        actual_return = self._trade_realized_return(
+                            ohlcv=ohlcv,
+                            entry_idx=cb_entry_idx,
+                            exit_idx=exit_idx,
+                            entry_price=float(pos["entry_price"]),
+                            exit_price=exit_price,
+                        )
+                        net_return = actual_return - self.tx_cost
+
+                        trades.append(Trade(
+                            ticker=ticker,
+                            entry_date=pos["entry_date_str"],
+                            exit_date=str(exit_date.date()) if hasattr(exit_date, "date") else str(exit_date),
+                            entry_price=pos["entry_price"],
+                            exit_price=float(exit_price),
+                            predicted_return=pos["predicted_return"],
+                            actual_return=float(actual_return),
+                            net_return=float(net_return),
+                            regime=pos["regime"],
+                            confidence=pos["confidence"],
+                            holding_days=max(1, pos.get("bars_held", 0)),
+                            position_size=pos["size"],
+                            exit_reason="circuit_breaker",
+                            fill_ratio=pos.get("fill_ratio", 1.0),
+                            entry_impact_bps=pos.get("entry_impact_bps", 0.0),
+                            exit_impact_bps=float(exit_fill["exit_impact_bps"]),
+                            entry_reference_price=pos.get("entry_reference_price", 0.0),
+                            exit_reference_price=exit_ref,
+                        ))
+                        completed_returns.append(net_return)
+                        ticker_last_exit[ticker] = pd.Timestamp(exit_date)
+
                     del open_positions[ticker]
 
             # ── 3. Process new signals for this date ──
@@ -914,8 +1101,10 @@ class Backtester:
                     continue
                 close = ohlcv["Close"]
 
-                # Check per-ticker overlap
+                # Check per-ticker overlap (including positions being unwound)
                 if ticker in open_positions:
+                    continue
+                if ticker in residual_positions:
                     continue
                 if ticker in ticker_last_exit and dt <= ticker_last_exit[ticker]:
                     continue
@@ -1064,6 +1253,55 @@ class Backtester:
                 entry_impact_bps=pos.get("entry_impact_bps", 0.0),
                 exit_impact_bps=float(exit_fill["exit_impact_bps"]),
                 entry_reference_price=pos.get("entry_reference_price", 0.0),
+                exit_reference_price=exit_ref,
+            ))
+
+        # ── Close any remaining residual positions (force full at end of data) ──
+        for ticker, res in residual_positions.items():
+            if ticker not in price_data:
+                continue
+            ohlcv = price_data[ticker]
+            last_idx = len(ohlcv) - 1
+            exit_fill = self._simulate_exit(
+                ohlcv=ohlcv,
+                exit_idx=last_idx,
+                shares=res["remaining_shares"],
+                force_full=True,
+            )
+            # Add final fill to the existing fill list and compute VWAP
+            res["exit_fills"].append((float(exit_fill["exit_price"]), float(res["remaining_shares"])))
+            total_fill_shares = sum(s for _, s in res["exit_fills"])
+            vwap_exit = sum(p * s for p, s in res["exit_fills"]) / max(1e-9, total_fill_shares)
+
+            exit_ref = float(ohlcv["Close"].iloc[last_idx])
+            actual_return = self._trade_realized_return(
+                ohlcv=ohlcv,
+                entry_idx=res["entry_idx"],
+                exit_idx=last_idx,
+                entry_price=res["entry_price"],
+                exit_price=vwap_exit,
+            )
+            net_return = actual_return - self.tx_cost
+            total_holding = res["bars_held_at_stop"] + res.get("bars_since_exit_start", 0) + 1
+
+            trades.append(Trade(
+                ticker=ticker,
+                entry_date=res["entry_date_str"],
+                exit_date=str(ohlcv.index[-1].date()) if hasattr(ohlcv.index[-1], "date") else str(ohlcv.index[-1]),
+                entry_price=res["entry_price"],
+                exit_price=float(vwap_exit),
+                predicted_return=res["predicted_return"],
+                actual_return=float(actual_return),
+                net_return=float(net_return),
+                regime=res["regime"],
+                confidence=res["confidence"],
+                holding_days=total_holding,
+                position_size=res["size"],
+                exit_reason=res["exit_reason"],
+                fill_ratio=total_fill_shares / max(1e-9, res["total_shares"]),
+                entry_impact_bps=res.get("entry_impact_bps", 0.0),
+                exit_impact_bps=float(exit_fill["exit_impact_bps"]),
+                entry_reference_price=res.get("entry_reference_price", 0.0),
                 exit_reference_price=exit_ref,
             ))
 

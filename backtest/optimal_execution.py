@@ -14,13 +14,15 @@ from __future__ import annotations
 
 import numpy as np
 
+from ..config import ALMGREN_CHRISS_RISK_AVERSION
+
 
 def almgren_chriss_trajectory(
     total_shares: int,
     n_intervals: int,
     daily_volume: float,
     daily_volatility: float,
-    risk_aversion: float = 1e-6,
+    risk_aversion: float = ALMGREN_CHRISS_RISK_AVERSION,
     temporary_impact: float = 0.01,
     permanent_impact: float = 0.01,
 ) -> np.ndarray:

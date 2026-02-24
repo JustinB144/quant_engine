@@ -299,7 +299,7 @@ PROMOTION_MIN_ANNUAL_RETURN = 0.05                # STATUS: ACTIVE — autopilot
 PROMOTION_MAX_ACTIVE_STRATEGIES = 5               # STATUS: ACTIVE — autopilot/registry.py
 PROMOTION_REQUIRE_ADVANCED_CONTRACT = True         # STATUS: ACTIVE — autopilot/promotion_gate.py
 PROMOTION_MAX_DSR_PVALUE = 0.05                   # STATUS: ACTIVE — autopilot/promotion_gate.py
-PROMOTION_MAX_PBO = 0.50                          # STATUS: ACTIVE — autopilot/promotion_gate.py
+PROMOTION_MAX_PBO = 0.45                          # STATUS: ACTIVE — autopilot/promotion_gate.py; tightened from 0.50 (Bailey et al. 2017)
 PROMOTION_REQUIRE_CAPACITY_UNCONSTRAINED = True    # STATUS: ACTIVE — autopilot/promotion_gate.py
 PROMOTION_MAX_CAPACITY_UTILIZATION = 1.0           # STATUS: ACTIVE — autopilot/promotion_gate.py
 PROMOTION_MIN_WF_OOS_CORR = 0.01                  # STATUS: ACTIVE — autopilot/promotion_gate.py
@@ -355,6 +355,13 @@ MAX_HOLDING_DAYS = 30                             # STATUS: ACTIVE — risk/stop
 
 # ── Almgren-Chriss Parameters ─────────────────────────────────────
 ALMGREN_CHRISS_FALLBACK_VOL = 0.20                # STATUS: ACTIVE — backtest/engine.py; fallback annualized vol when realized unavailable
+
+# ACTIVE — Almgren-Chriss optimal execution risk aversion.
+# Higher values = more conservative execution (split orders more).
+# Range: 1e-3 (passive) to 1e-1 (aggressive risk aversion).
+# Default 0.01 matches moderate institutional execution.
+# Academic literature: passive institutional 1e-3..1e-2, active 1e-2..1e-1.
+ALMGREN_CHRISS_RISK_AVERSION = 0.01               # STATUS: ACTIVE — backtest/optimal_execution.py; risk aversion lambda
 
 # ── Model Governance ────────────────────────────────────────────────
 GOVERNANCE_SCORE_WEIGHTS = {                       # STATUS: ACTIVE — models/governance.py; champion/challenger scoring weights

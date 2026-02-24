@@ -86,6 +86,8 @@ class PromotionContractTests(unittest.TestCase):
                 "dsr_significant": True,
                 "dsr_p_value": 0.01,
                 "pbo": 0.30,
+                "mc_significant": True,
+                "mc_p_value": 0.01,
                 "capacity_constrained": False,
                 "capacity_utilization": 0.55,
                 "wf_oos_corr": 0.08,

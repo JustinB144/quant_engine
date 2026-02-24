@@ -135,10 +135,18 @@ class PromotionGate:
         if result.annualized_return < self.min_annual_return:
             reasons.append(f"annualized_return<{self.min_annual_return:.2f}")
 
+        # Mandatory: reject negative-Sharpe strategies outright.
+        # A strategy with negative expected return has no edge and must not
+        # be promoted regardless of other metrics.
+        if result.sharpe_ratio <= 0:
+            reasons.append(f"negative_sharpe({result.sharpe_ratio:.3f})")
+
         if self.require_advanced_contract:
             dsr_significant = bool(metrics.get("dsr_significant", False))
             dsr_p = float(metrics.get("dsr_p_value", 1.0))
             pbo = metrics.get("pbo", None)
+            mc_significant = bool(metrics.get("mc_significant", False))
+            mc_p = float(metrics.get("mc_p_value", 1.0))
             capacity_constrained = bool(metrics.get("capacity_constrained", True))
             cap_util = float(metrics.get("capacity_utilization", np.inf))
             wf_oos = float(metrics.get("wf_oos_corr", -np.inf))
@@ -148,6 +156,10 @@ class PromotionGate:
 
             if (not dsr_significant) or dsr_p > self.max_dsr_pvalue:
                 reasons.append(f"dsr_not_significant(p={dsr_p:.4f})")
+
+            # Monte Carlo validation: strategy must beat shuffled null
+            if not mc_significant:
+                reasons.append(f"mc_not_significant(p={mc_p:.4f})")
 
             if pbo is None:
                 if not event_mode:
@@ -227,6 +239,8 @@ class PromotionGate:
             score += 0.40 * float(metrics.get("regime_positive_fraction", 0.0))
         if "dsr_significant" in metrics and bool(metrics.get("dsr_significant", False)):
             score += 0.50
+        if bool(metrics.get("mc_significant", False)):
+            score += 0.45
         if bool(metrics.get("stat_tests_pass", False)):
             score += 0.30
         if bool(metrics.get("cpcv_passes", False)):

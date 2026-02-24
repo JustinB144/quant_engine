@@ -128,6 +128,19 @@ def deflated_sharpe_ratio(
             is_significant=False,
         )
 
+    # Reject negative Sharpe outright — no statistical test needed.
+    # A strategy with negative expected return cannot be significant
+    # regardless of multiple-testing adjustment.
+    if observed_sharpe <= 0:
+        return DeflatedSharpeResult(
+            observed_sharpe=observed_sharpe,
+            deflated_sharpe=-999.0,
+            expected_max_sharpe=0.0,
+            n_trials=n_trials,
+            p_value=1.0,
+            is_significant=False,
+        )
+
     # Expected maximum Sharpe under null (Euler-Mascheroni approximation)
     euler_mascheroni = 0.5772156649
     expected_max = np.sqrt(2 * np.log(n_trials)) * (
@@ -211,8 +224,10 @@ def probability_of_backtest_overfitting(
     half = n_partitions // 2
     combos = list(combinations(range(n_partitions), half))
 
-    # Limit combinations for computational feasibility
-    max_combos = 100
+    # Limit combinations for computational feasibility.
+    # 200 combinations provides better statistical power for reliable PBO
+    # estimation while keeping runtime reasonable.
+    max_combos = 200
     if len(combos) > max_combos:
         rng = np.random.RandomState(42)
         combo_indices = rng.choice(len(combos), max_combos, replace=False)
@@ -250,12 +265,26 @@ def probability_of_backtest_overfitting(
     pbo = n_degraded / len(combos) if combos else 0.5
     degradation_rate = n_degraded / len(combos) if combos else 0.5
 
+    # PBO logit: logit(pbo) gives a confidence measure.
+    # logit > 0 means more likely than not that strategy is overfit.
+    # Tightened threshold: PBO > 0.45 flags overfitting (academic standard
+    # recommends concern at 0.4, rejection at 0.5; we use 0.45 as a
+    # conservative middle ground).
+    if 0 < pbo < 1:
+        pbo_logit = float(np.log(pbo / (1 - pbo)))
+    elif pbo >= 1:
+        pbo_logit = float('inf')
+    else:
+        pbo_logit = float('-inf')
+
+    is_overfit = pbo > 0.45 or pbo_logit > 0
+
     return PBOResult(
         pbo=float(pbo),
         n_combinations=len(combos),
         degradation_rate=float(degradation_rate),
         logits=logits,
-        is_overfit=pbo > 0.5,
+        is_overfit=is_overfit,
     )
 
 
