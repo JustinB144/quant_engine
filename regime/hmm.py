@@ -507,6 +507,10 @@ def build_hmm_observation_matrix(features: pd.DataFrame) -> pd.DataFrame:
             obs[c] = (s - s.mean()) / std
         else:
             obs[c] = 0.0
+
+    # Belt-and-suspenders: ensure no NaN survived standardization
+    # (e.g. zero-variance columns, single-element series where std() returns NaN)
+    obs = obs.fillna(0.0)
     return obs
 
 

@@ -203,9 +203,10 @@ class HealthService:
                         "reason": f"Error autocorrelation: {autocorr:.3f} (moderate — possible decay)"}
             return {"name": "signal_decay", "status": "FAIL", "score": 25.0,
                     "reason": f"Error autocorrelation: {autocorr:.3f} (high — signal may be stale)"}
-        except (OSError, json.JSONDecodeError, ValueError, ImportError):
+        except (OSError, json.JSONDecodeError, ValueError, ImportError) as e:
+            logger.warning("Health check 'signal_decay' failed: %s", e)
             return {"name": "signal_decay", "status": "error", "score": 50.0,
-                    "reason": "Could not assess signal decay"}
+                    "reason": f"Could not assess signal decay: {e}"}
 
     def _check_feature_importance_drift(self) -> Dict[str, Any]:
         """Check if feature importance rankings are drifting across retrains."""
@@ -228,9 +229,10 @@ class HealthService:
                         "reason": f"Feature rank correlation: {spearman:.3f} (moderate drift)"}
             return {"name": "feature_drift", "status": "FAIL", "score": 20.0,
                     "reason": f"Feature rank correlation: {spearman:.3f} (severe drift — retrain advised)"}
-        except (OSError, ValueError, ImportError):
+        except (OSError, ValueError, ImportError) as e:
+            logger.warning("Health check 'feature_drift' failed: %s", e)
             return {"name": "feature_drift", "status": "error", "score": 50.0,
-                    "reason": "Could not assess feature stability"}
+                    "reason": f"Could not assess feature stability: {e}"}
 
     def _check_regime_transition_health(self) -> Dict[str, Any]:
         """Validate HMM transition matrix for degenerate rows."""
@@ -254,9 +256,10 @@ class HealthService:
                         "reason": f"Sticky regime (max diagonal: {max_diag:.3f})"}
             return {"name": "regime_transitions", "status": "PASS", "score": 85.0,
                     "reason": f"Transition matrix healthy (max diagonal: {max_diag:.3f})"}
-        except (OSError, ValueError, ImportError):
+        except (OSError, ValueError, ImportError) as e:
+            logger.warning("Health check 'regime_transitions' failed: %s", e)
             return {"name": "regime_transitions", "status": "error", "score": 50.0,
-                    "reason": "Could not assess regime transitions"}
+                    "reason": f"Could not assess regime transitions: {e}"}
 
     def _check_prediction_distribution(self) -> Dict[str, Any]:
         """Detect variance collapse in predictions."""
@@ -283,9 +286,10 @@ class HealthService:
                         "reason": f"Low prediction variance (std={std:.6f})"}
             return {"name": "prediction_distribution", "status": "PASS", "score": 85.0,
                     "reason": f"Healthy prediction spread (std={std:.6f})"}
-        except (OSError, json.JSONDecodeError, ValueError, ImportError):
+        except (OSError, json.JSONDecodeError, ValueError, ImportError) as e:
+            logger.warning("Health check 'prediction_distribution' failed: %s", e)
             return {"name": "prediction_distribution", "status": "error", "score": 50.0,
-                    "reason": "Could not assess prediction distribution"}
+                    "reason": f"Could not assess prediction distribution: {e}"}
 
     def _check_survivorship_bias(self) -> Dict[str, Any]:
         """Quantify survivorship bias impact."""
@@ -300,9 +304,10 @@ class HealthService:
                         "reason": "WRDS enabled but survivorship DB empty"}
             return {"name": "survivorship_bias", "status": "FAIL", "score": 30.0,
                     "reason": "WRDS disabled — static universe has survivorship bias"}
-        except (ValueError, ImportError):
+        except (ValueError, ImportError) as e:
+            logger.warning("Health check 'survivorship_bias' failed: %s", e)
             return {"name": "survivorship_bias", "status": "error", "score": 50.0,
-                    "reason": "Could not assess survivorship bias"}
+                    "reason": f"Could not assess survivorship bias: {e}"}
 
     def _check_correlation_regime(self) -> Dict[str, Any]:
         """Check average pairwise correlation in portfolio."""
@@ -342,9 +347,10 @@ class HealthService:
                         "reason": f"Avg pairwise correlation: {avg_corr:.3f} (elevated)"}
             return {"name": "correlation_regime", "status": "FAIL", "score": 25.0,
                     "reason": f"Avg pairwise correlation: {avg_corr:.3f} (crisis-level)"}
-        except (OSError, ValueError, ImportError):
+        except (OSError, ValueError, ImportError) as e:
+            logger.warning("Health check 'correlation_regime' failed: %s", e)
             return {"name": "correlation_regime", "status": "error", "score": 50.0,
-                    "reason": "Could not assess correlations"}
+                    "reason": f"Could not assess correlations: {e}"}
 
     def _check_execution_quality(self) -> Dict[str, Any]:
         """Check slippage tracking from paper/live trading."""
@@ -371,9 +377,10 @@ class HealthService:
                         "reason": f"Avg slippage: {avg_slippage:.4f} (minimal)"}
             return {"name": "execution_quality", "status": "WARN", "score": 55.0,
                     "reason": f"Avg slippage: {avg_slippage:.4f}"}
-        except (OSError, json.JSONDecodeError, ValueError, ImportError):
+        except (OSError, json.JSONDecodeError, ValueError, ImportError) as e:
+            logger.warning("Health check 'execution_quality' failed: %s", e)
             return {"name": "execution_quality", "status": "error", "score": 50.0,
-                    "reason": "Could not assess execution quality"}
+                    "reason": f"Could not assess execution quality: {e}"}
 
     def _check_tail_risk(self) -> Dict[str, Any]:
         """Compute rolling CVaR and tail ratio from backtest results."""
@@ -406,9 +413,10 @@ class HealthService:
                         "reason": f"Tail ratio: {tail_ratio:.2f}, CVaR5: {cvar5:.4f}"}
             return {"name": "tail_risk", "status": "FAIL", "score": 25.0,
                     "reason": f"Extreme tail risk — CVaR5: {cvar5:.4f}"}
-        except (OSError, ValueError, ImportError):
+        except (OSError, ValueError, ImportError) as e:
+            logger.warning("Health check 'tail_risk' failed: %s", e)
             return {"name": "tail_risk", "status": "error", "score": 50.0,
-                    "reason": "Could not assess tail risk"}
+                    "reason": f"Could not assess tail risk: {e}"}
 
     def _check_information_ratio(self) -> Dict[str, Any]:
         """Check excess return vs benchmark (information ratio)."""
@@ -448,9 +456,10 @@ class HealthService:
                         "reason": f"IR: {ir:.2f} (positive but modest)"}
             return {"name": "information_ratio", "status": "FAIL", "score": 25.0,
                     "reason": f"IR: {ir:.2f} (negative — underperforming benchmark)"}
-        except (OSError, ValueError, ImportError):
+        except (OSError, ValueError, ImportError) as e:
+            logger.warning("Health check 'information_ratio' failed: %s", e)
             return {"name": "information_ratio", "status": "error", "score": 50.0,
-                    "reason": "Could not compute information ratio"}
+                    "reason": f"Could not compute information ratio: {e}"}
 
     def _check_cv_gap_trend(self) -> Dict[str, Any]:
         """Detect overfitting trend from expanding CV gap across model versions."""
@@ -482,9 +491,10 @@ class HealthService:
                         "reason": f"CV gap: {latest_gap:.4f}, trend: {slope:+.4f}/version"}
             return {"name": "cv_gap_trend", "status": "FAIL", "score": 25.0,
                     "reason": f"CV gap: {latest_gap:.4f}, trend: {slope:+.4f}/version (overfitting risk)"}
-        except (OSError, json.JSONDecodeError, ValueError, ImportError):
+        except (OSError, json.JSONDecodeError, ValueError, ImportError) as e:
+            logger.warning("Health check 'cv_gap_trend' failed: %s", e)
             return {"name": "cv_gap_trend", "status": "error", "score": 50.0,
-                    "reason": "Could not assess CV gap trend"}
+                    "reason": f"Could not assess CV gap trend: {e}"}
 
     def _check_data_quality_anomalies(self) -> Dict[str, Any]:
         """Check for volume/price anomalies in cached data."""
@@ -528,9 +538,10 @@ class HealthService:
                         "reason": f"{anomaly_count}/{total_checked} files with anomalies"}
             return {"name": "data_anomalies", "status": "FAIL", "score": 25.0,
                     "reason": f"{anomaly_count}/{total_checked} files with anomalies"}
-        except (OSError, ValueError, ImportError):
+        except (OSError, ValueError, ImportError) as e:
+            logger.warning("Health check 'data_anomalies' failed: %s", e)
             return {"name": "data_anomalies", "status": "error", "score": 50.0,
-                    "reason": "Could not check for data anomalies"}
+                    "reason": f"Could not check for data anomalies: {e}"}
 
     def _check_ensemble_disagreement(self) -> Dict[str, Any]:
         """Check ensemble member consensus (if multi-model)."""
@@ -560,9 +571,10 @@ class HealthService:
                         "reason": f"Ensemble divergent (spread: {spread:.3f}, avg: {avg:.3f})"}
             return {"name": "ensemble_disagreement", "status": "FAIL", "score": 25.0,
                     "reason": f"Ensemble poor quality (avg holdout corr: {avg:.3f})"}
-        except (OSError, json.JSONDecodeError, ValueError, ImportError):
+        except (OSError, json.JSONDecodeError, ValueError, ImportError) as e:
+            logger.warning("Health check 'ensemble_disagreement' failed: %s", e)
             return {"name": "ensemble_disagreement", "status": "error", "score": 50.0,
-                    "reason": "Could not assess ensemble"}
+                    "reason": f"Could not assess ensemble: {e}"}
 
     def _check_market_microstructure(self) -> Dict[str, Any]:
         """Check liquidity metrics from cached data."""
@@ -599,9 +611,10 @@ class HealthService:
                         "reason": f"{low_liquidity}/{checked} assets have low daily dollar volume"}
             return {"name": "microstructure", "status": "FAIL", "score": 30.0,
                     "reason": f"{low_liquidity}/{checked} assets are illiquid"}
-        except (OSError, ValueError, ImportError):
+        except (OSError, ValueError, ImportError) as e:
+            logger.warning("Health check 'microstructure' failed: %s", e)
             return {"name": "microstructure", "status": "error", "score": 50.0,
-                    "reason": "Could not assess microstructure"}
+                    "reason": f"Could not assess microstructure: {e}"}
 
     def _check_retraining_effectiveness(self) -> Dict[str, Any]:
         """Check if model retrains are improving or degrading performance."""
@@ -633,9 +646,10 @@ class HealthService:
                         "reason": f"Latest retrain degraded (Spearman: {latest:.4f} vs avg {avg:.4f})"}
             return {"name": "retrain_effectiveness", "status": "FAIL", "score": 20.0,
                     "reason": f"Latest retrain negative (Spearman: {latest:.4f})"}
-        except (OSError, json.JSONDecodeError, ValueError, ImportError):
+        except (OSError, json.JSONDecodeError, ValueError, ImportError) as e:
+            logger.warning("Health check 'retrain_effectiveness' failed: %s", e)
             return {"name": "retrain_effectiveness", "status": "error", "score": 50.0,
-                    "reason": "Could not assess retrain effectiveness"}
+                    "reason": f"Could not assess retrain effectiveness: {e}"}
 
     def _check_capital_utilization(self) -> Dict[str, Any]:
         """Check capital deployment efficiency."""
@@ -666,6 +680,7 @@ class HealthService:
                         "reason": f"Capital utilization: {utilization:.0%} (over-concentrated)"}
             return {"name": "capital_utilization", "status": "PASS", "score": 70.0,
                     "reason": f"Capital utilization: {utilization:.0%}"}
-        except (OSError, json.JSONDecodeError, ValueError, ImportError):
+        except (OSError, json.JSONDecodeError, ValueError, ImportError) as e:
+            logger.warning("Health check 'capital_utilization' failed: %s", e)
             return {"name": "capital_utilization", "status": "error", "score": 50.0,
-                    "reason": "Could not assess capital utilization"}
+                    "reason": f"Could not assess capital utilization: {e}"}

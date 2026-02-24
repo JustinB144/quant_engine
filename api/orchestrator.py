@@ -57,28 +57,59 @@ class PipelineOrchestrator:
             state.data = load_universe(tickers, years=years, verbose=False)
 
         if not state.data:
-            # Build a diagnostic message so the user knows *why* data loading failed
-            diagnostics = []
-            ticker_list = tickers if tickers else ("survivorship universe",)
-            diagnostics.append(f"Attempted tickers: {ticker_list}")
-            diagnostics.append(f"WRDS_ENABLED={WRDS_ENABLED}")
-            diagnostics.append(f"REQUIRE_PERMNO={REQUIRE_PERMNO}")
-            diagnostics.append(f"years={years}")
+            from quant_engine.config import DATA_CACHE_DIR
+            from quant_engine.data.loader import get_skip_reasons
 
-            # Check if any cached data exists at all
-            from quant_engine.config import DATA_DIR
-            cache_dir = DATA_DIR / "cache"
+            ticker_list = tickers if tickers else []
+            n_tickers = len(ticker_list)
+            skip_reasons = get_skip_reasons()
+
+            # Cache diagnostics
+            cache_dir = DATA_CACHE_DIR
             if cache_dir.exists():
-                parquet_count = len(list(cache_dir.glob("*_1d.parquet")))
-                daily_count = len(list(cache_dir.glob("*_daily_*.parquet")))
-                diagnostics.append(f"Cache has {parquet_count} _1d.parquet + {daily_count} _daily_ files")
+                parquet_1d = len(list(cache_dir.glob("*_1d.parquet")))
+                parquet_daily = len(list(cache_dir.glob("*_daily_*.parquet")))
+                cache_info = f"{parquet_1d} _1d.parquet files, {parquet_daily} _daily_ files"
             else:
-                diagnostics.append("Cache directory does not exist")
+                cache_info = "directory does not exist"
 
-            detail = "; ".join(diagnostics)
-            raise RuntimeError(
-                f"No data loaded — all tickers were rejected or unavailable. {detail}"
-            )
+            # Group skip reasons by category and add remediation
+            reason_groups: Dict[str, List[str]] = {}
+            for sym, reason in skip_reasons.items():
+                reason_groups.setdefault(reason, []).append(sym)
+
+            remediation_map = {
+                "permno unresolved": "Set REQUIRE_PERMNO=False in config.py or run run_wrds_daily_refresh.py",
+                "load_ohlcv returned None": "Check data sources and cache; run run_wrds_daily_refresh.py",
+            }
+
+            skip_lines = []
+            for reason, syms in sorted(reason_groups.items(), key=lambda x: -len(x[1])):
+                remedy = remediation_map.get(reason, "")
+                if not remedy:
+                    if "insufficient data" in reason:
+                        remedy = "Increase years parameter or check data sources"
+                    elif "quality" in reason:
+                        remedy = "Check MAX_ZERO_VOLUME_FRACTION in config.py"
+                    else:
+                        remedy = "Check logs for per-ticker details"
+                skip_lines.append(f"  - {len(syms)} tickers: \"{reason}\" -> {remedy}")
+
+            msg_parts = [
+                f"No data loaded — all {n_tickers} tickers were rejected.",
+                "",
+                "Diagnostics:",
+                f"  WRDS_ENABLED={WRDS_ENABLED}, REQUIRE_PERMNO={REQUIRE_PERMNO}, years={years}",
+                f"  Cache: {cache_info}",
+            ]
+            if skip_lines:
+                msg_parts.append("")
+                msg_parts.append("Top skip reasons:")
+                msg_parts.extend(skip_lines)
+            msg_parts.append("")
+            msg_parts.append("To debug: Set verbose=True in load_universe() or check logs for per-ticker details.")
+
+            raise RuntimeError("\n".join(msg_parts))
 
         # Step 2: features
         if progress_callback:

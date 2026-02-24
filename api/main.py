@@ -49,6 +49,22 @@ async def _lifespan(app: FastAPI):
     logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
     logger.info("Starting quant_engine API on %s:%s", settings.host, settings.port)
 
+    # Run config validation on startup
+    try:
+        from quant_engine.config import validate_config
+        issues = validate_config()
+        for issue in issues:
+            level = issue.get("level", "WARNING")
+            msg = issue.get("message", "")
+            if level == "ERROR":
+                logger.error("Config validation: %s", msg)
+            else:
+                logger.warning("Config validation: %s", msg)
+        if not issues:
+            logger.info("Config validation: all checks passed")
+    except Exception as e:
+        logger.warning("Config validation could not run: %s", e)
+
     # Initialise async resources
     store = get_job_store()
     await store.initialize()

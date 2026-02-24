@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 # Module-level tracker recording all data source fallbacks for provenance auditing.
 _fallback_tracker: Dict[str, Dict[str, object]] = {}
 
+# Module-level tracker recording per-ticker skip reasons from load_universe().
+# Cleared at the start of each load_universe() call.
+_skip_tracker: Dict[str, str] = {}
+
 from ..config import (
     CACHE_MAX_STALENESS_DAYS,
     CACHE_TRUSTED_SOURCES,
@@ -353,7 +357,10 @@ def load_ohlcv(
                             )
                         return result
         except (OSError, ValueError, RuntimeError) as e:
-            print(f"  WRDS failed for {requested_symbol}: {e}")
+            logger.warning(
+                "WRDS fetch failed: %s | ticker=%s | years=%d | wrds_enabled=%s",
+                e, requested_symbol, years, WRDS_ENABLED,
+            )
 
     # ── 2. Local cache fallback (IBKR/local history) ──
     if fallback_cache_ready and cached is not None and ((not REQUIRE_PERMNO) or (cached_permno is not None)):
@@ -384,6 +391,15 @@ def get_data_provenance() -> Dict[str, Dict[str, object]]:
     return dict(_fallback_tracker)
 
 
+def get_skip_reasons() -> Dict[str, str]:
+    """Return per-ticker skip reasons from the most recent load_universe() call.
+
+    Returns dict mapping ticker -> reason string (e.g. "permno unresolved",
+    "insufficient data (42 bars, need 500)").
+    """
+    return dict(_skip_tracker)
+
+
 def load_universe(
     tickers: List[str],
     years: int = 15,
@@ -392,6 +408,8 @@ def load_universe(
     use_wrds: bool = WRDS_ENABLED,
 ) -> Dict[str, pd.DataFrame]:
     """Load OHLCV data for multiple symbols. Returns {permno: DataFrame}."""
+    global _skip_tracker
+    _skip_tracker = {}
     data: Dict[str, pd.DataFrame] = {}
     skipped: Dict[str, str] = {}
     for i, symbol in enumerate(tickers):
@@ -437,6 +455,8 @@ def load_universe(
             len(skipped), len(tickers),
             "; ".join(f"{sym}: {r}" for sym, r in skipped.items()),
         )
+    # Persist skip reasons for downstream consumers (e.g. orchestrator error messages)
+    _skip_tracker.update(skipped)
     return data
 
 
@@ -557,7 +577,10 @@ def load_survivorship_universe(
         )
 
     except (OSError, ValueError, RuntimeError) as e:
-        print(f"  Survivorship universe failed: {e}")
+        logger.warning(
+            "Survivorship universe load failed, falling back to static: %s | years=%d",
+            e, years,
+        )
         from ..config import UNIVERSE_FULL
         cached_subset = _cached_universe_subset(UNIVERSE_FULL)
         fallback = cached_subset if cached_subset else UNIVERSE_FULL
@@ -692,8 +715,10 @@ def load_with_delistings(
                         print(f"  Loaded {len(data)} tickers with WRDS/cached delisting-aware data")
                     return data
         except (OSError, ValueError, RuntimeError) as e:
-            if verbose:
-                print(f"  Delisting returns unavailable: {e}")
+            logger.warning(
+                "WRDS delisting fetch failed: %s | remaining_tickers=%d | years=%d",
+                e, len(remaining), years,
+            )
 
     # Fallback to standard universe load if WRDS delisting path fails.
     fallback = load_universe(

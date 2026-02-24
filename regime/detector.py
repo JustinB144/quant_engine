@@ -121,7 +121,10 @@ class RegimeDetector:
         probs = pd.DataFrame(index=features.index)
         for code in range(4):
             probs[f"regime_prob_{code}"] = (regime == code).astype(float)
+        probs = probs.fillna(0.0)
         probs = probs.div(probs.sum(axis=1).replace(0, 1), axis=0)
+        probs = probs.fillna(0.0)
+        confidence = confidence.fillna(0.5)
 
         return RegimeOutput(
             regime=regime.astype(int),
@@ -172,7 +175,11 @@ class RegimeDetector:
             fit = model.fit(X)
             raw_states = fit.raw_states
             raw_probs = fit.state_probs
-        except (ValueError, RuntimeError, np.linalg.LinAlgError):
+        except (ValueError, RuntimeError, np.linalg.LinAlgError) as e:
+            logger.warning(
+                "HMM fit failed, falling back to rule-based detection: %s | n_samples=%d | n_states=%d",
+                e, len(X), n_states,
+            )
             return self._rule_detect(features)
 
         mapping = map_raw_states_to_regimes(raw_states, features)
@@ -184,7 +191,9 @@ class RegimeDetector:
         for raw_s in range(raw_probs.shape[1]):
             reg = mapping.get(raw_s, 2)
             probs[f"regime_prob_{reg}"] += raw_probs[:, raw_s]
+        probs = probs.fillna(0.0)  # Guard against NaN from HMM posteriors
         probs = probs.div(probs.sum(axis=1).replace(0, 1), axis=0)
+        probs = probs.fillna(0.0)  # Guard against NaN after normalization
         confidence = probs.max(axis=1).clip(0.0, 1.0)
 
         # Compute regime uncertainty (entropy of posterior)
@@ -237,7 +246,9 @@ class RegimeDetector:
         for raw_s in range(result.regime_probs.shape[1]):
             reg = mapping.get(raw_s, 2)
             probs[f"regime_prob_{reg}"] += result.regime_probs[:, raw_s]
+        probs = probs.fillna(0.0)  # Guard against NaN from jump model posteriors
         probs = probs.div(probs.sum(axis=1).replace(0, 1), axis=0)
+        probs = probs.fillna(0.0)  # Guard against NaN after normalization
         confidence = probs.max(axis=1).clip(0.0, 1.0)
         uncertainty = self.get_regime_uncertainty(probs)
 
@@ -295,11 +306,13 @@ class RegimeDetector:
         # Blend probabilities from all methods (weighted: HMM 0.4, JM 0.35, Rule 0.25)
         w_hmm, w_jm, w_rule = 0.4, 0.35, 0.25
         probs = (
-            hmm_out.probabilities * w_hmm
-            + jump_out.probabilities * w_jm
-            + rule_out.probabilities * w_rule
+            hmm_out.probabilities.fillna(0.0) * w_hmm
+            + jump_out.probabilities.fillna(0.0) * w_jm
+            + rule_out.probabilities.fillna(0.0) * w_rule
         )
+        probs = probs.fillna(0.0)
         probs = probs.div(probs.sum(axis=1).replace(0, 1), axis=0)
+        probs = probs.fillna(0.0)
 
         confidence = pd.Series(vote_confidence, index=features.index, dtype=float)
         uncertainty = self.get_regime_uncertainty(probs)

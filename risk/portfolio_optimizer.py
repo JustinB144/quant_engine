@@ -20,6 +20,9 @@ from scipy.optimize import minimize
 
 logger = logging.getLogger(__name__)
 
+# Mutable flag to log GICS_SECTORS warning only once per process.
+_WARNED_GICS_EMPTY = [False]
+
 
 def optimize_portfolio(
     expected_returns: pd.Series,
@@ -182,6 +185,14 @@ def optimize_portfolio(
         constraints.append({"type": "ineq", "fun": slack_lower})
 
     # 4. Sector neutrality constraints: |sum of weights in sector| <= max_sector_exposure
+    if (sector_map is None or len(sector_map) == 0) and not _WARNED_GICS_EMPTY[0]:
+        from ..config import GICS_SECTORS
+        if not GICS_SECTORS:
+            logger.warning(
+                "GICS_SECTORS is empty — sector exposure constraint (%.0f%%) is NOT enforced",
+                max_sector_exposure * 100 if max_sector_exposure is not None else 10,
+            )
+            _WARNED_GICS_EMPTY[0] = True
     if sector_map is not None and len(sector_map) > 0:
         # Resolve the effective max sector exposure.
         if max_sector_exposure is None:
