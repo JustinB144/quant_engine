@@ -28,6 +28,23 @@ async def get_universe(cache: CacheManager = Depends(get_cache)) -> ApiResponse:
     return ApiResponse.success(data, elapsed_ms=elapsed)
 
 
+@router.get("/status")
+async def get_data_status(cache: CacheManager = Depends(get_cache)) -> ApiResponse:
+    """Per-ticker cache health: source, freshness, bar counts, timeframes.
+
+    Cached for 60 seconds to avoid repeated filesystem scans.
+    """
+    cached = cache.get("data:status")
+    if cached is not None:
+        return ApiResponse.from_cached(cached)
+    t0 = time.monotonic()
+    svc = DataService()
+    data = await asyncio.to_thread(svc.get_cache_status)
+    elapsed = (time.monotonic() - t0) * 1000
+    cache.set("data:status", data, ttl=60)
+    return ApiResponse.success(data, elapsed_ms=elapsed)
+
+
 @router.get("/ticker/{ticker}")
 async def get_ticker(ticker: str, years: int = 5) -> ApiResponse:
     t0 = time.monotonic()

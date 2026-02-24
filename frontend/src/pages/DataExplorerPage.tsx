@@ -4,6 +4,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import UniverseSelector from './DataExplorerPage/UniverseSelector'
 import CandlestickPanel from './DataExplorerPage/CandlestickPanel'
 import DataQualityReport from './DataExplorerPage/DataQualityReport'
+import CacheStatusPanel from './DataExplorerPage/CacheStatusPanel'
 import { useFilterStore } from '@/store/filterStore'
 
 export default function DataExplorerPage() {
@@ -15,6 +16,9 @@ export default function DataExplorerPage() {
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-3">
           <UniverseSelector />
+          <div className="mt-3">
+            <CacheStatusPanel selectedTicker={selectedTicker} />
+          </div>
         </div>
         <div className="col-span-9">
           {selectedTicker && <DataQualityReport ticker={selectedTicker} />}

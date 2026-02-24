@@ -31,6 +31,7 @@ export const MODELS_FEATURE_CORRELATIONS = '/models/features/correlations'
 
 // Data
 export const DATA_UNIVERSE = '/data/universe'
+export const DATA_STATUS = '/data/status'
 export const DATA_TICKER = (ticker: string) => `/data/ticker/${ticker}`
 
 // Benchmark

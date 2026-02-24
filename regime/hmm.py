@@ -504,9 +504,9 @@ def build_hmm_observation_matrix(features: pd.DataFrame) -> pd.DataFrame:
         s = obs[c]
         std = float(s.std())
         if std > 1e-12:
-            obs[c] = (s - s.mean()) / std
+            obs.loc[:, c] = (s - s.mean()) / std
         else:
-            obs[c] = 0.0
+            obs.loc[:, c] = 0.0
 
     # Belt-and-suspenders: ensure no NaN survived standardization
     # (e.g. zero-variance columns, single-element series where std() returns NaN)

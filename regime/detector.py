@@ -190,7 +190,8 @@ class RegimeDetector:
         probs = pd.DataFrame(0.0, index=features.index, columns=[f"regime_prob_{i}" for i in range(4)])
         for raw_s in range(raw_probs.shape[1]):
             reg = mapping.get(raw_s, 2)
-            probs[f"regime_prob_{reg}"] += raw_probs[:, raw_s]
+            col = f"regime_prob_{reg}"
+            probs.loc[:, col] = probs[col].values + raw_probs[:, raw_s]
         probs = probs.fillna(0.0)  # Guard against NaN from HMM posteriors
         probs = probs.div(probs.sum(axis=1).replace(0, 1), axis=0)
         probs = probs.fillna(0.0)  # Guard against NaN after normalization
@@ -245,7 +246,8 @@ class RegimeDetector:
         )
         for raw_s in range(result.regime_probs.shape[1]):
             reg = mapping.get(raw_s, 2)
-            probs[f"regime_prob_{reg}"] += result.regime_probs[:, raw_s]
+            col = f"regime_prob_{reg}"
+            probs.loc[:, col] = probs[col].values + result.regime_probs[:, raw_s]
         probs = probs.fillna(0.0)  # Guard against NaN from jump model posteriors
         probs = probs.div(probs.sum(axis=1).replace(0, 1), axis=0)
         probs = probs.fillna(0.0)  # Guard against NaN after normalization
