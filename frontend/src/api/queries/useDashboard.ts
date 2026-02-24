@@ -7,10 +7,12 @@ import {
   DASHBOARD_ROLLING_RISK,
   DASHBOARD_EQUITY,
   DASHBOARD_ATTRIBUTION,
+  REGIME_METADATA,
 } from '@/api/endpoints'
 import type {
   DashboardSummary,
   RegimeInfo,
+  RegimeMetadata,
   ReturnsDistribution,
   RollingRisk,
   EquityWithBenchmark,
@@ -63,5 +65,13 @@ export function useAttribution() {
     queryKey: ['dashboard', 'attribution'],
     queryFn: () => get<Attribution>(DASHBOARD_ATTRIBUTION),
     staleTime: 60_000,
+  })
+}
+
+export function useRegimeMetadata() {
+  return useQuery({
+    queryKey: ['regime', 'metadata'],
+    queryFn: () => get<RegimeMetadata>(REGIME_METADATA),
+    staleTime: 600_000, // Metadata changes rarely
   })
 }

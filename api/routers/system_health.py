@@ -43,6 +43,16 @@ async def detailed_health(cache: CacheManager = Depends(get_cache)) -> ApiRespon
     return ApiResponse.success(data, elapsed_ms=elapsed)
 
 
+@router.get("/api/health/history")
+async def health_history() -> ApiResponse:
+    """Return recent health score snapshots for trend visualization."""
+    t0 = time.monotonic()
+    svc = HealthService()
+    data = svc.get_health_history(limit=30)
+    elapsed = (time.monotonic() - t0) * 1000
+    return ApiResponse.success(data, elapsed_ms=elapsed)
+
+
 @router.get("/api/v1/system/model-age")
 async def model_age() -> ApiResponse:
     """Return age of the currently deployed model in days and the version ID."""

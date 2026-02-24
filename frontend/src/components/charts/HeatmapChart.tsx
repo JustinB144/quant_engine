@@ -37,7 +37,11 @@ export default function HeatmapChart({
         ...bloombergDarkTheme.tooltip,
         formatter: (params: { data: number[] }) => {
           const [xi, yi, val] = params.data
-          return `${yLabels[yi]} / ${xLabels[xi]}: ${val.toFixed(3)}`
+          const pct = (val * 100).toFixed(1)
+          if (xi === yi) {
+            return `<b>${yLabels[yi]}</b> persistence: <b>${pct}%</b><br/>Probability of staying in this regime`
+          }
+          return `<b>${yLabels[yi]}</b> &rarr; <b>${xLabels[xi]}</b>: <b>${pct}%</b><br/>Transition probability`
         },
       },
       grid: { left: 140, right: 60, top: 20, bottom: 40 },

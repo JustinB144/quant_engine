@@ -518,12 +518,36 @@ def compute_regime_payload(cache_dir: Path) -> Dict[str, Any]:
         trans = np.asarray(trans, dtype=float)
         if trans.ndim != 2:
             trans = np.eye(4)
+
+        # Build regime change timeline
+        regime_changes = []
+        prev_regime = None
+        start_date = None
+        for date, regime_val in out.regime.items():
+            rv = int(regime_val) if pd.notna(regime_val) else 2
+            if rv != prev_regime:
+                if prev_regime is not None and start_date is not None:
+                    regime_changes.append({
+                        "from_regime": REGIME_NAMES.get(prev_regime, f"Regime {prev_regime}"),
+                        "to_regime": REGIME_NAMES.get(rv, f"Regime {rv}"),
+                        "date": date.strftime("%Y-%m-%d"),
+                        "duration_days": (date - start_date).days,
+                    })
+                start_date = date
+                prev_regime = rv
+
+        current_regime_duration = 0
+        if start_date is not None and len(history) > 0:
+            current_regime_duration = (history.index[-1] - start_date).days
+
         return {
             "current_label": label,
             "as_of": history.index[-1].strftime("%Y-%m-%d"),
             "current_probs": probs_pretty,
             "prob_history": history,
             "transition": trans,
+            "regime_changes": regime_changes[-20:],
+            "current_regime_duration_days": current_regime_duration,
         }
     except (OSError, ValueError, KeyError, TypeError, ImportError) as e:
         logger.warning("Regime detection failed: %s", e, exc_info=True)

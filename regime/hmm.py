@@ -508,9 +508,9 @@ def build_hmm_observation_matrix(features: pd.DataFrame) -> pd.DataFrame:
         else:
             obs.loc[:, c] = 0.0
 
-    # Belt-and-suspenders: ensure no NaN survived standardization
+    # Belt-and-suspenders: ensure no NaN or inf survived standardization
     # (e.g. zero-variance columns, single-element series where std() returns NaN)
-    obs = obs.fillna(0.0)
+    obs = obs.replace([np.inf, -np.inf], np.nan).fillna(0.0)
     return obs
 
 

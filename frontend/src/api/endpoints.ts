@@ -58,5 +58,16 @@ export const JOBS_CANCEL = (id: string) => `/jobs/${id}/cancel`
 export const CONFIG = '/config'
 export const CONFIG_STATUS = '/config/status'
 
+// Regime
+export const REGIME_METADATA = '/regime/metadata'
+
 // IV Surface
 export const IV_SURFACE_ARB_FREE = '/iv-surface/arb-free-svi'
+
+// Data: bars & indicators (timeframe-aware)
+export const DATA_TICKER_BARS = (ticker: string) => `/data/ticker/${ticker}/bars`
+export const DATA_TICKER_INDICATORS = (ticker: string) => `/data/ticker/${ticker}/indicators`
+export const DATA_TICKER_INDICATORS_BATCH = (ticker: string) => `/data/ticker/${ticker}/indicators/batch`
+
+// Health history
+export const HEALTH_HISTORY = '/health/history'

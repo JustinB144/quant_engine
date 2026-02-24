@@ -37,6 +37,31 @@ export interface RegimeInfo {
     regime_prob_2: number
     regime_prob_3: number
   }>
+  regime_changes?: Array<{
+    from_regime: string
+    to_regime: string
+    date: string
+    duration_days: number
+  }>
+  current_regime_duration_days?: number
+}
+
+/** Matches /api/regime/metadata response.data */
+export interface RegimeMetadata {
+  regimes: Record<string, {
+    name: string
+    definition: string
+    detection: string
+    portfolio_impact: {
+      position_size_multiplier: number
+      stop_loss_multiplier: number
+      description: string
+    }
+    color: string
+  }>
+  detection_method: string
+  ensemble_enabled: boolean
+  transition_matrix_explanation: string
 }
 
 export interface TimeSeriesPoint {

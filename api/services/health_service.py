@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 
 # ── HealthCheckResult dataclass ─────────────────────────────────────────
 
+_SEVERITY_WEIGHTS = {"critical": 3.0, "standard": 1.0, "informational": 0.5}
+
+
 @dataclass
 class HealthCheckResult:
     """Structured result from a single health check."""
@@ -42,6 +45,8 @@ class HealthCheckResult:
     data_available: bool = True
     raw_metrics: Dict[str, Any] = field(default_factory=dict)
     thresholds: Dict[str, Any] = field(default_factory=dict)
+    severity: str = "standard"  # "critical", "standard", "informational"
+    raw_value: Optional[float] = None  # The actual measured value
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -54,6 +59,8 @@ class HealthCheckResult:
             "data_available": self.data_available,
             "raw_metrics": self.raw_metrics,
             "thresholds": self.thresholds,
+            "severity": self.severity,
+            "raw_value": self.raw_value,
         }
 
 
@@ -142,16 +149,36 @@ class HealthService:
         result["knob_inventory"] = payload.knob_inventory
 
         # Attach comprehensive runtime health checks
-        result["runtime_health"] = self.compute_comprehensive_health()
+        runtime_health = self.compute_comprehensive_health()
+        result["runtime_health"] = runtime_health
+
+        # Save snapshot for history tracking
+        self.save_health_snapshot(runtime_health)
+
+        # Attach history for trend visualization
+        result["health_history"] = self.get_health_history()
+
         return result
 
     # ── Domain Scoring ──────────────────────────────────────────────────
 
     @staticmethod
-    def _domain_score(checks: List[HealthCheckResult]) -> float:
-        """Compute mean score for a domain, excluding UNAVAILABLE checks."""
-        scores = [c.score for c in checks if c.status != "UNAVAILABLE"]
-        return float(np.mean(scores)) if scores else 0.0
+    def _domain_score(checks: List[HealthCheckResult]) -> Optional[float]:
+        """Compute severity-weighted mean score, excluding UNAVAILABLE checks.
+
+        Severity weights: critical=3.0, standard=1.0, informational=0.5.
+        Returns None if all checks are UNAVAILABLE.
+        """
+        available = [c for c in checks if c.status != "UNAVAILABLE"]
+        if not available:
+            return None
+        weighted_sum = sum(
+            c.score * _SEVERITY_WEIGHTS.get(c.severity, 1.0) for c in available
+        )
+        weight_total = sum(
+            _SEVERITY_WEIGHTS.get(c.severity, 1.0) for c in available
+        )
+        return float(weighted_sum / weight_total) if weight_total > 0 else 0.0
 
     @staticmethod
     def _domain_status(checks: List[HealthCheckResult]) -> str:
@@ -187,12 +214,19 @@ class HealthService:
         checks_total = 0
         checks_available = 0
 
+        # Severity classification:
+        #   critical  (3x weight) — data integrity and signal quality issues
+        #   standard  (1x weight) — risk and execution issues
+        #   informational (0.5x weight) — governance/monitoring issues
+
         # ── Data Integrity (25%) ──
         data_checks = [
             self._check_survivorship_bias(),
             self._check_data_quality_anomalies(),
             self._check_market_microstructure(),
         ]
+        for c in data_checks:
+            c.severity = "critical"
         data_score = self._domain_score(data_checks)
         data_status = self._domain_status(data_checks)
         domains["data_integrity"] = {
@@ -206,6 +240,8 @@ class HealthService:
             self._check_prediction_distribution(),
             self._check_ensemble_disagreement(),
         ]
+        for c in signal_checks:
+            c.severity = "critical"
         signal_score = self._domain_score(signal_checks)
         signal_status = self._domain_status(signal_checks)
         domains["signal_quality"] = {
@@ -219,6 +255,8 @@ class HealthService:
             self._check_correlation_regime(),
             self._check_capital_utilization(),
         ]
+        for c in risk_checks:
+            c.severity = "standard"
         risk_score = self._domain_score(risk_checks)
         risk_status = self._domain_status(risk_checks)
         domains["risk_management"] = {
@@ -231,6 +269,8 @@ class HealthService:
             self._check_execution_quality(),
             self._check_signal_profitability(),
         ]
+        for c in exec_checks:
+            c.severity = "standard"
         exec_score = self._domain_score(exec_checks)
         exec_status = self._domain_status(exec_checks)
         domains["execution_quality"] = {
@@ -245,6 +285,8 @@ class HealthService:
             self._check_regime_transition_health(),
             self._check_retraining_effectiveness(),
         ]
+        for c in gov_checks:
+            c.severity = "informational"
         gov_score = self._domain_score(gov_checks)
         gov_status = self._domain_status(gov_checks)
         domains["model_governance"] = {
@@ -257,17 +299,46 @@ class HealthService:
         checks_total = len(all_checks)
         checks_available = sum(1 for c in all_checks if c.status != "UNAVAILABLE")
 
-        # Weighted overall
-        overall = sum(d["weight"] * d["score"] for d in domains.values())
+        # Weighted overall — only domains with available data contribute
+        available_domains = {
+            k: v for k, v in domains.items() if v["score"] is not None
+        }
+        if available_domains:
+            weight_sum = sum(v["weight"] for v in available_domains.values())
+            overall = sum(
+                v["weight"] * v["score"] for v in available_domains.values()
+            ) / weight_sum if weight_sum > 0 else None
+        else:
+            overall = None
+
+        overall_status = "UNAVAILABLE"
+        if overall is not None:
+            overall_status = "PASS" if overall >= 75 else "WARN" if overall >= 50 else "FAIL"
 
         return {
-            "overall_score": round(overall, 1),
-            "overall_status": "PASS" if overall >= 75 else "WARN" if overall >= 50 else "FAIL",
+            "overall_score": round(overall, 1) if overall is not None else None,
+            "overall_status": overall_status,
+            "overall_methodology": (
+                "Weighted average of 5 domains: Data Integrity (25%), Signal Quality (25%), "
+                "Risk Management (20%), Execution Quality (15%), Model Governance (15%). "
+                "Only checks with available data are scored. Within each domain, checks are "
+                "weighted by severity: critical (3x), standard (1x), informational (0.5x)."
+            ),
             "checks_available": checks_available,
             "checks_total": checks_total,
-            "domains": {k: {"score": round(v["score"], 1), "weight": v["weight"],
-                            "status": v["status"],
-                            "checks": v["checks"]} for k, v in domains.items()},
+            "domains": {
+                k: {
+                    "score": round(v["score"], 1) if v["score"] is not None else None,
+                    "weight": v["weight"],
+                    "status": v["status"],
+                    "checks_available": sum(
+                        1 for c in v["checks"] if c.get("status") != "UNAVAILABLE"
+                    ),
+                    "checks_total": len(v["checks"]),
+                    "checks": v["checks"],
+                }
+                for k, v in domains.items()
+            },
         }
 
     # ── Helper: load backtest trades CSV ────────────────────────────────
@@ -1269,6 +1340,106 @@ class HealthService:
         except Exception as e:
             logger.warning("Health check '%s' failed: %s", name, e)
             return _unavailable(name, domain, f"Error: {e}")
+
+    # ── Health History Storage ─────────────────────────────────────────
+
+    _HEALTH_DB_PATH: Optional[Path] = None
+    _MAX_SNAPSHOTS = 30
+
+    @classmethod
+    def _get_health_db_path(cls) -> Path:
+        """Return the path to the health history SQLite database."""
+        if cls._HEALTH_DB_PATH is None:
+            from quant_engine.config import RESULTS_DIR
+            cls._HEALTH_DB_PATH = Path(RESULTS_DIR) / "health_history.db"
+        return cls._HEALTH_DB_PATH
+
+    @classmethod
+    def _ensure_health_table(cls) -> None:
+        """Create health_history table if it doesn't exist."""
+        import sqlite3
+        db_path = cls._get_health_db_path()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS health_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    overall_score REAL,
+                    domain_scores TEXT,
+                    check_results TEXT
+                )
+            """)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def save_health_snapshot(self, health_result: Dict[str, Any]) -> None:
+        """Save a health check snapshot to the SQLite database."""
+        import sqlite3
+        try:
+            self._ensure_health_table()
+            db_path = self._get_health_db_path()
+            conn = sqlite3.connect(str(db_path))
+            try:
+                timestamp = datetime.now(timezone.utc).isoformat()
+                overall_score = health_result.get("overall_score")
+                domain_scores = json.dumps({
+                    k: {"score": v.get("score"), "status": v.get("status")}
+                    for k, v in health_result.get("domains", {}).items()
+                })
+                check_results = json.dumps(health_result)
+
+                conn.execute(
+                    "INSERT INTO health_history (timestamp, overall_score, domain_scores, check_results) "
+                    "VALUES (?, ?, ?, ?)",
+                    (timestamp, overall_score, domain_scores, check_results),
+                )
+
+                # Prune old entries beyond _MAX_SNAPSHOTS
+                conn.execute(
+                    "DELETE FROM health_history WHERE id NOT IN "
+                    "(SELECT id FROM health_history ORDER BY id DESC LIMIT ?)",
+                    (self._MAX_SNAPSHOTS,),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning("Failed to save health snapshot: %s", e)
+
+    def get_health_history(self, limit: int = 30) -> List[Dict[str, Any]]:
+        """Retrieve recent health snapshots for trend visualization."""
+        import sqlite3
+        try:
+            self._ensure_health_table()
+            db_path = self._get_health_db_path()
+            conn = sqlite3.connect(str(db_path))
+            try:
+                cursor = conn.execute(
+                    "SELECT timestamp, overall_score, domain_scores "
+                    "FROM health_history ORDER BY id DESC LIMIT ?",
+                    (limit,),
+                )
+                rows = cursor.fetchall()
+                history = []
+                for ts, score, domain_json in reversed(rows):
+                    entry: Dict[str, Any] = {
+                        "timestamp": ts,
+                        "overall_score": score,
+                    }
+                    try:
+                        entry["domain_scores"] = json.loads(domain_json)
+                    except (json.JSONDecodeError, TypeError):
+                        entry["domain_scores"] = {}
+                    history.append(entry)
+                return history
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning("Failed to load health history: %s", e)
+            return []
 
     def _check_regime_transition_health(self) -> HealthCheckResult:
         """Check regime model quality via entropy, transition frequency,

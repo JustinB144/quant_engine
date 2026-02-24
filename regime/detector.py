@@ -245,6 +245,10 @@ class RegimeDetector:
         probs = probs.fillna(0.0)  # Guard against NaN from HMM posteriors
         probs = probs.div(probs.sum(axis=1).replace(0, 1), axis=0)
         probs = probs.fillna(0.0)  # Guard against NaN after normalization
+        # If any row sums to 0 (all NaN before fillna), assign uniform distribution
+        zero_rows = probs.sum(axis=1) == 0
+        if zero_rows.any():
+            probs.loc[zero_rows] = 0.25
         confidence = probs.max(axis=1).clip(0.0, 1.0)
 
         # Compute regime uncertainty (entropy of posterior)
@@ -301,6 +305,10 @@ class RegimeDetector:
         probs = probs.fillna(0.0)  # Guard against NaN from jump model posteriors
         probs = probs.div(probs.sum(axis=1).replace(0, 1), axis=0)
         probs = probs.fillna(0.0)  # Guard against NaN after normalization
+        # If any row sums to 0 (all NaN before fillna), assign uniform distribution
+        zero_rows = probs.sum(axis=1) == 0
+        if zero_rows.any():
+            probs.loc[zero_rows] = 0.25
         confidence = probs.max(axis=1).clip(0.0, 1.0)
         uncertainty = self.get_regime_uncertainty(probs)
 

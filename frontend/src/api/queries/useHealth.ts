@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { get } from '@/api/client'
-import { HEALTH_QUICK, HEALTH_DETAILED } from '@/api/endpoints'
-import type { QuickStatus, SystemHealthDetail } from '@/types/health'
+import { HEALTH_QUICK, HEALTH_DETAILED, HEALTH_HISTORY } from '@/api/endpoints'
+import type { QuickStatus, SystemHealthDetail, HealthHistoryEntry } from '@/types/health'
 
 export function useQuickHealth() {
   return useQuery({
@@ -15,6 +15,14 @@ export function useDetailedHealth() {
   return useQuery({
     queryKey: ['health', 'detailed'],
     queryFn: () => get<SystemHealthDetail>(HEALTH_DETAILED),
+    staleTime: 60_000,
+  })
+}
+
+export function useHealthHistory() {
+  return useQuery({
+    queryKey: ['health', 'history'],
+    queryFn: () => get<HealthHistoryEntry[]>(HEALTH_HISTORY),
     staleTime: 60_000,
   })
 }
