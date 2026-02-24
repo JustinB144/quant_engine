@@ -54,6 +54,14 @@ class PaperTrader:
         self.kelly_min_mult = float(max(0.05, kelly_min_size_multiplier))
         self.kelly_max_mult = float(max(self.kelly_min_mult, kelly_max_size_multiplier))
 
+        # Persistent sizer for regime stats and Bayesian updates across cycles
+        self._persistent_sizer = PositionSizer(kelly_fraction=self.kelly_fraction)
+
+        # Drawdown controller — tracks equity and enforces circuit breakers
+        from ..risk.drawdown import DrawdownController
+        self._dd_controller = DrawdownController(initial_equity=self.initial_capital)
+        self._prev_equity: Optional[float] = None
+
     def _load_state(self) -> Dict:
         """Internal helper to load state."""
         if self.state_path.exists():
@@ -289,9 +297,68 @@ class PaperTrader:
         pred_map = self._latest_predictions_by_id(latest_predictions)
         state = self._load_state()
 
+        # ── Drawdown controller update ──
+        current_equity = self._mark_to_market(state, as_of, price_data)
+        if self._prev_equity is not None and self._prev_equity > 0:
+            daily_pnl = (current_equity - self._prev_equity) / self._prev_equity
+        else:
+            daily_pnl = 0.0
+        dd_status = self._dd_controller.update(daily_pnl)
+        self._prev_equity = current_equity
+
         exits = 0
         entries = 0
         remaining_positions = []
+
+        # Force liquidate all positions if drawdown controller says critical
+        if dd_status.force_liquidate:
+            for pos in state.get("positions", []):
+                permno = self._position_id(pos)
+                px = self._current_price(permno, as_of, price_data)
+                if px is None:
+                    remaining_positions.append(pos)
+                    continue
+                gross = float(pos["shares"]) * px
+                tx = gross * self.tx_cost
+                proceeds = gross - tx
+                entry_notional = float(pos["shares"]) * float(pos["entry_price"])
+                pnl = proceeds - entry_notional
+                net_return = float(pnl / entry_notional) if entry_notional > 0 else 0.0
+                state["cash"] = float(state.get("cash", 0.0)) + proceeds
+                state["realized_pnl"] = float(state.get("realized_pnl", 0.0)) + pnl
+                state.setdefault("trades", []).append({
+                    "strategy_id": pos["strategy_id"],
+                    "permno": permno,
+                    "ticker": pos.get("ticker"),
+                    "entry_date": pos["entry_date"],
+                    "exit_date": str(as_of.date()),
+                    "entry_price": float(pos["entry_price"]),
+                    "exit_price": float(px),
+                    "shares": float(pos["shares"]),
+                    "pnl": float(pnl),
+                    "net_return": net_return,
+                    "holding_days": int(pos.get("holding_days", 0)) + 1,
+                    "reason": "drawdown_liquidation",
+                    "position_size_pct": float(pos.get("position_size_pct", 0.0)),
+                    "regime": int(pos.get("regime", 2)),
+                })
+                exits += 1
+            state["positions"] = remaining_positions
+            state["last_update"] = datetime.now(timezone.utc).isoformat()
+            equity = self._mark_to_market(state, as_of, price_data)
+            self._prev_equity = equity
+            self._save_state(state)
+            return {
+                "as_of": str(as_of.date()),
+                "entries": 0,
+                "exits": exits,
+                "cash": float(state["cash"]),
+                "equity": float(equity),
+                "realized_pnl": float(state.get("realized_pnl", 0.0)),
+                "open_positions": len(state.get("positions", [])),
+                "active_strategies": len(active_strategies),
+                "drawdown_state": dd_status.state.value,
+            }
 
         # 1) Evaluate exits.
         for pos in state.get("positions", []):
@@ -320,6 +387,8 @@ class PaperTrader:
             pnl = proceeds - entry_notional
             state["cash"] = float(state.get("cash", 0.0)) + proceeds
             state["realized_pnl"] = float(state.get("realized_pnl", 0.0)) + pnl
+            entry_notional_for_return = float(pos["shares"]) * float(pos["entry_price"])
+            net_return = float(pnl / entry_notional_for_return) if entry_notional_for_return > 0 else 0.0
             state.setdefault("trades", []).append(
                 {
                     "strategy_id": pos["strategy_id"],
@@ -331,17 +400,28 @@ class PaperTrader:
                     "exit_price": float(px),
                     "shares": float(pos["shares"]),
                     "pnl": float(pnl),
+                    "net_return": net_return,
                     "holding_days": int(pos["holding_days"]),
                     "reason": "time_exit" if timed_out else "signal_decay",
                     "position_size_pct": float(pos.get("position_size_pct", 0.0)),
+                    "regime": int(pos.get("regime", 2)),
                 },
             )
             exits += 1
 
         state["positions"] = remaining_positions
 
-        # 2) Evaluate entries.
-        if active_strategies:
+        # Update regime stats and Bayesian priors on the persistent sizer
+        all_trades = state.get("trades", [])
+        if len(all_trades) >= 20:
+            recent_trades = all_trades[-self.kelly_lookback_trades:]
+            trade_df = pd.DataFrame(recent_trades)
+            if "net_return" in trade_df.columns and "regime" in trade_df.columns:
+                self._persistent_sizer.update_regime_stats(trade_df)
+                self._persistent_sizer.update_kelly_bayesian(trade_df)
+
+        # 2) Evaluate entries — skip entirely if drawdown controller blocks new entries.
+        if active_strategies and dd_status.allow_new_entries:
             current_equity = self._mark_to_market(state, as_of, price_data)
             held_permnos = {self._position_id(pos) for pos in state.get("positions", [])}
             held_keys = {
@@ -401,6 +481,9 @@ class PaperTrader:
                     confidence_weight = min(confidence_weight, 1.0)
                     position_size_pct *= confidence_weight
 
+                    # Apply drawdown controller size multiplier
+                    position_size_pct *= dd_status.size_multiplier
+
                     notional = current_equity * position_size_pct
                     tx = notional * self.tx_cost
                     total_cost = notional + tx
@@ -421,6 +504,7 @@ class PaperTrader:
                         "entry_threshold": entry_threshold,
                         "confidence_threshold": confidence_threshold,
                         "position_size_pct": float(position_size_pct),
+                        "regime": int(row.get("regime", 2)),
                     }
                     state["positions"].append(position)
                     held_permnos.add(permno)
@@ -429,6 +513,7 @@ class PaperTrader:
 
         state["last_update"] = datetime.now(timezone.utc).isoformat()
         equity = self._mark_to_market(state, as_of, price_data)
+        self._prev_equity = equity
         self._save_state(state)
 
         return {
@@ -440,4 +525,5 @@ class PaperTrader:
             "realized_pnl": float(state.get("realized_pnl", 0.0)),
             "open_positions": len(state.get("positions", [])),
             "active_strategies": len(active_strategies),
+            "drawdown_state": dd_status.state.value,
         }

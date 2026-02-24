@@ -7,9 +7,10 @@ Implements multiple sizing approaches that can be blended:
     - ATR-based (risk per unit of volatility)
     - Composite blend of all methods
     - Regime-conditional Kelly (adjusts parameters by market regime)
-    - Drawdown governor (linearly reduces sizing as drawdown increases)
+    - Drawdown governor (convex exponential curve reduces sizing as drawdown increases)
     - Bayesian updating (Beta-Binomial conjugate prior for win rate)
 """
+import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -77,10 +78,18 @@ class PositionSizer:
         self.max_portfolio_dd = max_portfolio_dd
 
         # Bayesian win-rate prior (Beta-Binomial conjugate)
-        self.win_rate_prior_alpha = bayesian_alpha
-        self.win_rate_prior_beta = bayesian_beta
+        self.bayesian_alpha = bayesian_alpha
+        self.bayesian_beta = bayesian_beta
+        # Global Bayesian counters (fallback for cold-start)
         self._bayesian_wins = 0
         self._bayesian_losses = 0
+        # Per-regime Bayesian counters: {regime_id (int): {wins, losses}}
+        self._bayesian_regime: Dict[int, Dict[str, int]] = {
+            0: {"wins": 0, "losses": 0},  # trending_bull
+            1: {"wins": 0, "losses": 0},  # trending_bear
+            2: {"wins": 0, "losses": 0},  # mean_reverting
+            3: {"wins": 0, "losses": 0},  # high_volatility
+        }
 
         # Regime-conditional historical statistics
         # Keys: regime label (str), Values: {"win_rate", "avg_win", "avg_loss", "n_trades"}
@@ -106,6 +115,7 @@ class PositionSizer:
         max_positions: int = 20,
         regime: Optional[str] = None,
         current_drawdown: float = 0.0,
+        n_trades: int = 100,
     ) -> PositionSize:
         """
         Calculate position size using multiple methods and blend.
@@ -124,6 +134,7 @@ class PositionSizer:
             max_positions: maximum total positions
             regime: current market regime label (e.g. "trending_bull")
             current_drawdown: current portfolio drawdown as negative fraction (e.g. -0.05)
+            n_trades: number of historical trades (used for small-sample penalty in Kelly)
         """
         # Apply regime-conditional adjustments if regime is known
         if regime is not None and regime in self.regime_stats:
@@ -135,6 +146,7 @@ class PositionSizer:
                 avg_loss = rs["avg_loss"]
 
         # ── Kelly Criterion ──
+        self._current_n_trades = n_trades
         raw_kelly = self._kelly(win_rate, avg_win, avg_loss)
         half_kelly = raw_kelly * self.kelly_frac
 
@@ -154,8 +166,9 @@ class PositionSizer:
             + self.blend_weights["atr_based"] * atr_based
         )
 
-        # Scale by model confidence (0.5 = no scaling, higher = boost)
-        confidence_scalar = 0.5 + confidence  # range: 0.5 to 1.5
+        # Confidence scales position DOWN from blend, never UP.
+        # Range: [0.5, 1.0] — full confidence = 100% of blend, low confidence = 50%.
+        confidence_scalar = 0.5 + 0.5 * min(1.0, max(0.0, confidence))
         composite *= confidence_scalar
 
         # Apply position limits
@@ -192,19 +205,30 @@ class PositionSizer:
         Kelly criterion: f* = (p*b - q) / b
 
         where p = win probability, b = win/loss ratio, q = 1-p
+
+        Returns 0.0 for negative-edge signals (not min_position) — refuse to
+        allocate capital when the expected edge is non-positive.  A small-sample
+        penalty shrinks the Kelly fraction toward zero when ``_current_n_trades``
+        is low, reaching full Kelly only after 50 trades.
         """
-        if avg_loss >= -1e-9 or win_rate <= 0 or win_rate >= 1:
-            return self.min_position
+        if avg_loss >= -1e-9 or win_rate <= 0.0 or win_rate >= 1.0:
+            return 0.0  # Invalid inputs — refuse to size
 
         p = win_rate
-        q = 1 - p
+        q = 1.0 - p
         b = abs(avg_win / avg_loss)  # win/loss ratio
 
         kelly = (p * b - q) / b
 
-        # Clamp: Kelly can go negative (don't bet) or very large
         if kelly <= 0:
-            return self.min_position
+            return 0.0  # Negative edge — do not trade
+
+        # Small-sample penalty: reduce Kelly when n_trades is low.
+        # Shrink toward 0 as n_trades → 0; full Kelly only after 50 trades.
+        n_trades = getattr(self, '_current_n_trades', 100)
+        sample_penalty = min(1.0, n_trades / 50.0)
+        kelly *= sample_penalty
+
         return min(kelly, self.max_position)
 
     def _vol_scaled(
@@ -248,68 +272,215 @@ class PositionSizer:
         return np.clip(size, self.min_position, self.max_position)
 
     def _apply_drawdown_governor(
-        self, kelly_fraction: float, current_drawdown: float, max_allowed_dd: float,
+        self, kelly_fraction: float, current_drawdown: float, max_allowed_dd: float = -0.20,
     ) -> float:
-        """Linearly reduce Kelly as drawdown approaches max. Returns 0 if DD exceeds max.
+        """Reduce Kelly as drawdown approaches max using a convex (exponential) curve.
 
-        The governor scales position sizing proportionally to remaining drawdown budget.
-        At zero drawdown, full Kelly is used. At max drawdown, sizing goes to zero.
+        Uses ``scale = exp(-k * dd_ratio²)`` instead of linear ``1 - dd_ratio``.
+        The squared term makes the curve more lenient early in the drawdown and
+        more aggressive near the limit:
+
+            At 50% of max_dd → sizing ≈ 61% (vs 50% linear)
+            At 90% of max_dd → sizing ≈ 20% (vs 10% linear)
+
+        Returns 0.0 if drawdown exceeds the maximum allowed.
         """
         if current_drawdown >= 0.0:
             return kelly_fraction  # No drawdown — full sizing
-        dd_abs = abs(current_drawdown)
-        dd_max = abs(max_allowed_dd)
-        if dd_abs >= dd_max:
+
+        dd_ratio = abs(current_drawdown) / abs(max_allowed_dd)
+
+        if dd_ratio >= 1.0:
             return 0.0  # Breached max drawdown — no new positions
-        # Linear scaling: 1.0 at dd=0, 0.0 at dd=max
-        scale = 1.0 - (dd_abs / dd_max)
+
+        # Convex scaling: slow reduction early, aggressive near limit.
+        # exp(-k * dd_ratio²) with k=2 gives:
+        #   dd_ratio=0.5 → scale≈0.61 (lenient early)
+        #   dd_ratio=0.9 → scale≈0.20 (aggressive late)
+        k = 2.0
+        scale = math.exp(-k * dd_ratio * dd_ratio)
+
         return kelly_fraction * scale
 
-    def update_regime_stats(self, regime: str, trades: pd.DataFrame):
+    def update_regime_stats(self, trades: pd.DataFrame, regime_col: str = "regime"):
         """Update regime-specific historical stats from completed trades.
 
+        Accepts a full trade DataFrame with a ``regime`` column (integer IDs
+        0-3) and updates stats for every regime that has enough data. This
+        replaces the old interface that required pre-filtering by regime.
+
         Args:
-            regime: regime label (e.g. "trending_bull")
-            trades: DataFrame with 'net_return' column for trades in this regime
+            trades: DataFrame with ``net_return`` and ``regime`` columns.
+            regime_col: column name containing integer regime IDs.
+        """
+        from ..config import REGIME_NAMES
+
+        if trades.empty or "net_return" not in trades.columns:
+            return
+        if regime_col not in trades.columns:
+            return
+
+        for regime_id, regime_name in REGIME_NAMES.items():
+            regime_trades = trades[trades[regime_col] == regime_id]
+            returns = regime_trades["net_return"].dropna().values
+            if len(returns) < 5:
+                continue
+            wins = returns[returns > 0]
+            losses = returns[returns < 0]
+            self.regime_stats[regime_name] = {
+                "win_rate": float((returns > 0).mean()),
+                "avg_win": float(wins.mean()) if len(wins) > 0 else 0.01,
+                "avg_loss": float(losses.mean()) if len(losses) > 0 else -0.01,
+                "n_trades": len(returns),
+            }
+
+    def update_kelly_bayesian(self, trades: pd.DataFrame, regime_col: str = "regime"):
+        """Update per-regime and global Bayesian posteriors from trade history.
+
+        Maintains separate Beta-Binomial priors for each regime so that
+        bull-market wins don't inflate bear-market posteriors.
+
+        Args:
+            trades: DataFrame with ``net_return`` column and optionally a
+                ``regime`` column (integer regime IDs 0-3).
+            regime_col: column name containing regime labels.
         """
         if trades.empty or "net_return" not in trades.columns:
             return
-        returns = trades["net_return"].dropna().values
-        if len(returns) < 5:
-            return
-        wins = returns[returns > 0]
-        losses = returns[returns < 0]
-        self.regime_stats[regime] = {
-            "win_rate": float((returns > 0).mean()),
-            "avg_win": float(wins.mean()) if len(wins) > 0 else 0.01,
-            "avg_loss": float(losses.mean()) if len(losses) > 0 else -0.01,
-            "n_trades": len(returns),
-        }
 
-    def update_kelly_bayesian(self, trades: pd.DataFrame):
-        """Update Bayesian posterior for win rate using Beta-Binomial conjugate prior.
+        returns = trades["net_return"].dropna()
 
-        Uses all trades to update the posterior. The posterior mean is:
-            posterior_win_rate = (alpha + wins) / (alpha + beta + wins + losses)
-        """
-        if trades.empty or "net_return" not in trades.columns:
-            return
-        returns = trades["net_return"].dropna().values
+        # Update global counters
         self._bayesian_wins = int((returns > 0).sum())
         self._bayesian_losses = int((returns <= 0).sum())
 
-    def get_bayesian_kelly(self, avg_win: float = 0.02, avg_loss: float = -0.02) -> float:
-        """Compute Kelly fraction using Bayesian posterior mean for win rate.
+        # Update per-regime counters
+        if regime_col in trades.columns:
+            for regime_id in self._bayesian_regime:
+                regime_mask = trades[regime_col] == regime_id
+                regime_returns = trades.loc[regime_mask, "net_return"].dropna()
+                if len(regime_returns) > 0:
+                    wins = int((regime_returns > 0).sum())
+                    losses = int((regime_returns <= 0).sum())
+                    self._bayesian_regime[regime_id]["wins"] += wins
+                    self._bayesian_regime[regime_id]["losses"] += losses
 
-        The posterior mean of a Beta(alpha + wins, beta + losses) distribution
-        is used instead of the raw empirical win rate, which provides regularization
-        especially with small sample sizes.
+    def get_bayesian_kelly(
+        self, avg_win: float = 0.02, avg_loss: float = -0.02, regime: Optional[int] = None,
+    ) -> float:
+        """Compute Kelly fraction using regime-specific Bayesian posterior.
+
+        When a ``regime`` is specified and sufficient regime-specific data is
+        available (>=10 trades), the posterior for that regime is used.
+        Otherwise falls back to the global posterior.
+
+        Args:
+            avg_win: average winning trade return.
+            avg_loss: average losing trade return (negative).
+            regime: integer regime ID (0-3) or ``None`` for global.
+
+        Returns:
+            Half-Kelly fraction from Bayesian posterior win rate.
         """
-        alpha = self.win_rate_prior_alpha + self._bayesian_wins
-        beta = self.win_rate_prior_beta + self._bayesian_losses
+        # Try regime-specific posterior first
+        if regime is not None and regime in self._bayesian_regime:
+            stats = self._bayesian_regime[regime]
+            wins, losses = stats["wins"], stats["losses"]
+            if wins + losses >= 10:
+                posterior_wr = (self.bayesian_alpha + wins) / (
+                    self.bayesian_alpha + self.bayesian_beta + wins + losses
+                )
+                return self._kelly(posterior_wr, avg_win, avg_loss) * self.kelly_frac
+
+        # Fallback to global posterior
+        alpha = self.bayesian_alpha + self._bayesian_wins
+        beta = self.bayesian_beta + self._bayesian_losses
         posterior_win_rate = alpha / (alpha + beta)
         raw_kelly = self._kelly(posterior_win_rate, avg_win, avg_loss)
         return raw_kelly * self.kelly_frac
+
+    def size_portfolio_aware(
+        self,
+        ticker: str,
+        win_rate: float,
+        avg_win: float,
+        avg_loss: float,
+        realized_vol: float,
+        atr: float,
+        price: float,
+        existing_positions: Dict[str, float],
+        returns_data: Optional[Dict[str, pd.Series]] = None,
+        **kwargs,
+    ) -> float:
+        """Size position considering correlation with existing portfolio.
+
+        Wraps :meth:`size_position` and applies a correlation penalty:
+        positions that are highly correlated with the existing portfolio
+        receive reduced allocation.
+
+        Args:
+            ticker: security identifier.
+            win_rate: historical win rate (0-1).
+            avg_win: average winning trade return.
+            avg_loss: average losing trade return (negative).
+            realized_vol: annualized realized volatility.
+            atr: current ATR value.
+            price: current price.
+            existing_positions: ``{ticker: weight}`` of current portfolio.
+            returns_data: ``{ticker: pd.Series}`` of return series for
+                correlation computation.
+            **kwargs: forwarded to :meth:`size_position`.
+
+        Returns:
+            Adjusted position size as a fraction of portfolio.
+        """
+        base_result = self.size_position(
+            ticker=ticker,
+            win_rate=win_rate,
+            avg_win=avg_win,
+            avg_loss=avg_loss,
+            realized_vol=realized_vol,
+            atr=atr,
+            price=price,
+            **kwargs,
+        )
+        base_size = base_result.final_size
+
+        if not existing_positions or returns_data is None:
+            return base_size
+
+        ticker_returns = returns_data.get(ticker)
+        if ticker_returns is None or len(ticker_returns) < 20:
+            return base_size
+
+        # Compute weight-adjusted average correlation with existing positions
+        correlations = []
+        total_abs_weight = 0.0
+        for pos_ticker, pos_weight in existing_positions.items():
+            pos_returns = returns_data.get(pos_ticker)
+            if pos_returns is None:
+                continue
+            # Align series on shared index
+            aligned = pd.concat([ticker_returns, pos_returns], axis=1).dropna()
+            if len(aligned) < 20:
+                continue
+            corr = float(aligned.iloc[:, 0].corr(aligned.iloc[:, 1]))
+            if not np.isfinite(corr):
+                continue
+            correlations.append(corr * abs(pos_weight))
+            total_abs_weight += abs(pos_weight)
+
+        if not correlations or total_abs_weight < 1e-9:
+            return base_size
+
+        # Weighted average correlation with portfolio
+        avg_corr = sum(correlations) / total_abs_weight
+
+        # Reduce size when highly correlated with existing positions.
+        # corr=0 → full size, corr=1 → 50% size, corr<0 → bonus (capped at 100%)
+        correlation_penalty = 1.0 - 0.5 * max(0.0, avg_corr)
+
+        return base_size * correlation_penalty
 
     def size_portfolio(
         self,
