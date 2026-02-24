@@ -71,6 +71,338 @@ from .options_factors import compute_option_surface_factors
 from .wave_flow import compute_wave_flow_decomposition
 
 
+# ---------------------------------------------------------------------------
+# Feature Metadata Registry
+# ---------------------------------------------------------------------------
+# Every feature produced by the pipeline should have an entry here.
+# Types:
+#   CAUSAL        — backward-looking only; safe for live prediction
+#   END_OF_DAY    — requires full-day data; safe for daily-close prediction
+#   RESEARCH_ONLY — cross-sectional or non-causal; offline analysis only
+#
+# Features not listed here are assumed CAUSAL (indicators are backward-looking
+# by construction).  Only features that deviate need explicit annotation.
+# ---------------------------------------------------------------------------
+
+FEATURE_METADATA: Dict[str, Dict[str, str]] = {
+    # ── Technical indicators (all CAUSAL — rolling lookback) ──────────
+    "ATR_14": {"type": "CAUSAL", "category": "volatility"},
+    "NATR_14": {"type": "CAUSAL", "category": "volatility"},
+    "BBWidth_20": {"type": "CAUSAL", "category": "volatility"},
+    "HV_20": {"type": "CAUSAL", "category": "volatility"},
+    "BBWPct_20_100": {"type": "CAUSAL", "category": "volatility"},
+    "NATRPct_14_100": {"type": "CAUSAL", "category": "volatility"},
+    "Squeeze_20": {"type": "CAUSAL", "category": "volatility"},
+    "ParkVol_20": {"type": "CAUSAL", "category": "volatility"},
+    "GKVol_20": {"type": "CAUSAL", "category": "volatility"},
+    "YZVol_20": {"type": "CAUSAL", "category": "volatility"},
+    "VolCone_20_252": {"type": "CAUSAL", "category": "volatility"},
+    "VoV_20_60": {"type": "CAUSAL", "category": "volatility"},
+    "GARCH_252": {"type": "CAUSAL", "category": "volatility"},
+    "VolTS_10_60": {"type": "CAUSAL", "category": "volatility"},
+    "RSI_14": {"type": "CAUSAL", "category": "momentum"},
+    "RSI_5": {"type": "CAUSAL", "category": "momentum"},
+    "MACD_12_26": {"type": "CAUSAL", "category": "momentum"},
+    "MACDSignal_12_26_9": {"type": "CAUSAL", "category": "momentum"},
+    "MACDHist_12_26_9": {"type": "CAUSAL", "category": "momentum"},
+    "ROC_10": {"type": "CAUSAL", "category": "momentum"},
+    "ROC_20": {"type": "CAUSAL", "category": "momentum"},
+    "ROC_50": {"type": "CAUSAL", "category": "momentum"},
+    "Stoch_14": {"type": "CAUSAL", "category": "momentum"},
+    "StochD_14_3": {"type": "CAUSAL", "category": "momentum"},
+    "WillR_14": {"type": "CAUSAL", "category": "momentum"},
+    "CCI_20": {"type": "CAUSAL", "category": "momentum"},
+    "SMA_20": {"type": "CAUSAL", "category": "trend"},
+    "SMA_50": {"type": "CAUSAL", "category": "trend"},
+    "SMA_200": {"type": "CAUSAL", "category": "trend"},
+    "EMA_8": {"type": "CAUSAL", "category": "trend"},
+    "EMA_21": {"type": "CAUSAL", "category": "trend"},
+    "EMA_50": {"type": "CAUSAL", "category": "trend"},
+    "PriceVsSMA_20": {"type": "CAUSAL", "category": "trend"},
+    "PriceVsSMA_50": {"type": "CAUSAL", "category": "trend"},
+    "PriceVsSMA_200": {"type": "CAUSAL", "category": "trend"},
+    "SMASlope_20_5": {"type": "CAUSAL", "category": "trend"},
+    "SMASlope_50_5": {"type": "CAUSAL", "category": "trend"},
+    "ADX_14": {"type": "CAUSAL", "category": "trend"},
+    "Aroon_14": {"type": "CAUSAL", "category": "trend"},
+    "EMAAlign_8_21_50": {"type": "CAUSAL", "category": "trend"},
+    "TrendStr_14": {"type": "CAUSAL", "category": "trend"},
+    "PriceVsEMAs": {"type": "CAUSAL", "category": "trend"},
+    "Regime_50": {"type": "CAUSAL", "category": "trend"},
+    "VolRegime_20": {"type": "CAUSAL", "category": "trend"},
+    "VolRatio_20": {"type": "CAUSAL", "category": "volume"},
+    "OBV": {"type": "CAUSAL", "category": "volume"},
+    "OBVSlope_14": {"type": "CAUSAL", "category": "volume"},
+    "MFI_14": {"type": "CAUSAL", "category": "volume"},
+    "RVOL_20": {"type": "CAUSAL", "category": "volume"},
+    "NetVol_14": {"type": "CAUSAL", "category": "volume"},
+    "VForce_13": {"type": "CAUSAL", "category": "volume"},
+    "ADSlope_10": {"type": "CAUSAL", "category": "volume"},
+    "HH_5": {"type": "CAUSAL", "category": "price_action"},
+    "LL_5": {"type": "CAUSAL", "category": "price_action"},
+    "CandleBody": {"type": "CAUSAL", "category": "price_action"},
+    "CandleDir_5": {"type": "CAUSAL", "category": "price_action"},
+    "Gap": {"type": "CAUSAL", "category": "price_action"},
+    "DistHigh_252": {"type": "CAUSAL", "category": "support_resistance"},
+    "DistLow_252": {"type": "CAUSAL", "category": "support_resistance"},
+    "PricePct_252": {"type": "CAUSAL", "category": "support_resistance"},
+    "PivotHi_5_5": {"type": "CAUSAL", "category": "breakout"},
+    "PivotLo_5_5": {"type": "CAUSAL", "category": "breakout"},
+    "HiBreak_5": {"type": "CAUSAL", "category": "breakout"},
+    "LoBreak_5": {"type": "CAUSAL", "category": "breakout"},
+    "RangeBO_20": {"type": "CAUSAL", "category": "breakout"},
+    "ATRStop_14_2.0": {"type": "CAUSAL", "category": "atr_risk"},
+    "ATRChan_14": {"type": "CAUSAL", "category": "atr_risk"},
+    "RiskATR_14_20": {"type": "CAUSAL", "category": "atr_risk"},
+    "VWAP_20": {"type": "CAUSAL", "category": "vwap"},
+    "PriceVsVWAP_20": {"type": "CAUSAL", "category": "vwap"},
+    "VWAPBand_20": {"type": "CAUSAL", "category": "vwap"},
+    "VAH_20": {"type": "CAUSAL", "category": "value_area"},
+    "VAL_20": {"type": "CAUSAL", "category": "value_area"},
+    "POC_20": {"type": "CAUSAL", "category": "value_area"},
+    "PriceVsPOC_20": {"type": "CAUSAL", "category": "value_area"},
+    "VAPos_20": {"type": "CAUSAL", "category": "value_area"},
+    "AboveVA_20": {"type": "CAUSAL", "category": "value_area"},
+    "BelowVA_20": {"type": "CAUSAL", "category": "value_area"},
+    "Hurst_100": {"type": "CAUSAL", "category": "statistical"},
+    "HalfLife_60": {"type": "CAUSAL", "category": "statistical"},
+    "ZScore_20": {"type": "CAUSAL", "category": "statistical"},
+    "ZScore_50": {"type": "CAUSAL", "category": "statistical"},
+    "VarRatio_100_5": {"type": "CAUSAL", "category": "statistical"},
+    "AutoCorr_20_1": {"type": "CAUSAL", "category": "statistical"},
+    "Kalman_0p01_1p0": {"type": "CAUSAL", "category": "statistical"},
+    "Entropy_20": {"type": "CAUSAL", "category": "information_theory"},
+    "ApEn_50": {"type": "CAUSAL", "category": "information_theory"},
+    "Amihud_20": {"type": "CAUSAL", "category": "microstructure"},
+    "Kyle_20": {"type": "CAUSAL", "category": "microstructure"},
+    "RollSpd_20": {"type": "CAUSAL", "category": "microstructure"},
+    "FracDim_100": {"type": "CAUSAL", "category": "fractal"},
+    "DFA_100": {"type": "CAUSAL", "category": "fractal"},
+    "DomCycle_100": {"type": "CAUSAL", "category": "fractal"},
+    "Skew_60": {"type": "CAUSAL", "category": "distribution"},
+    "Kurt_60": {"type": "CAUSAL", "category": "distribution"},
+    "CUSUM_50": {"type": "CAUSAL", "category": "regime"},
+    "RegPersist_20": {"type": "CAUSAL", "category": "regime"},
+
+    # ── Raw OHLCV features (all CAUSAL) ──────────────────────────────
+    "return_1d": {"type": "CAUSAL", "category": "returns"},
+    "return_2d": {"type": "CAUSAL", "category": "returns"},
+    "return_3d": {"type": "CAUSAL", "category": "returns"},
+    "return_5d": {"type": "CAUSAL", "category": "returns"},
+    "return_10d": {"type": "CAUSAL", "category": "returns"},
+    "return_20d": {"type": "CAUSAL", "category": "returns"},
+    "log_return_1d": {"type": "CAUSAL", "category": "returns"},
+    "intraday_range": {"type": "CAUSAL", "category": "price_action"},
+    "overnight_gap": {"type": "CAUSAL", "category": "price_action"},
+    "log_volume": {"type": "CAUSAL", "category": "volume"},
+    "dollar_volume": {"type": "CAUSAL", "category": "volume"},
+    "volume_change": {"type": "CAUSAL", "category": "volume"},
+    "return_vol_5d": {"type": "CAUSAL", "category": "volatility"},
+    "return_vol_20d": {"type": "CAUSAL", "category": "volatility"},
+    "return_vol_60d": {"type": "CAUSAL", "category": "volatility"},
+    "price_in_range_20d": {"type": "CAUSAL", "category": "price_action"},
+    "price_in_range_60d": {"type": "CAUSAL", "category": "price_action"},
+
+    # ── HAR volatility features (all CAUSAL) ─────────────────────────
+    "RV_daily": {"type": "CAUSAL", "category": "volatility"},
+    "RV_weekly": {"type": "CAUSAL", "category": "volatility"},
+    "RV_monthly": {"type": "CAUSAL", "category": "volatility"},
+    "HAR_composite": {"type": "CAUSAL", "category": "volatility"},
+    "HAR_ratio_dw": {"type": "CAUSAL", "category": "volatility"},
+    "HAR_ratio_wm": {"type": "CAUSAL", "category": "volatility"},
+
+    # ── Multi-scale features (all CAUSAL) ────────────────────────────
+    "RSI_10": {"type": "CAUSAL", "category": "momentum"},
+    "RSI_20": {"type": "CAUSAL", "category": "momentum"},
+    "RSI_50": {"type": "CAUSAL", "category": "momentum"},
+    "MOM_5": {"type": "CAUSAL", "category": "momentum"},
+    "MOM_10": {"type": "CAUSAL", "category": "momentum"},
+    "MOM_20": {"type": "CAUSAL", "category": "momentum"},
+    "MOM_60": {"type": "CAUSAL", "category": "momentum"},
+    "VOL_5": {"type": "CAUSAL", "category": "volatility"},
+    "VOL_10": {"type": "CAUSAL", "category": "volatility"},
+    "VOL_20": {"type": "CAUSAL", "category": "volatility"},
+    "VOL_60": {"type": "CAUSAL", "category": "volatility"},
+
+    # ── Research factors: TSMom (CAUSAL — backward-looking) ──────────
+    "TSMom_lag21": {"type": "CAUSAL", "category": "momentum"},
+    "TSMom_lag63": {"type": "CAUSAL", "category": "momentum"},
+    "TSMom_lag126": {"type": "CAUSAL", "category": "momentum"},
+    "TSMom_lag252": {"type": "CAUSAL", "category": "momentum"},
+    "TSMom_12m1m": {"type": "CAUSAL", "category": "momentum"},
+    "TSMom_Ensemble": {"type": "CAUSAL", "category": "momentum"},
+    "TSMom_SignAgreement": {"type": "CAUSAL", "category": "momentum"},
+
+    # ── Research factors: vol-scaled momentum (CAUSAL) ───────────────
+    "vsmom_5": {"type": "CAUSAL", "category": "momentum"},
+    "vsmom_10": {"type": "CAUSAL", "category": "momentum"},
+    "vsmom_20": {"type": "CAUSAL", "category": "momentum"},
+    "vsmom_60": {"type": "CAUSAL", "category": "momentum"},
+    "vsmom_120": {"type": "CAUSAL", "category": "momentum"},
+    "vsmom_252": {"type": "CAUSAL", "category": "momentum"},
+    "reversal_horizon": {"type": "CAUSAL", "category": "momentum"},
+    "momentum_persistence": {"type": "CAUSAL", "category": "momentum"},
+
+    # ── Relative momentum — RESEARCH_ONLY (needs cross-sectional adjustment) ─
+    "relative_mom_10": {
+        "type": "RESEARCH_ONLY", "category": "momentum",
+        "reason": "Cross-sectional adjustment needed at prediction time",
+    },
+    "relative_mom_20": {
+        "type": "RESEARCH_ONLY", "category": "momentum",
+        "reason": "Cross-sectional adjustment needed at prediction time",
+    },
+    "relative_mom_60": {
+        "type": "RESEARCH_ONLY", "category": "momentum",
+        "reason": "Cross-sectional adjustment needed at prediction time",
+    },
+
+    # ── Research factors: OFI (CAUSAL — rolling) ─────────────────────
+    "OFI_20": {"type": "CAUSAL", "category": "order_flow"},
+    "OFI_Z_20": {"type": "CAUSAL", "category": "order_flow"},
+    "OFI_DepthAdj_20": {"type": "CAUSAL", "category": "order_flow"},
+    "ImpactLambda_20": {"type": "CAUSAL", "category": "order_flow"},
+    "ImpactLinear_20": {"type": "CAUSAL", "category": "order_flow"},
+    "ImpactSqrt_20": {"type": "CAUSAL", "category": "order_flow"},
+    "ofi_normalized": {"type": "CAUSAL", "category": "order_flow"},
+    "ofi_persistence": {"type": "CAUSAL", "category": "order_flow"},
+    "ofi_momentum": {"type": "CAUSAL", "category": "order_flow"},
+
+    # ── Research factors: Markov queue (CAUSAL) ──────────────────────
+    "QueueImbalance_Proxy": {"type": "CAUSAL", "category": "microstructure"},
+    "LOB_State": {"type": "CAUSAL", "category": "microstructure"},
+    "LOB_PUp_State_63": {"type": "CAUSAL", "category": "microstructure"},
+    "LOB_PDown_State_63": {"type": "CAUSAL", "category": "microstructure"},
+    "LOB_TransitionEntropy_63": {"type": "CAUSAL", "category": "microstructure"},
+    "LOB_StateDuration": {"type": "CAUSAL", "category": "microstructure"},
+
+    # ── Research factors: signature path (CAUSAL) ────────────────────
+    "SigL1_Return_20": {"type": "CAUSAL", "category": "path_signature"},
+    "SigL1_Volume_20": {"type": "CAUSAL", "category": "path_signature"},
+    "SigL2_XX_20": {"type": "CAUSAL", "category": "path_signature"},
+    "SigL2_XY_20": {"type": "CAUSAL", "category": "path_signature"},
+    "SigL2_YY_20": {"type": "CAUSAL", "category": "path_signature"},
+    "SigLevyArea_20": {"type": "CAUSAL", "category": "path_signature"},
+
+    # ── Research factors: vol surface (CAUSAL) ───────────────────────
+    "VolSurf_Level": {"type": "CAUSAL", "category": "volatility"},
+    "VolSurf_Slope": {"type": "CAUSAL", "category": "volatility"},
+    "VolSurf_Curvature": {"type": "CAUSAL", "category": "volatility"},
+    "VolSurf_PC1": {"type": "CAUSAL", "category": "volatility"},
+    "VolSurf_PC2": {"type": "CAUSAL", "category": "volatility"},
+    "VolSurf_PC3": {"type": "CAUSAL", "category": "volatility"},
+
+    # ── Wave-flow decomposition (CAUSAL) ─────────────────────────────
+    "flow_component": {"type": "CAUSAL", "category": "regime"},
+    "wave_component": {"type": "CAUSAL", "category": "regime"},
+    "dominant_frequency": {"type": "CAUSAL", "category": "regime"},
+    "spectral_entropy": {"type": "CAUSAL", "category": "regime"},
+    "wave_amplitude": {"type": "CAUSAL", "category": "regime"},
+    "flow_strength": {"type": "CAUSAL", "category": "regime"},
+    "wave_flow_ratio": {"type": "CAUSAL", "category": "regime"},
+    "wave_regime_indicator": {"type": "CAUSAL", "category": "regime"},
+
+    # ── Option surface factors (CAUSAL — rolling lookback) ───────────
+    "iv_atm_30": {"type": "CAUSAL", "category": "options"},
+    "iv_atm_60": {"type": "CAUSAL", "category": "options"},
+    "iv_atm_90": {"type": "CAUSAL", "category": "options"},
+    "term_slope_30_90": {"type": "CAUSAL", "category": "options"},
+    "skew_25d": {"type": "CAUSAL", "category": "options"},
+    "curvature": {"type": "CAUSAL", "category": "options"},
+    "vrp_10": {"type": "CAUSAL", "category": "options"},
+    "vrp_30": {"type": "CAUSAL", "category": "options"},
+    "vrp_60": {"type": "CAUSAL", "category": "options"},
+    "iv_rank_1y": {"type": "CAUSAL", "category": "options"},
+    "skew_rank_1y": {"type": "CAUSAL", "category": "options"},
+    "vrp_rank_1y": {"type": "CAUSAL", "category": "options"},
+
+    # ── Cross-sectional z-scored momentum (CAUSAL within universe) ───
+    "cs_zmom_10": {"type": "CAUSAL", "category": "cross_sectional"},
+    "cs_zmom_20": {"type": "CAUSAL", "category": "cross_sectional"},
+    "cs_zmom_60": {"type": "CAUSAL", "category": "cross_sectional"},
+
+    # ── Cross-asset network factors (CAUSAL — lag-shifted) ───────────
+    "NetMom_Spillover": {"type": "CAUSAL", "category": "cross_asset"},
+    "NetMom_LeadCentrality": {"type": "CAUSAL", "category": "cross_asset"},
+    "NetMom_RecvCentrality": {"type": "CAUSAL", "category": "cross_asset"},
+    "NetMom_GraphDensity": {"type": "CAUSAL", "category": "cross_asset"},
+    "VolSpillover_In": {"type": "CAUSAL", "category": "cross_asset"},
+    "VolSpillover_Out": {"type": "CAUSAL", "category": "cross_asset"},
+    "VolSpillover_Net": {"type": "CAUSAL", "category": "cross_asset"},
+
+    # ── Path signature features (CAUSAL) ─────────────────────────────
+    "sig_5d_0": {"type": "CAUSAL", "category": "path_signature"},
+    "sig_5d_1": {"type": "CAUSAL", "category": "path_signature"},
+    "sig_5d_2": {"type": "CAUSAL", "category": "path_signature"},
+    "sig_5d_3": {"type": "CAUSAL", "category": "path_signature"},
+    "sig_5d_4": {"type": "CAUSAL", "category": "path_signature"},
+    "sig_5d_5": {"type": "CAUSAL", "category": "path_signature"},
+    "sig_20d_0": {"type": "CAUSAL", "category": "path_signature"},
+    "sig_20d_1": {"type": "CAUSAL", "category": "path_signature"},
+    "sig_20d_2": {"type": "CAUSAL", "category": "path_signature"},
+    "sig_20d_3": {"type": "CAUSAL", "category": "path_signature"},
+    "sig_20d_4": {"type": "CAUSAL", "category": "path_signature"},
+    "sig_20d_5": {"type": "CAUSAL", "category": "path_signature"},
+    "sig_60d_0": {"type": "CAUSAL", "category": "path_signature"},
+    "sig_60d_1": {"type": "CAUSAL", "category": "path_signature"},
+    "sig_60d_2": {"type": "CAUSAL", "category": "path_signature"},
+    "sig_60d_3": {"type": "CAUSAL", "category": "path_signature"},
+    "sig_60d_4": {"type": "CAUSAL", "category": "path_signature"},
+    "sig_60d_5": {"type": "CAUSAL", "category": "path_signature"},
+
+    # ── DTW lead-lag features (CAUSAL) ───────────────────────────────
+    "dtw_leader_score": {"type": "CAUSAL", "category": "cross_asset"},
+    "dtw_follower_score": {"type": "CAUSAL", "category": "cross_asset"},
+    "dtw_avg_lag": {"type": "CAUSAL", "category": "cross_asset"},
+
+    # ── Intraday features — END_OF_DAY (require full-day data) ───────
+    "intraday_vol_ratio": {"type": "END_OF_DAY", "category": "microstructure"},
+    "vwap_deviation": {
+        "type": "END_OF_DAY", "category": "microstructure",
+        "reason": "Uses full-day VWAP which is unavailable intraday",
+    },
+    "amihud_illiquidity": {"type": "END_OF_DAY", "category": "microstructure"},
+    "kyle_lambda": {"type": "END_OF_DAY", "category": "microstructure"},
+    "realized_vol_5m": {"type": "END_OF_DAY", "category": "microstructure"},
+    "microstructure_noise": {"type": "END_OF_DAY", "category": "microstructure"},
+
+    # ── Rolling VWAP features (CAUSAL — rolling window) ────────────
+    "rolling_vwap_20": {"type": "CAUSAL", "category": "vwap"},
+    "rolling_vwap_deviation_20": {"type": "CAUSAL", "category": "vwap"},
+
+    # ── LOB features — END_OF_DAY ────────────────────────────────────
+    "trade_arrival_rate": {"type": "END_OF_DAY", "category": "microstructure"},
+    "duration_between_trades_mean": {"type": "END_OF_DAY", "category": "microstructure"},
+    "duration_between_trades_std": {"type": "END_OF_DAY", "category": "microstructure"},
+    "quote_update_intensity": {"type": "END_OF_DAY", "category": "microstructure"},
+    "price_impact_asymmetry": {"type": "END_OF_DAY", "category": "microstructure"},
+    "queue_imbalance": {"type": "END_OF_DAY", "category": "microstructure"},
+    "fill_probability_proxy": {"type": "END_OF_DAY", "category": "microstructure"},
+}
+
+
+def get_feature_type(feature_name: str) -> str:
+    """Return the causality type for a feature.
+
+    Returns ``'CAUSAL'`` for any feature not explicitly registered, since
+    indicator-based features are backward-looking by construction.
+    """
+    entry = FEATURE_METADATA.get(feature_name)
+    if entry is not None:
+        return entry["type"]
+    # Interaction features (prefixed X_) inherit CAUSAL from their inputs
+    if feature_name.startswith("X_"):
+        return "CAUSAL"
+    # Default: assume causal (indicators are backward-looking)
+    return "CAUSAL"
+
+
+def _filter_causal_features(features: "pd.DataFrame") -> "pd.DataFrame":
+    """Keep only features with type CAUSAL or END_OF_DAY (drop RESEARCH_ONLY)."""
+    keep = [c for c in features.columns if get_feature_type(c) != "RESEARCH_ONLY"]
+    return features[keep]
+
+
 def _build_indicator_set() -> list:
     """Instantiate all indicators with default parameters."""
     return [
@@ -510,10 +842,18 @@ class FeaturePipeline:
         include_options_factors: bool = True,
         research_config: Optional[ResearchFactorConfig] = None,
         verbose: bool = False,
+        production_mode: bool = False,
     ):
-        """Initialize FeaturePipeline."""
+        """Initialize FeaturePipeline.
+
+        Args:
+            production_mode: When True, automatically filter out features
+                tagged as RESEARCH_ONLY in FEATURE_METADATA.  Defaults to
+                False for backward compatibility.
+        """
         mode = str(feature_mode).lower()
         self.feature_mode = mode
+        self.production_mode = production_mode
         self.minimal_indicators = False
         if mode == "minimal":
             # Lean profile (~20 indicators, no extras) — minimises
@@ -632,6 +972,14 @@ class FeaturePipeline:
         targets = None
         if compute_targets_flag:
             targets = compute_targets(df, benchmark_close=benchmark_close)
+
+        # Production mode: filter out RESEARCH_ONLY features
+        if self.production_mode:
+            pre_count = features.shape[1]
+            features = _filter_causal_features(features)
+            if self.verbose:
+                dropped = pre_count - features.shape[1]
+                print(f"  Production mode: dropped {dropped} research-only features")
 
         if self.verbose:
             print(f"  Total features: {features.shape[1]}")
@@ -882,6 +1230,22 @@ class FeaturePipeline:
             except (ValueError, KeyError, TypeError) as e:
                 if verbose:
                     print(f"  WARNING: Intraday/LOB join failed: {e}")
+
+        # Cross-sectional z-scored momentum: for each date, z-score the
+        # raw momentum across all stocks in the universe.  This produces a
+        # truly relative signal that adjusts for market-wide momentum.
+        if self.include_research_factors and len(data) > 1:
+            if verbose:
+                print("  Computing cross-sectional z-scored momentum...")
+            date_level = features.index.names[-1]
+            for h in [10, 20, 60]:
+                raw_col = f"relative_mom_{h}"
+                cs_col = f"cs_zmom_{h}"
+                if raw_col in features.columns:
+                    grouped = features[raw_col].groupby(level=date_level)
+                    cs_mean = grouped.transform("mean")
+                    cs_std = grouped.transform("std")
+                    features[cs_col] = (features[raw_col] - cs_mean) / (cs_std + 1e-12)
 
         if verbose:
             print(f"\n  Universe total: {features.shape[0]} rows × {features.shape[1]} features")

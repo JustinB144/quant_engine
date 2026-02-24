@@ -68,10 +68,16 @@ def compute_option_surface_factors(df: pd.DataFrame) -> pd.DataFrame:
     if iv_put_25d is not None and iv_call_25d is not None and iv30 is not None:
         out.loc[:, "curvature"] = (iv_put_25d + iv_call_25d) / 2.0 - iv30
 
-    if iv30 is not None and "Close" in df.columns:
+    if "Close" in df.columns:
         close = pd.to_numeric(df["Close"], errors="coerce")
-        realized_vol_30 = close.pct_change().rolling(30, min_periods=20).std() * np.sqrt(252.0)
-        out.loc[:, "vrp_30"] = iv30 - realized_vol_30
+        ret = close.pct_change()
+
+        # Multi-horizon VRP: implied vol minus realized vol at 10d, 30d, 60d
+        vrp_horizons = [(10, 7, iv30), (30, 20, iv30), (60, 40, iv60)]
+        for horizon, min_p, iv in vrp_horizons:
+            if iv is not None:
+                rv = ret.rolling(horizon, min_periods=min_p).std() * np.sqrt(252.0)
+                out.loc[:, f"vrp_{horizon}"] = iv - rv
 
     if "iv_atm_30" in out.columns:
         out.loc[:, "iv_rank_1y"] = _rolling_percentile_rank(out["iv_atm_30"])

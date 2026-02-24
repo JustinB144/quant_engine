@@ -193,3 +193,51 @@ def compute_intraday_features(
 
     except (KeyError, ValueError, TypeError, RuntimeError):
         return default
+
+
+# ---------------------------------------------------------------------------
+# Causal VWAP alternative (rolling window, no future data)
+# ---------------------------------------------------------------------------
+
+
+def compute_rolling_vwap(
+    df: pd.DataFrame,
+    window: int = 20,
+) -> pd.DataFrame:
+    """Compute causal rolling VWAP and deviation features.
+
+    Unlike the full-day VWAP used in ``compute_intraday_features``, this
+    uses a rolling window over *past* bars only — safe for intraday and
+    daily prediction.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        OHLCV DataFrame with 'High', 'Low', 'Close', and 'Volume' columns.
+    window : int
+        Number of past bars for the rolling calculation (default 20).
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: ``rolling_vwap_{window}``, ``rolling_vwap_deviation_{window}``.
+    """
+    high = pd.to_numeric(df["High"], errors="coerce")
+    low = pd.to_numeric(df["Low"], errors="coerce")
+    close = pd.to_numeric(df["Close"], errors="coerce")
+    volume = pd.to_numeric(df["Volume"], errors="coerce")
+
+    typical_price = (high + low + close) / 3.0
+    dollar_volume = typical_price * volume
+
+    min_periods = max(5, window // 3)
+    rolling_dollar = dollar_volume.rolling(window, min_periods=min_periods).sum()
+    rolling_vol = volume.rolling(window, min_periods=min_periods).sum()
+
+    rolling_vwap = rolling_dollar / rolling_vol.replace(0.0, np.nan)
+    deviation = (close - rolling_vwap) / rolling_vwap.replace(0.0, np.nan)
+
+    out = pd.DataFrame(index=df.index)
+    out[f"rolling_vwap_{window}"] = rolling_vwap
+    out[f"rolling_vwap_deviation_{window}"] = deviation
+    return out.replace([np.inf, -np.inf], np.nan)
