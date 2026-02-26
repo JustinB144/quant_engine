@@ -1,16 +1,27 @@
 """
 Execution simulator with spread, market impact, and participation limits.
 
+Spec 06 enhancements:
+  - Structural state-aware cost multipliers (break probability, structure
+    uncertainty, drift score, systemic stress)
+  - ADV-aware participation limit adjustment via volume trend
+  - Entry/exit urgency differentiation with cost acceptance limits
+  - No-trade gate during extreme stress for low-urgency orders
+  - Per-market-cap-segment impact coefficient support
+
 Includes a cost-model calibration routine that fits spread, impact, and fill
 parameters from historical fill data.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, List
+import logging
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -22,11 +33,23 @@ class ExecutionFill:
     impact_bps: float
     spread_bps: float
     event_spread_multiplier_applied: float = 1.0
+    # Spec 06: structural state cost breakdown
+    structural_mult: float = 1.0
+    urgency_type: str = ""
+    no_trade_blocked: bool = False
+    cost_details: Dict = field(default_factory=dict)
 
 
 class ExecutionModel:
     """
-    Simple market-impact model for backtests.
+    Market-impact model for backtests with structural state-aware costs.
+
+    Extends the base spread + sqrt(participation) impact model with:
+      - Structural state multipliers (break probability, uncertainty, drift, systemic stress)
+      - ADV-based volume trend adjustment
+      - Entry/exit urgency differentiation
+      - No-trade gate during extreme stress
+      - Per-market-cap-segment impact coefficients
     """
 
     def __init__(
@@ -42,6 +65,19 @@ class ExecutionModel:
         gap_spread_beta: float = 4.0,
         range_spread_beta: float = 2.0,
         vol_impact_beta: float = 1.0,
+        # Spec 06: structural state config
+        structural_stress_enabled: bool = True,
+        break_prob_cost_mult: Optional[Dict[str, float]] = None,
+        structure_uncertainty_cost_mult: float = 0.50,
+        drift_score_cost_reduction: float = 0.20,
+        systemic_stress_cost_mult: float = 0.30,
+        # Spec 06: urgency config
+        exit_urgency_cost_limit_mult: float = 1.5,
+        entry_urgency_cost_limit_mult: float = 1.0,
+        stress_pullback_min_size: float = 0.10,
+        no_trade_stress_threshold: float = 0.95,
+        # Spec 06: volume trend
+        volume_trend_enabled: bool = True,
     ):
         """Initialize ExecutionModel."""
         self.spread_bps = float(max(0.0, spread_bps))
@@ -56,6 +92,154 @@ class ExecutionModel:
         self.range_spread_beta = float(max(0.0, range_spread_beta))
         self.vol_impact_beta = float(max(0.0, vol_impact_beta))
 
+        # Spec 06: structural state configuration
+        self.structural_stress_enabled = bool(structural_stress_enabled)
+        self.break_prob_cost_mult = break_prob_cost_mult or {
+            "low": 1.0, "medium": 1.3, "high": 2.0,
+        }
+        self.structure_uncertainty_cost_mult = float(
+            max(0.0, structure_uncertainty_cost_mult)
+        )
+        self.drift_score_cost_reduction = float(
+            np.clip(drift_score_cost_reduction, 0.0, 0.50)
+        )
+        self.systemic_stress_cost_mult = float(
+            max(0.0, systemic_stress_cost_mult)
+        )
+
+        # Spec 06: urgency configuration
+        self.exit_urgency_cost_limit_mult = float(
+            max(1.0, exit_urgency_cost_limit_mult)
+        )
+        self.entry_urgency_cost_limit_mult = float(
+            max(0.5, entry_urgency_cost_limit_mult)
+        )
+        self.stress_pullback_min_size = float(
+            np.clip(stress_pullback_min_size, 0.0, 0.50)
+        )
+        self.no_trade_stress_threshold = float(
+            np.clip(no_trade_stress_threshold, 0.0, 1.0)
+        )
+
+        # Spec 06: volume trend
+        self.volume_trend_enabled = bool(volume_trend_enabled)
+
+        # Base transaction cost for urgency limit comparison (defaults to 20 bps)
+        self._base_transaction_cost_bps = 20.0
+
+    def set_base_transaction_cost_bps(self, bps: float) -> None:
+        """Set the base transaction cost used for urgency limit comparison."""
+        self._base_transaction_cost_bps = float(max(1.0, bps))
+
+    # ── Structural State Multipliers (Spec 06 T1) ─────────────────────
+
+    def _compute_break_probability_mult(
+        self, break_prob: Optional[float],
+    ) -> float:
+        """Scale cost multiplier based on flash crash risk.
+
+        Interpolates linearly between tier boundaries for smooth behavior:
+          - break_prob < 0.05  → 'low' multiplier (1.0)
+          - 0.05..0.15         → linear interpolation low→medium
+          - 0.15..0.50         → linear interpolation medium→high
+          - > 0.50             → 'high' multiplier (capped)
+        """
+        if break_prob is None or not np.isfinite(break_prob):
+            return 1.0
+        break_prob = float(np.clip(break_prob, 0.0, 1.0))
+
+        mult_low = float(self.break_prob_cost_mult.get("low", 1.0))
+        mult_med = float(self.break_prob_cost_mult.get("medium", 1.3))
+        mult_high = float(self.break_prob_cost_mult.get("high", 2.0))
+
+        if break_prob < 0.05:
+            return mult_low
+        elif break_prob < 0.15:
+            interp = (break_prob - 0.05) / 0.10
+            return mult_low + (mult_med - mult_low) * interp
+        elif break_prob < 0.50:
+            interp = (break_prob - 0.15) / 0.35
+            return mult_med + (mult_high - mult_med) * interp
+        else:
+            return mult_high
+
+    def _compute_structure_uncertainty_mult(
+        self, uncertainty: Optional[float],
+    ) -> float:
+        """Scale cost multiplier based on regime state uncertainty (entropy).
+
+        Higher uncertainty → higher costs (less confident about market state).
+        Returns 1.0 + (uncertainty * coefficient).
+        """
+        if uncertainty is None or not np.isfinite(uncertainty):
+            return 1.0
+        uncertainty = float(np.clip(uncertainty, 0.0, 1.0))
+        return 1.0 + (uncertainty * self.structure_uncertainty_cost_mult)
+
+    def _compute_drift_score_mult(
+        self, drift_score: Optional[float],
+    ) -> float:
+        """Reduce cost multiplier based on trend strength.
+
+        High drift = high conviction trend → lower execution urgency → lower costs.
+        Returns 1.0 - (drift_score * coefficient), floored at 0.70.
+        """
+        if drift_score is None or not np.isfinite(drift_score):
+            return 1.0
+        drift_score = float(np.clip(drift_score, 0.0, 1.0))
+        return max(0.70, 1.0 - (drift_score * self.drift_score_cost_reduction))
+
+    def _compute_systemic_stress_mult(
+        self, systemic_stress: Optional[float],
+    ) -> float:
+        """Scale cost multiplier based on systemic stress (e.g. VIX percentile).
+
+        Higher systemic stress → wider spreads, more impact → higher costs.
+        Returns 1.0 + (systemic_stress * coefficient).
+        """
+        if systemic_stress is None or not np.isfinite(systemic_stress):
+            return 1.0
+        systemic_stress = float(np.clip(systemic_stress, 0.0, 1.0))
+        return 1.0 + (systemic_stress * self.systemic_stress_cost_mult)
+
+    def _compute_structural_multiplier(
+        self,
+        break_probability: Optional[float] = None,
+        structure_uncertainty: Optional[float] = None,
+        drift_score: Optional[float] = None,
+        systemic_stress: Optional[float] = None,
+    ) -> tuple[float, Dict[str, float]]:
+        """Compute composite structural state multiplier.
+
+        Individual multipliers are combined multiplicatively.
+        Result is clipped to [0.70, 3.0] to prevent unrealistic extremes.
+
+        Returns (composite_mult, details_dict).
+        """
+        if not self.structural_stress_enabled:
+            return 1.0, {}
+
+        break_mult = self._compute_break_probability_mult(break_probability)
+        uncertainty_mult = self._compute_structure_uncertainty_mult(
+            structure_uncertainty
+        )
+        drift_mult = self._compute_drift_score_mult(drift_score)
+        stress_mult = self._compute_systemic_stress_mult(systemic_stress)
+
+        composite = break_mult * uncertainty_mult * drift_mult * stress_mult
+        composite = float(np.clip(composite, 0.70, 3.0))
+
+        details = {
+            "break_prob_mult": break_mult,
+            "uncertainty_mult": uncertainty_mult,
+            "drift_mult": drift_mult,
+            "stress_mult": stress_mult,
+            "composite_structural_mult": composite,
+        }
+        return composite, details
+
+    # ── Core Simulation ───────────────────────────────────────────────
+
     def simulate(
         self,
         side: str,
@@ -67,34 +251,130 @@ class ExecutionModel:
         overnight_gap: float | None = None,
         intraday_range: float | None = None,
         event_spread_multiplier: float = 1.0,
+        # Spec 06: structural state inputs (all optional, backward compatible)
+        break_probability: float | None = None,
+        structure_uncertainty: float | None = None,
+        drift_score: float | None = None,
+        systemic_stress: float | None = None,
+        # Spec 06: urgency and volume trend
+        urgency_type: str = "",
+        volume_trend: float | None = None,
+        # Spec 06: per-segment impact coefficient override
+        impact_coeff_override: float | None = None,
     ) -> ExecutionFill:
         """
         Simulate execution against daily volume capacity.
+
+        Parameters
+        ----------
+        side : str
+            "buy" or "sell".
+        reference_price : float
+            Mid-price at time of execution.
+        daily_volume : float
+            Daily share volume.
+        desired_notional_usd : float
+            Target execution notional in USD.
+        force_full : bool
+            If True, bypass participation limits (for forced exits).
+        realized_vol, overnight_gap, intraday_range : float, optional
+            Microstructure context for dynamic cost adjustments.
+        event_spread_multiplier : float
+            Multiplier for event-window spread widening (>= 1.0).
+        break_probability : float, optional
+            Probability of flash crash / structural break (0-1).
+        structure_uncertainty : float, optional
+            Regime state entropy / uncertainty (0-1).
+        drift_score : float, optional
+            Trend conviction strength; high = lower costs (0-1).
+        systemic_stress : float, optional
+            Normalized systemic stress, e.g. VIX percentile (0-1).
+        urgency_type : str
+            "entry" or "exit"; affects cost acceptance and no-trade gate.
+        volume_trend : float, optional
+            Current volume relative to ADV EMA (e.g. 1.2 = 20% above average).
+        impact_coeff_override : float, optional
+            Calibrated impact coefficient for this security's market cap segment.
         """
         px = float(max(1e-9, reference_price))
         vol = float(max(0.0, daily_volume))
         desired = float(max(0.0, desired_notional_usd))
+
         if desired <= 0:
-            return ExecutionFill(px, 0.0, 0.0, 0.0, self.spread_bps)
+            return ExecutionFill(
+                fill_price=px, fill_ratio=0.0, participation_rate=0.0,
+                impact_bps=0.0, spread_bps=self.spread_bps,
+                urgency_type=urgency_type,
+            )
+
+        # No-trade gate: block low-urgency orders during extreme stress
+        if (
+            urgency_type == "entry"
+            and systemic_stress is not None
+            and np.isfinite(systemic_stress)
+            and float(systemic_stress) > self.no_trade_stress_threshold
+        ):
+            logger.warning(
+                "No-trade gate: blocking entry due to extreme stress "
+                "(systemic_stress=%.3f > threshold=%.3f)",
+                systemic_stress,
+                self.no_trade_stress_threshold,
+            )
+            return ExecutionFill(
+                fill_price=px, fill_ratio=0.0, participation_rate=0.0,
+                impact_bps=0.0, spread_bps=self.spread_bps,
+                urgency_type=urgency_type, no_trade_blocked=True,
+            )
+
+        # Participation limit with optional volume trend adjustment
+        effective_max_participation = self.max_participation
+        if (
+            self.volume_trend_enabled
+            and volume_trend is not None
+            and np.isfinite(volume_trend)
+        ):
+            trend = float(np.clip(volume_trend, 0.5, 2.0))
+            effective_max_participation = float(np.clip(
+                self.max_participation * trend,
+                self.max_participation * 0.5,
+                self.max_participation * 2.0,
+            ))
 
         daily_dollar_volume = max(px * vol, 1e-9)
         if force_full:
             fill_notional = desired
         else:
-            max_notional = daily_dollar_volume * self.max_participation
+            max_notional = daily_dollar_volume * effective_max_participation
             fill_notional = min(desired, max_notional)
 
         fill_ratio = float(fill_notional / desired)
         if not force_full and fill_ratio < self.min_fill_ratio:
-            return ExecutionFill(px, 0.0, 0.0, 0.0, self.spread_bps)
+            return ExecutionFill(
+                fill_price=px, fill_ratio=0.0, participation_rate=0.0,
+                impact_bps=0.0, spread_bps=self.spread_bps,
+                urgency_type=urgency_type,
+            )
 
         participation = float(fill_notional / daily_dollar_volume)
+
+        # Use per-segment impact coefficient if provided
+        impact_coeff = (
+            float(max(0.0, impact_coeff_override))
+            if impact_coeff_override is not None
+            and np.isfinite(impact_coeff_override)
+            else self.impact_coeff
+        )
+
         spread_bps = self.spread_bps
-        impact_coeff = self.impact_coeff
+        structural_mult = 1.0
+        cost_details: Dict = {}
+
         if self.dynamic_costs:
             vol_component = 0.0
             if realized_vol is not None and np.isfinite(realized_vol):
-                vol_component = max(0.0, (float(realized_vol) - self.vol_ref) / self.vol_ref)
+                vol_component = max(
+                    0.0, (float(realized_vol) - self.vol_ref) / self.vol_ref
+                )
 
             gap_component = 0.0
             if overnight_gap is not None and np.isfinite(overnight_gap):
@@ -109,13 +389,41 @@ class ExecutionModel:
             stress += self.gap_spread_beta * gap_component
             stress += self.range_spread_beta * range_component
 
-            liquidity_scalar = np.clip(
+            liquidity_scalar = float(np.clip(
                 np.sqrt(self.dollar_volume_ref / daily_dollar_volume),
                 0.70,
                 3.00,
+            ))
+
+            # Spec 06: compute structural state multiplier
+            structural_mult, struct_details = (
+                self._compute_structural_multiplier(
+                    break_probability=break_probability,
+                    structure_uncertainty=structure_uncertainty,
+                    drift_score=drift_score,
+                    systemic_stress=systemic_stress,
+                )
             )
-            spread_bps = spread_bps * stress * liquidity_scalar
-            impact_coeff = impact_coeff * (1.0 + self.vol_impact_beta * max(0.0, stress - 1.0)) * liquidity_scalar
+
+            # Combine: base stress * liquidity * structural
+            spread_bps = (
+                spread_bps * stress * liquidity_scalar * structural_mult
+            )
+            impact_coeff = (
+                impact_coeff
+                * (1.0 + self.vol_impact_beta * max(0.0, stress - 1.0))
+                * liquidity_scalar
+                * structural_mult
+            )
+
+            cost_details = {
+                "vol_component": vol_component,
+                "gap_component": gap_component,
+                "range_component": range_component,
+                "base_stress": stress,
+                "liquidity_scalar": liquidity_scalar,
+                **struct_details,
+            }
 
         # Event-window spread blowout: near-event periods widen spreads.
         evt_mult = float(max(1.0, event_spread_multiplier))
@@ -125,6 +433,10 @@ class ExecutionModel:
         half_spread_bps = 0.5 * spread_bps
         total_bps = half_spread_bps + impact_bps
 
+        cost_details["spread_bps_final"] = float(spread_bps)
+        cost_details["impact_bps"] = float(impact_bps)
+        cost_details["total_bps"] = float(total_bps)
+
         if side.lower() == "buy":
             fill_price = px * (1.0 + total_bps / 10000.0)
         elif side.lower() == "sell":
@@ -132,13 +444,54 @@ class ExecutionModel:
         else:
             raise ValueError("side must be 'buy' or 'sell'")
 
+        # Spec 06: urgency-based cost acceptance check
+        if urgency_type in ("entry", "exit") and self.dynamic_costs:
+            base_cost = self._base_transaction_cost_bps
+            if urgency_type == "exit":
+                cost_limit = (
+                    base_cost * self.exit_urgency_cost_limit_mult
+                )
+            else:
+                cost_limit = (
+                    base_cost * self.entry_urgency_cost_limit_mult
+                )
+
+            if total_bps > cost_limit and not force_full:
+                reduction_factor = cost_limit / max(total_bps, 1e-9)
+                min_keep = 1.0 - self.stress_pullback_min_size
+                reduction_factor = max(reduction_factor, min_keep)
+                fill_ratio = float(fill_ratio * reduction_factor)
+                fill_notional = desired * fill_ratio
+                if fill_ratio < self.min_fill_ratio:
+                    return ExecutionFill(
+                        fill_price=px, fill_ratio=0.0,
+                        participation_rate=0.0,
+                        impact_bps=0.0, spread_bps=float(spread_bps),
+                        urgency_type=urgency_type,
+                        cost_details=cost_details,
+                    )
+                cost_details["urgency_cost_limit"] = float(cost_limit)
+                cost_details["urgency_reduction_factor"] = float(
+                    reduction_factor
+                )
+                logger.debug(
+                    "Urgency cost check: total_bps=%.2f > limit=%.2f; "
+                    "reduced fill_ratio to %.3f",
+                    total_bps,
+                    cost_limit,
+                    fill_ratio,
+                )
+
         return ExecutionFill(
             fill_price=float(fill_price),
             fill_ratio=float(np.clip(fill_ratio, 0.0, 1.0)),
             participation_rate=participation,
-            impact_bps=impact_bps,
+            impact_bps=float(impact_bps),
             spread_bps=float(spread_bps),
             event_spread_multiplier_applied=evt_mult,
+            structural_mult=structural_mult,
+            urgency_type=urgency_type,
+            cost_details=cost_details,
         )
 
 
@@ -248,7 +601,9 @@ def calibrate_cost_model(
             est_spread = min(max(slippage_bps * 0.3, 0.0), slippage_bps)
             est_impact = max(slippage_bps - est_spread, 0.0)
             # impact_coeff = impact_bps / sqrt(participation)
-            impact_coeff_obs = est_impact / sqrt_part if sqrt_part > 1e-9 else 0.0
+            impact_coeff_obs = (
+                est_impact / sqrt_part if sqrt_part > 1e-9 else 0.0
+            )
             impacts_bps.append(impact_coeff_obs)
         else:
             est_spread = max(slippage_bps, 0.0)
@@ -267,7 +622,15 @@ def calibrate_cost_model(
 
     calibrated: Dict[str, float] = {
         "spread_bps": float(np.median(spreads_bps)),
-        "impact_coeff": float(np.median(impacts_bps)) if impacts_bps else _DEFAULT_COST_PARAMS["impact_coeff"],
-        "fill_ratio": float(np.mean(fill_ratios)) if fill_ratios else _DEFAULT_COST_PARAMS["fill_ratio"],
+        "impact_coeff": (
+            float(np.median(impacts_bps))
+            if impacts_bps
+            else _DEFAULT_COST_PARAMS["impact_coeff"]
+        ),
+        "fill_ratio": (
+            float(np.mean(fill_ratios))
+            if fill_ratios
+            else _DEFAULT_COST_PARAMS["fill_ratio"]
+        ),
     }
     return calibrated

@@ -21,7 +21,33 @@ from ..config import (
     PAPER_KELLY_MIN_SIZE_MULTIPLIER,
     PAPER_KELLY_MAX_SIZE_MULTIPLIER,
     REGIME_RISK_MULTIPLIER,
+    EXEC_SPREAD_BPS,
+    EXEC_MAX_PARTICIPATION,
+    EXEC_IMPACT_COEFF_BPS,
+    EXEC_MIN_FILL_RATIO,
+    EXEC_DYNAMIC_COSTS,
+    EXEC_DOLLAR_VOLUME_REF_USD,
+    EXEC_VOL_REF,
+    EXEC_VOL_SPREAD_BETA,
+    EXEC_GAP_SPREAD_BETA,
+    EXEC_RANGE_SPREAD_BETA,
+    EXEC_VOL_IMPACT_BETA,
+    EXEC_STRUCTURAL_STRESS_ENABLED,
+    EXEC_BREAK_PROB_COST_MULT,
+    EXEC_STRUCTURE_UNCERTAINTY_COST_MULT,
+    EXEC_DRIFT_SCORE_COST_REDUCTION,
+    EXEC_SYSTEMIC_STRESS_COST_MULT,
+    EXEC_EXIT_URGENCY_COST_LIMIT_MULT,
+    EXEC_ENTRY_URGENCY_COST_LIMIT_MULT,
+    EXEC_STRESS_PULLBACK_MIN_SIZE,
+    EXEC_NO_TRADE_STRESS_THRESHOLD,
+    EXEC_VOLUME_TREND_ENABLED,
+    ADV_LOOKBACK_DAYS,
+    ADV_EMA_SPAN,
+    EXEC_LOW_VOLUME_COST_MULT,
 )
+from ..backtest.execution import ExecutionModel
+from ..backtest.adv_tracker import ADVTracker
 from ..risk.position_sizer import PositionSizer
 from ..risk.stop_loss import StopLossManager
 from ..risk.portfolio_risk import PortfolioRiskManager
@@ -72,6 +98,43 @@ class PaperTrader:
 
         # Portfolio risk manager — sector, correlation, single-name, volatility limits
         self._risk_mgr = PortfolioRiskManager()
+
+        # Spec 06: Execution model with structural state-aware costs
+        self._execution_model = ExecutionModel(
+            spread_bps=EXEC_SPREAD_BPS,
+            max_participation_rate=EXEC_MAX_PARTICIPATION,
+            impact_coefficient_bps=EXEC_IMPACT_COEFF_BPS,
+            min_fill_ratio=EXEC_MIN_FILL_RATIO,
+            dynamic_costs=EXEC_DYNAMIC_COSTS,
+            dollar_volume_ref_usd=EXEC_DOLLAR_VOLUME_REF_USD,
+            vol_ref=EXEC_VOL_REF,
+            vol_spread_beta=EXEC_VOL_SPREAD_BETA,
+            gap_spread_beta=EXEC_GAP_SPREAD_BETA,
+            range_spread_beta=EXEC_RANGE_SPREAD_BETA,
+            vol_impact_beta=EXEC_VOL_IMPACT_BETA,
+            structural_stress_enabled=EXEC_STRUCTURAL_STRESS_ENABLED,
+            break_prob_cost_mult=EXEC_BREAK_PROB_COST_MULT,
+            structure_uncertainty_cost_mult=EXEC_STRUCTURE_UNCERTAINTY_COST_MULT,
+            drift_score_cost_reduction=EXEC_DRIFT_SCORE_COST_REDUCTION,
+            systemic_stress_cost_mult=EXEC_SYSTEMIC_STRESS_COST_MULT,
+            exit_urgency_cost_limit_mult=EXEC_EXIT_URGENCY_COST_LIMIT_MULT,
+            entry_urgency_cost_limit_mult=EXEC_ENTRY_URGENCY_COST_LIMIT_MULT,
+            stress_pullback_min_size=EXEC_STRESS_PULLBACK_MIN_SIZE,
+            no_trade_stress_threshold=EXEC_NO_TRADE_STRESS_THRESHOLD,
+            volume_trend_enabled=EXEC_VOLUME_TREND_ENABLED,
+        )
+
+        # Set base transaction cost for urgency limit comparison
+        self._execution_model.set_base_transaction_cost_bps(
+            float(transaction_cost_bps)
+        )
+
+        # Spec 06: ADV tracker for volume trend analysis
+        self._adv_tracker = ADVTracker(
+            lookback_days=ADV_LOOKBACK_DAYS,
+            ema_span=ADV_EMA_SPAN,
+            low_volume_cost_mult=EXEC_LOW_VOLUME_COST_MULT,
+        )
 
         # A/B test registry — lazily loaded to avoid circular imports
         self._ab_registry = None
@@ -277,6 +340,65 @@ class PaperTrader:
             "atr": atr if np.isfinite(atr) and atr > 0 else price * 0.02,
             "price": price,
         }
+
+    @staticmethod
+    def _extract_structural_state(
+        pred_row: Optional[Dict],
+    ) -> Dict[str, Optional[float]]:
+        """Extract structural state inputs from a prediction row.
+
+        Returns a dict with keys: break_probability, structure_uncertainty,
+        drift_score, systemic_stress.  Values are None if not available.
+        """
+        if pred_row is None:
+            return {
+                "break_probability": None,
+                "structure_uncertainty": None,
+                "drift_score": None,
+                "systemic_stress": None,
+            }
+
+        def _safe_float(val) -> Optional[float]:
+            if val is None:
+                return None
+            try:
+                v = float(val)
+                return v if np.isfinite(v) else None
+            except (TypeError, ValueError):
+                return None
+
+        return {
+            "break_probability": _safe_float(
+                pred_row.get("break_probability")
+            ),
+            "structure_uncertainty": _safe_float(
+                pred_row.get("regime_entropy",
+                             pred_row.get("structure_uncertainty"))
+            ),
+            "drift_score": _safe_float(pred_row.get("drift_score")),
+            "systemic_stress": _safe_float(
+                pred_row.get("systemic_stress",
+                             pred_row.get("vix_percentile"))
+            ),
+        }
+
+    def _get_volume(
+        self,
+        ticker: str,
+        as_of: pd.Timestamp,
+        price_data: Dict[str, pd.DataFrame],
+    ) -> float:
+        """Get daily volume for a ticker and update ADV tracker."""
+        df = price_data.get(ticker)
+        if df is None or len(df) == 0:
+            return 0.0
+        hist = df[df.index <= as_of]
+        if len(hist) == 0:
+            return 0.0
+        vol = float(hist["Volume"].iloc[-1]) if "Volume" in hist.columns else 0.0
+        if vol > 0:
+            self._adv_tracker.update(ticker, vol)
+        return vol
 
     @staticmethod
     def _compute_atr(
@@ -610,9 +732,35 @@ class PaperTrader:
                 remaining_positions.append(pos)
                 continue
 
-            # ── Execute exit ──
-            gross = float(pos["shares"]) * px
-            tx = gross * self.tx_cost
+            # ── Execute exit with Spec 06 execution model ──
+            daily_vol = self._get_volume(permno, as_of, price_data)
+            market = self._market_risk_stats(permno, as_of, price_data)
+            struct_state = self._extract_structural_state(pred_row)
+            vol_trend = self._adv_tracker.get_volume_trend(permno) if daily_vol > 0 else None
+
+            exit_fill = self._execution_model.simulate(
+                side="sell",
+                reference_price=px,
+                daily_volume=daily_vol,
+                desired_notional_usd=float(pos["shares"]) * px,
+                force_full=True,
+                realized_vol=market["realized_vol"] if market else None,
+                urgency_type="exit",
+                break_probability=struct_state["break_probability"],
+                structure_uncertainty=struct_state["structure_uncertainty"],
+                drift_score=struct_state["drift_score"],
+                systemic_stress=struct_state["systemic_stress"],
+                volume_trend=vol_trend,
+            )
+
+            # Use execution model cost or fall back to flat cost
+            if exit_fill.fill_ratio > 0 and EXEC_DYNAMIC_COSTS:
+                effective_exit_price = exit_fill.fill_price
+                gross = float(pos["shares"]) * effective_exit_price
+                tx = 0.0  # costs embedded in fill price
+            else:
+                gross = float(pos["shares"]) * px
+                tx = gross * self.tx_cost
             proceeds = gross - tx
             entry_notional = float(pos["shares"]) * entry_price
             pnl = proceeds - entry_notional
@@ -788,19 +936,56 @@ class PaperTrader:
                         continue  # Risk check blocked entry
 
                     notional = current_equity * position_size_pct
-                    tx = notional * self.tx_cost
-                    total_cost = notional + tx
+
+                    # Spec 06: simulate entry execution with structural state
+                    entry_daily_vol = self._get_volume(permno, as_of, price_data)
+                    entry_market = self._market_risk_stats(permno, as_of, price_data)
+                    entry_struct = self._extract_structural_state(row.to_dict())
+                    entry_vol_trend = (
+                        self._adv_tracker.get_volume_trend(permno)
+                        if entry_daily_vol > 0 else None
+                    )
+
+                    entry_fill = self._execution_model.simulate(
+                        side="buy",
+                        reference_price=px,
+                        daily_volume=entry_daily_vol,
+                        desired_notional_usd=notional,
+                        force_full=False,
+                        realized_vol=entry_market["realized_vol"] if entry_market else None,
+                        urgency_type="entry",
+                        break_probability=entry_struct["break_probability"],
+                        structure_uncertainty=entry_struct["structure_uncertainty"],
+                        drift_score=entry_struct["drift_score"],
+                        systemic_stress=entry_struct["systemic_stress"],
+                        volume_trend=entry_vol_trend,
+                    )
+
+                    # No-trade gate or fill rejection
+                    if entry_fill.no_trade_blocked or entry_fill.fill_ratio <= 0:
+                        continue
+
+                    if EXEC_DYNAMIC_COSTS:
+                        effective_entry_price = entry_fill.fill_price
+                        filled_notional = notional * entry_fill.fill_ratio
+                        tx = 0.0  # costs embedded in fill price
+                    else:
+                        effective_entry_price = px
+                        filled_notional = notional
+                        tx = filled_notional * self.tx_cost
+
+                    total_cost = filled_notional + tx
                     if total_cost <= 0 or total_cost > float(state.get("cash", 0.0)):
                         continue
 
-                    shares = notional / px
+                    shares = filled_notional / effective_entry_price
                     state["cash"] = float(state.get("cash", 0.0)) - total_cost
                     position = {
                         "strategy_id": sid,
                         "permno": permno,
                         "ticker": str(row.get("ticker", "")) if "ticker" in row.index else "",
                         "entry_date": str(as_of.date()),
-                        "entry_price": float(px),
+                        "entry_price": float(effective_entry_price),
                         "shares": float(shares),
                         "holding_days": 0,
                         "max_holding_days": eff_max_holding_days,

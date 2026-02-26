@@ -318,6 +318,49 @@ EXEC_VOL_SPREAD_BETA = 1.0                       # STATUS: ACTIVE — backtest/e
 EXEC_GAP_SPREAD_BETA = 4.0                       # STATUS: ACTIVE — backtest/engine.py; gap-spread sensitivity
 EXEC_RANGE_SPREAD_BETA = 2.0                     # STATUS: ACTIVE — backtest/engine.py; range-spread sensitivity
 EXEC_VOL_IMPACT_BETA = 1.0                       # STATUS: ACTIVE — backtest/engine.py; vol-impact sensitivity
+
+# ── Structural State-Aware Costs (Spec 06) ────────────────────────────
+EXEC_STRUCTURAL_STRESS_ENABLED = True             # STATUS: ACTIVE — backtest/execution.py; enable structural state cost multipliers
+EXEC_BREAK_PROB_COST_MULT = {                     # STATUS: ACTIVE — backtest/execution.py; break probability → cost multiplier tiers
+    "low": 1.0,                                   #   break_prob < 0.05
+    "medium": 1.3,                                #   0.05 <= break_prob < 0.15
+    "high": 2.0,                                  #   break_prob >= 0.15
+}
+EXEC_STRUCTURE_UNCERTAINTY_COST_MULT = 0.50       # STATUS: ACTIVE — backtest/execution.py; +50% per 1.0 increase in uncertainty
+EXEC_DRIFT_SCORE_COST_REDUCTION = 0.20            # STATUS: ACTIVE — backtest/execution.py; -20% per 1.0 increase in drift (strong trend = cheaper)
+EXEC_SYSTEMIC_STRESS_COST_MULT = 0.30             # STATUS: ACTIVE — backtest/execution.py; +30% per 1.0 increase in systemic stress
+
+# ── ADV Computation (Spec 06) ─────────────────────────────────────────
+ADV_LOOKBACK_DAYS = 20                            # STATUS: ACTIVE — backtest/adv_tracker.py; window for ADV calculation
+ADV_EMA_SPAN = 20                                 # STATUS: ACTIVE — backtest/adv_tracker.py; EMA smoothing parameter
+EXEC_VOLUME_TREND_ENABLED = True                  # STATUS: ACTIVE — backtest/execution.py; adjust costs based on volume trend
+EXEC_LOW_VOLUME_COST_MULT = 1.5                   # STATUS: ACTIVE — backtest/adv_tracker.py; +50% on below-average volume days
+
+# ── Entry/Exit Urgency (Spec 06) ─────────────────────────────────────
+EXEC_EXIT_URGENCY_COST_LIMIT_MULT = 1.5           # STATUS: ACTIVE — backtest/execution.py; exits tolerate 1.5x higher costs
+EXEC_ENTRY_URGENCY_COST_LIMIT_MULT = 1.0          # STATUS: ACTIVE — backtest/execution.py; entries use standard cost limits
+EXEC_STRESS_PULLBACK_MIN_SIZE = 0.10              # STATUS: ACTIVE — backtest/execution.py; reduce order size by 10% per urgency level
+
+# ── Cost Calibration (Spec 06) ────────────────────────────────────────
+EXEC_CALIBRATION_ENABLED = True                   # STATUS: ACTIVE — backtest/cost_calibrator.py; enable per-segment calibration
+EXEC_CALIBRATION_MIN_TRADES = 100                 # STATUS: ACTIVE — backtest/cost_calibrator.py; min trades before calibration
+EXEC_CALIBRATION_MIN_SEGMENT_TRADES = 20          # STATUS: ACTIVE — backtest/cost_calibrator.py; min trades per segment
+EXEC_CALIBRATION_SMOOTHING = 0.30                 # STATUS: ACTIVE — backtest/cost_calibrator.py; new-coefficient weight in EMA update
+EXEC_COST_IMPACT_COEFF_BY_MARKETCAP = {           # STATUS: ACTIVE — backtest/cost_calibrator.py; default coefficients by segment
+    "micro": 40.0,                                #   market_cap < 300M
+    "small": 30.0,                                #   300M - 2B
+    "mid": 20.0,                                  #   2B - 10B
+    "large": 15.0,                                #   > 10B
+}
+EXEC_MARKETCAP_THRESHOLDS = {                     # STATUS: ACTIVE — backtest/cost_calibrator.py; segment boundaries in USD
+    "micro": 300e6,
+    "small": 2e9,
+    "mid": 10e9,
+}
+
+# ── No-Trade Gate (Spec 06) ──────────────────────────────────────────
+EXEC_NO_TRADE_STRESS_THRESHOLD = 0.95             # STATUS: ACTIVE — backtest/execution.py; VIX percentile above which low-urgency orders blocked
+
 MAX_PORTFOLIO_VOL = 0.30                          # STATUS: ACTIVE — backtest/engine.py, risk/portfolio_optimizer.py; max annualized vol
 REGIME_RISK_MULTIPLIER = {                         # STATUS: ACTIVE — backtest/engine.py; regime-conditional position sizing multipliers
     0: 1.00,  # trending_bull
@@ -525,6 +568,44 @@ GOVERNANCE_SCORE_WEIGHTS = {                       # STATUS: ACTIVE — models/g
 
 # ── Validation ──────────────────────────────────────────────────────
 IC_ROLLING_WINDOW = 60                            # STATUS: ACTIVE — backtest/validation.py; rolling window for Information Coefficient
+
+# ── Evaluation Layer (Spec 08) ──────────────────────────────────────
+# Walk-forward with embargo
+EVAL_WF_TRAIN_WINDOW = 250                        # STATUS: ACTIVE — evaluation/engine.py; training window in trading days
+EVAL_WF_EMBARGO_DAYS = 5                          # STATUS: ACTIVE — evaluation/engine.py; embargo gap to prevent data leakage
+EVAL_WF_TEST_WINDOW = 60                          # STATUS: ACTIVE — evaluation/engine.py; test window in trading days
+EVAL_WF_SLIDE_FREQ = "weekly"                     # STATUS: ACTIVE — evaluation/engine.py; "weekly" or "daily"
+
+# Rolling IC and decay detection
+EVAL_IC_ROLLING_WINDOW = 60                       # STATUS: ACTIVE — evaluation/engine.py; rolling IC window
+EVAL_IC_DECAY_THRESHOLD = 0.02                    # STATUS: ACTIVE — evaluation/engine.py; warn if IC falls below this
+EVAL_IC_DECAY_LOOKBACK = 20                       # STATUS: ACTIVE — evaluation/engine.py; days to check for sustained low IC
+
+# Decile spread
+EVAL_DECILE_SPREAD_MIN = 0.005                    # STATUS: ACTIVE — evaluation/metrics.py; minimum expected spread for a good predictor
+
+# Calibration analysis
+EVAL_CALIBRATION_BINS = 10                        # STATUS: ACTIVE — evaluation/calibration_analysis.py; number of bins for calibration curve
+EVAL_OVERCONFIDENCE_THRESHOLD = 0.2               # STATUS: ACTIVE — evaluation/calibration_analysis.py; max gap before flagging
+
+# Fragility metrics
+EVAL_TOP_N_TRADES = [5, 10, 20]                   # STATUS: ACTIVE — evaluation/fragility.py; top N for PnL concentration
+EVAL_RECOVERY_WINDOW = 60                         # STATUS: ACTIVE — evaluation/fragility.py; rolling window for recovery time
+EVAL_CRITICAL_SLOWING_WINDOW = 60                 # STATUS: ACTIVE — evaluation/fragility.py; window for trend detection
+EVAL_CRITICAL_SLOWING_SLOPE_THRESHOLD = 0.05      # STATUS: ACTIVE — evaluation/fragility.py; slope above this = danger
+
+# ML diagnostics
+EVAL_FEATURE_DRIFT_THRESHOLD = 0.7                # STATUS: ACTIVE — evaluation/ml_diagnostics.py; correlation below this = drift
+EVAL_ENSEMBLE_DISAGREEMENT_THRESHOLD = 0.5        # STATUS: ACTIVE — evaluation/ml_diagnostics.py; correlation below this = disagreement
+
+# Slice minimum sample size
+EVAL_MIN_SLICE_SAMPLES = 20                       # STATUS: ACTIVE — evaluation/slicing.py; flag slices with fewer observations
+
+# Red flag thresholds
+EVAL_REGIME_SHARPE_DIVERGENCE = 0.5               # STATUS: ACTIVE — evaluation/engine.py; regime Sharpes differ > this = red flag
+EVAL_OVERFIT_GAP_THRESHOLD = 0.10                 # STATUS: ACTIVE — evaluation/engine.py; IS-OOS gap > this = overfitting
+EVAL_PNL_CONCENTRATION_THRESHOLD = 0.70           # STATUS: ACTIVE — evaluation/engine.py; top-20 PnL > this = fragile
+EVAL_CALIBRATION_ERROR_THRESHOLD = 0.15           # STATUS: ACTIVE — evaluation/engine.py; calibration error > this = red flag
 
 # ── Alert System ──────────────────────────────────────────────────────
 ALERT_WEBHOOK_URL = ""                            # STATUS: ACTIVE — utils/logging.py; empty = disabled; set to Slack/Discord webhook URL

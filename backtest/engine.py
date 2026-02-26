@@ -36,6 +36,20 @@ from ..config import (
     ALMGREN_CHRISS_RISK_AVERSION,
     MAX_ANNUALIZED_TURNOVER,
     ALMGREN_CHRISS_FALLBACK_VOL, REGIME_2_TRADE_ENABLED, REGIME_2_SUPPRESSION_MIN_CONFIDENCE,
+    # Spec 06: structural state-aware costs
+    EXEC_STRUCTURAL_STRESS_ENABLED,
+    EXEC_BREAK_PROB_COST_MULT,
+    EXEC_STRUCTURE_UNCERTAINTY_COST_MULT,
+    EXEC_DRIFT_SCORE_COST_REDUCTION,
+    EXEC_SYSTEMIC_STRESS_COST_MULT,
+    EXEC_EXIT_URGENCY_COST_LIMIT_MULT,
+    EXEC_ENTRY_URGENCY_COST_LIMIT_MULT,
+    EXEC_STRESS_PULLBACK_MIN_SIZE,
+    EXEC_NO_TRADE_STRESS_THRESHOLD,
+    EXEC_VOLUME_TREND_ENABLED,
+    ADV_LOOKBACK_DAYS,
+    ADV_EMA_SPAN,
+    EXEC_LOW_VOLUME_COST_MULT,
 )
 
 logger = logging.getLogger(__name__)
@@ -182,6 +196,30 @@ class Backtester:
             gap_spread_beta=EXEC_GAP_SPREAD_BETA,
             range_spread_beta=EXEC_RANGE_SPREAD_BETA,
             vol_impact_beta=EXEC_VOL_IMPACT_BETA,
+            # Spec 06: structural state-aware costs
+            structural_stress_enabled=EXEC_STRUCTURAL_STRESS_ENABLED,
+            break_prob_cost_mult=EXEC_BREAK_PROB_COST_MULT,
+            structure_uncertainty_cost_mult=EXEC_STRUCTURE_UNCERTAINTY_COST_MULT,
+            drift_score_cost_reduction=EXEC_DRIFT_SCORE_COST_REDUCTION,
+            systemic_stress_cost_mult=EXEC_SYSTEMIC_STRESS_COST_MULT,
+            exit_urgency_cost_limit_mult=EXEC_EXIT_URGENCY_COST_LIMIT_MULT,
+            entry_urgency_cost_limit_mult=EXEC_ENTRY_URGENCY_COST_LIMIT_MULT,
+            stress_pullback_min_size=EXEC_STRESS_PULLBACK_MIN_SIZE,
+            no_trade_stress_threshold=EXEC_NO_TRADE_STRESS_THRESHOLD,
+            volume_trend_enabled=EXEC_VOLUME_TREND_ENABLED,
+        )
+
+        # Set base transaction cost for urgency limit comparison
+        self.execution_model.set_base_transaction_cost_bps(
+            float(transaction_cost_bps)
+        )
+
+        # Spec 06: ADV tracker for volume trend analysis
+        from .adv_tracker import ADVTracker
+        self._adv_tracker = ADVTracker(
+            lookback_days=ADV_LOOKBACK_DAYS,
+            ema_span=ADV_EMA_SPAN,
+            low_volume_cost_mult=EXEC_LOW_VOLUME_COST_MULT,
         )
 
         # When dynamic execution model is active, costs are already embedded in
@@ -274,6 +312,16 @@ class Backtester:
         vol = float(ohlcv["Volume"].iloc[entry_idx]) if "Volume" in ohlcv.columns else 0.0
         context = self._execution_context(ohlcv=ohlcv, bar_idx=entry_idx)
         desired_notional = self.assumed_capital_usd * max(0.0, float(position_size))
+
+        # Spec 06: update ADV tracker and get volume trend
+        ticker_id = ohlcv.attrs.get("ticker", ohlcv.attrs.get("permno", ""))
+        if vol > 0 and ticker_id:
+            self._adv_tracker.update(ticker_id, vol)
+        volume_trend = (
+            self._adv_tracker.get_volume_trend(ticker_id)
+            if ticker_id and vol > 0 else None
+        )
+
         fill = self.execution_model.simulate(
             side="buy",
             reference_price=ref_price,
@@ -283,6 +331,8 @@ class Backtester:
             realized_vol=context["realized_vol"],
             overnight_gap=context["overnight_gap"],
             intraday_range=context["intraday_range"],
+            urgency_type="entry",
+            volume_trend=volume_trend,
         )
         if fill.fill_ratio <= 0:
             return None
@@ -336,6 +386,16 @@ class Backtester:
         vol = float(ohlcv["Volume"].iloc[exit_idx]) if "Volume" in ohlcv.columns else 0.0
         context = self._execution_context(ohlcv=ohlcv, bar_idx=exit_idx)
         desired_notional = max(0.0, float(shares) * ref_price)
+
+        # Spec 06: update ADV tracker and get volume trend
+        ticker_id = ohlcv.attrs.get("ticker", ohlcv.attrs.get("permno", ""))
+        if vol > 0 and ticker_id:
+            self._adv_tracker.update(ticker_id, vol)
+        volume_trend = (
+            self._adv_tracker.get_volume_trend(ticker_id)
+            if ticker_id and vol > 0 else None
+        )
+
         fill = self.execution_model.simulate(
             side="sell",
             reference_price=ref_price,
@@ -345,6 +405,8 @@ class Backtester:
             realized_vol=context["realized_vol"],
             overnight_gap=context["overnight_gap"],
             intraday_range=context["intraday_range"],
+            urgency_type="exit",
+            volume_trend=volume_trend,
         )
         if fill.fill_ratio <= 0:
             # Emergency fallback: force full exit with legacy slippage.
