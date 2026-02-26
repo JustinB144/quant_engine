@@ -40,6 +40,22 @@ WRDS_ENABLED = True                               # STATUS: ACTIVE — data/load
 # blocks silently fall through.  Disabled until the full pipeline is verified.
 OPTIONMETRICS_ENABLED = False                     # STATUS: PLACEHOLDER — data/loader.py gates on this but pipeline incomplete
 
+# ── Execution Contract (Truth Layer) ─────────────────────────────────
+RET_TYPE = "log"                                  # STATUS: ACTIVE — "log" (log returns) or "simple" (pct returns)
+LABEL_H = 5                                       # STATUS: ACTIVE — label horizon in trading days
+PX_TYPE = "close"                                 # STATUS: ACTIVE — "close" or "open" for price baseline
+ENTRY_PRICE_TYPE = "next_bar_open"                # STATUS: ACTIVE — "next_bar_open" (no look-ahead)
+
+# ── Truth Layer Feature Flags ────────────────────────────────────────
+TRUTH_LAYER_STRICT_PRECONDITIONS = True           # STATUS: ACTIVE — raise on invalid execution contract
+TRUTH_LAYER_FAIL_ON_CORRUPT = True                # STATUS: ACTIVE — block corrupt OHLCV from pipeline
+TRUTH_LAYER_ENFORCE_CAUSALITY = True              # STATUS: ACTIVE — enforce feature causality at runtime
+TRUTH_LAYER_COMPUTE_NULL_BASELINES = False        # STATUS: ACTIVE — compute null baselines per backtest (adds ~4x time)
+TRUTH_LAYER_COST_STRESS_ENABLED = False           # STATUS: ACTIVE — run cost stress sweep per backtest (adds ~4x time)
+
+# ── Cost Stress Testing ──────────────────────────────────────────────
+COST_STRESS_MULTIPLIERS = [0.5, 1.0, 2.0, 5.0]   # STATUS: ACTIVE — cost sweep factors
+
 KALSHI_ENABLED = False                            # STATUS: ACTIVE — kalshi/provider.py, run_kalshi_event_pipeline.py; disabled by design
 KALSHI_ENV = "demo"                               # STATUS: ACTIVE — selects demo vs prod API URL; "demo" (safety) or "prod"
 KALSHI_DEMO_API_BASE_URL = "https://demo-api.kalshi.co/trade-api/v2"   # STATUS: ACTIVE — used to compute KALSHI_API_BASE_URL
@@ -121,6 +137,22 @@ UNIVERSE_QUICK = [                                 # STATUS: ACTIVE — run_*.py
     "JPM", "UNH", "HD", "V", "DDOG", "CRWD", "CAVA",
 ]
 
+UNIVERSE_INTRADAY = [                              # STATUS: ACTIVE — 128-ticker intraday universe (all IBKR-downloaded timeframes)
+    "AAPL", "ABBV", "ABT", "ADBE", "ADI", "ADM", "ADSK", "AEP", "AMD", "AMZN",
+    "AVGO", "AXP", "BA", "BAC", "BBY", "BDX", "BLK", "BROS", "BSX", "CAT",
+    "CAVA", "CCL", "CHWY", "CL", "CLX", "CMCSA", "COST", "CPB", "CRM", "CRWD",
+    "CSCO", "CVS", "CVX", "DDOG", "DE", "DHR", "DIS", "DOV", "DRI", "DUK",
+    "DVN", "EBAY", "ECL", "EMR", "EOG", "ETN", "ETSY", "FCX", "FTNT", "GD",
+    "GE", "GILD", "GIS", "GOOGL", "GPC", "GS", "HAL", "HD", "HON", "HSY",
+    "HUM", "IBM", "INTC", "INTU", "ITW", "JNJ", "JPM", "KMB", "KR", "LEN",
+    "LLY", "LMT", "LUV", "MA", "MAR", "MCD", "MCO", "MDB", "META", "MMM",
+    "MRK", "MS", "MSFT", "MSI", "MU", "NEE", "NET", "NKE", "NOC", "NSC",
+    "NTAP", "NVDA", "ORCL", "PANW", "PCAR", "PFE", "PG", "PGR", "PH", "PLD",
+    "PNC", "POOL", "PSA", "QCOM", "SBUX", "SCHW", "SLB", "SNOW", "SO", "SPG",
+    "SPY", "SWK", "SYY", "TGT", "TMO", "TOST", "TSLA", "TXN", "UNH", "UNP",
+    "USB", "V", "VLO", "VMC", "WY", "XEL", "XOM", "ZS",
+]
+
 BENCHMARK = "SPY"                                 # STATUS: ACTIVE — backtest/engine.py, api/routers/benchmark.py
 
 # ── Data ───────────────────────────────────────────────────────────────
@@ -194,6 +226,18 @@ REGIME_JUMP_MAX_ITER = 50                         # STATUS: ACTIVE — regime/ju
 REGIME_JUMP_TOL = 1e-6                            # STATUS: ACTIVE — regime/jump_model_pypi.py; convergence tolerance
 REGIME_JUMP_USE_CONTINUOUS = True                  # STATUS: ACTIVE — regime/jump_model_pypi.py; continuous JM for soft probabilities
 REGIME_JUMP_MODE_LOSS_WEIGHT = 0.1                # STATUS: ACTIVE — regime/jump_model_pypi.py; mode loss penalty (continuous JM)
+
+# ── Bayesian Online Change-Point Detection ─────────────────────────────
+BOCPD_ENABLED = True                              # STATUS: ACTIVE — regime/detector.py, regime/bocpd.py; enable BOCPD alongside HMM
+BOCPD_HAZARD_FUNCTION = "constant"                # STATUS: ACTIVE — regime/bocpd.py; "constant" or "geometric"
+BOCPD_HAZARD_LAMBDA = 1.0 / 60                    # STATUS: ACTIVE — regime/bocpd.py; constant hazard rate (1 change per 60 bars)
+BOCPD_LIKELIHOOD_TYPE = "gaussian"                # STATUS: ACTIVE — regime/bocpd.py; observation model type (only "gaussian" for v1)
+BOCPD_RUNLENGTH_DEPTH = 200                       # STATUS: ACTIVE — regime/bocpd.py; max run-length to track (older hypotheses pruned)
+BOCPD_CHANGEPOINT_THRESHOLD = 0.50                # STATUS: ACTIVE — regime/detector.py; flag changepoint if P(cp) > threshold
+
+# ── Shock Vector Schema ────────────────────────────────────────────────
+SHOCK_VECTOR_SCHEMA_VERSION = "1.0"               # STATUS: ACTIVE — regime/shock_vector.py; schema version for backward compatibility
+SHOCK_VECTOR_INCLUDE_STRUCTURAL = True            # STATUS: ACTIVE — regime/shock_vector.py; include structural features in vector
 
 # ── Kalshi Purge/Embargo by Event Type (E3) ─────────────────────────────
 KALSHI_PURGE_WINDOW_BY_EVENT = {"CPI": 14, "FOMC": 21, "NFP": 14, "GDP": 14}  # STATUS: PLACEHOLDER — defined but never imported

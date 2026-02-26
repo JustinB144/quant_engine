@@ -212,6 +212,10 @@ class ModelTrainer:
         max_gap: float = MAX_IS_OOS_GAP,
     ):
         """Initialize ModelTrainer."""
+        # Truth Layer: validate execution contract preconditions
+        from ..validation.preconditions import enforce_preconditions
+        enforce_preconditions()
+
         self.model_params = model_params or MODEL_PARAMS.copy()
         self.max_features = max_features
         self.cv_folds = cv_folds

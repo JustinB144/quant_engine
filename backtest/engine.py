@@ -100,6 +100,27 @@ class BacktestResult:
     annualized_turnover: float = 0.0
     avg_daily_turnover: float = 0.0
     turnover_history: List[float] = field(repr=False, default_factory=list)
+    # Truth Layer: null model baselines and cost stress results
+    null_baselines: Optional[object] = field(repr=False, default=None)
+    cost_stress_result: Optional[object] = field(repr=False, default=None)
+
+    def summarize_vs_null(self) -> Dict[str, float]:
+        """Compare strategy Sharpe/return vs null baselines.
+
+        Returns an empty dict if null baselines have not been computed.
+        """
+        if self.null_baselines is None:
+            return {}
+
+        nb = self.null_baselines
+        return {
+            "sharpe_vs_random": self.sharpe_ratio - nb.random.sharpe_ratio,
+            "sharpe_vs_zero": self.sharpe_ratio - nb.zero.sharpe_ratio,
+            "sharpe_vs_momentum": self.sharpe_ratio - nb.momentum.sharpe_ratio,
+            "return_vs_random": self.total_return - nb.random.total_return,
+            "return_vs_zero": self.total_return - nb.zero.total_return,
+            "return_vs_momentum": self.total_return - nb.momentum.total_return,
+        }
 
 
 class Backtester:
@@ -136,6 +157,10 @@ class Backtester:
         min_fill_ratio: float = EXEC_MIN_FILL_RATIO,
     ):
         """Initialize Backtester."""
+        # Truth Layer: validate execution contract preconditions
+        from ..validation.preconditions import enforce_preconditions
+        enforce_preconditions()
+
         self.entry_threshold = entry_threshold
         self.confidence_threshold = confidence_threshold
         self.tx_cost = transaction_cost_bps / 10000

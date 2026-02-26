@@ -58,8 +58,34 @@ def assess_ohlcv_quality(
     max_missing_bar_fraction: float = MAX_MISSING_BAR_FRACTION,
     max_zero_volume_fraction: float = MAX_ZERO_VOLUME_FRACTION,
     max_abs_daily_return: float = MAX_ABS_DAILY_RETURN,
+    fail_on_error: bool = False,
 ) -> DataQualityReport:
-    """assess ohlcv quality."""
+    """Assess OHLCV data quality and optionally raise on failure.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        OHLCV DataFrame with DatetimeIndex.
+    max_missing_bar_fraction : float
+        Maximum allowed fraction of missing trading-day bars.
+    max_zero_volume_fraction : float
+        Maximum allowed fraction of zero-volume bars.
+    max_abs_daily_return : float
+        Maximum allowed absolute single-day return.
+    fail_on_error : bool
+        When True, raise ``ValueError`` if any quality check fails.
+        When False (default), return the report with ``passed=False``.
+
+    Returns
+    -------
+    DataQualityReport
+        Structured quality assessment result.
+
+    Raises
+    ------
+    ValueError
+        If ``fail_on_error=True`` and any quality check fails.
+    """
     warnings: List[str] = []
     if df is None or len(df) == 0:
         return DataQualityReport(passed=False, metrics={}, warnings=["empty_dataframe"])
@@ -99,7 +125,14 @@ def assess_ohlcv_quality(
         "duplicate_timestamps": float(dup_idx),
         "non_monotonic_steps": float(non_monotonic),
     }
-    return DataQualityReport(passed=len(warnings) == 0, metrics=metrics, warnings=warnings)
+    report = DataQualityReport(passed=len(warnings) == 0, metrics=metrics, warnings=warnings)
+
+    if fail_on_error and not report.passed:
+        raise ValueError(
+            f"OHLCV quality check failed: {'; '.join(report.warnings)}"
+        )
+
+    return report
 
 
 # ---------------------------------------------------------------------------

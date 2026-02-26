@@ -883,6 +883,8 @@ class FeaturePipeline:
         df: pd.DataFrame,
         compute_targets_flag: bool = True,
         benchmark_close: Optional[pd.Series] = None,
+        causality_filter: str = "ALL",
+        enforce_causality: bool = False,
     ) -> tuple:
         """
         Compute all features and targets from OHLCV data.
@@ -892,6 +894,14 @@ class FeaturePipeline:
             compute_targets_flag: Whether to compute targets.
             benchmark_close: SPY (or other benchmark) close prices for excess
                 return targets.  Ignored when compute_targets_flag is False.
+            causality_filter: Only compute features matching this causality type.
+                "CAUSAL": safe for live prediction.
+                "END_OF_DAY": requires full-day close; safe for daily-close only.
+                "RESEARCH_ONLY": cross-sectional or non-causal; offline only.
+                "ALL": compute all features (backward-compat, default).
+            enforce_causality: If True, raise ValueError if any computed
+                feature violates the causality_filter.  If False, skip
+                non-matching features silently.
 
         Returns:
             (features_df, targets_df) — both aligned to same index
@@ -980,6 +990,32 @@ class FeaturePipeline:
             if self.verbose:
                 dropped = pre_count - features.shape[1]
                 print(f"  Production mode: dropped {dropped} research-only features")
+
+        # Truth Layer: causality enforcement
+        if causality_filter != "ALL":
+            violated = []
+            for fname in features.columns:
+                feature_type = get_feature_type(fname)
+                if causality_filter == "CAUSAL" and feature_type != "CAUSAL":
+                    violated.append((fname, feature_type))
+                elif causality_filter == "END_OF_DAY" and feature_type not in ("CAUSAL", "END_OF_DAY"):
+                    violated.append((fname, feature_type))
+
+            if violated and enforce_causality:
+                raise ValueError(
+                    f"Causality violation: {len(violated)} features have "
+                    f"non-{causality_filter} type:\n"
+                    + "\n".join(f"  {fname}: {ftype}" for fname, ftype in violated[:20])
+                )
+            elif violated:
+                # Silently drop non-matching features
+                drop_names = {fname for fname, _ in violated}
+                features = features.drop(columns=list(drop_names), errors="ignore")
+                if self.verbose:
+                    print(
+                        f"  Causality filter ({causality_filter}): "
+                        f"dropped {len(violated)} non-matching features"
+                    )
 
         if self.verbose:
             print(f"  Total features: {features.shape[1]}")

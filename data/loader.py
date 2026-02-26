@@ -15,6 +15,13 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+try:
+    import pandas_market_calendars as mcal
+    _NYSE_CAL = mcal.get_calendar("NYSE")
+except ImportError:
+    mcal = None
+    _NYSE_CAL = None
+
 logger = logging.getLogger(__name__)
 
 # Module-level tracker recording all data source fallbacks for provenance auditing.
@@ -33,6 +40,7 @@ from ..config import (
     MIN_BARS,
     OPTIONMETRICS_ENABLED,
     REQUIRE_PERMNO,
+    TRUTH_LAYER_FAIL_ON_CORRUPT,
     WRDS_ENABLED,
 )
 from .local_cache import (
@@ -91,6 +99,75 @@ def _cache_source(meta: Optional[Dict[str, object]]) -> str:
     return str(raw).lower().strip() or "unknown"
 
 
+def _get_last_trading_day(ref_date: Optional[pd.Timestamp] = None) -> pd.Timestamp:
+    """Return the last completed trading day on or before *ref_date*.
+
+    Uses NYSE calendar when ``pandas_market_calendars`` is installed,
+    otherwise falls back to ``pd.bdate_range`` (ignores holidays).
+
+    Parameters
+    ----------
+    ref_date : pd.Timestamp or None
+        Reference date.  Defaults to now.
+
+    Returns
+    -------
+    pd.Timestamp
+        Last trading day on or before *ref_date*.
+    """
+    if ref_date is None:
+        ref_date = pd.Timestamp.now().normalize()
+    else:
+        ref_date = pd.Timestamp(ref_date).normalize()
+
+    if _NYSE_CAL is not None:
+        # Look back up to 10 days to find a trading day
+        start = ref_date - pd.Timedelta(days=10)
+        schedule = _NYSE_CAL.schedule(start_date=start, end_date=ref_date)
+        if len(schedule) > 0:
+            return pd.Timestamp(schedule.index[-1]).normalize()
+
+    # Fallback: use business day range
+    bdays = pd.bdate_range(end=ref_date, periods=1)
+    if len(bdays) > 0:
+        return bdays[-1].normalize()
+
+    return ref_date
+
+
+def _trading_days_between(
+    start: pd.Timestamp, end: pd.Timestamp,
+) -> int:
+    """Count trading days between *start* and *end* (inclusive of end).
+
+    Uses NYSE calendar when available, otherwise falls back to
+    ``pd.bdate_range``.
+
+    Parameters
+    ----------
+    start : pd.Timestamp
+        Start date.
+    end : pd.Timestamp
+        End date.
+
+    Returns
+    -------
+    int
+        Number of trading days between start and end.
+    """
+    start = pd.Timestamp(start).normalize()
+    end = pd.Timestamp(end).normalize()
+
+    if start >= end:
+        return 0
+
+    if _NYSE_CAL is not None:
+        schedule = _NYSE_CAL.schedule(start_date=start, end_date=end)
+        return len(schedule)
+
+    return len(pd.bdate_range(start=start, end=end))
+
+
 def _cache_is_usable(
     cached: Optional[pd.DataFrame],
     meta: Optional[Dict[str, object]],
@@ -98,7 +175,14 @@ def _cache_is_usable(
     require_recent: bool,
     require_trusted: bool,
 ) -> bool:
-    """Internal helper for cache is usable."""
+    """Check if cached OHLCV data is fresh enough to use.
+
+    Uses the NYSE trading calendar to count elapsed trading days for
+    staleness checks, avoiding false positives on weekends and holidays.
+
+    Falls back to ``pd.bdate_range`` when ``pandas_market_calendars``
+    is unavailable.
+    """
     if cached is None or len(cached) < MIN_BARS:
         return False
 
@@ -121,8 +205,10 @@ def _cache_is_usable(
         return False
 
     if require_recent:
-        age_days = (pd.Timestamp(date.today()) - pd.Timestamp(idx.max().date())).days
-        if age_days > int(CACHE_MAX_STALENESS_DAYS):
+        last_trading_day = _get_last_trading_day()
+        cache_end = pd.Timestamp(idx.max().date())
+        trading_days_elapsed = _trading_days_between(cache_end, last_trading_day)
+        if trading_days_elapsed > int(CACHE_MAX_STALENESS_DAYS):
             return False
 
     return True
@@ -457,6 +543,19 @@ def load_universe(
         )
     # Persist skip reasons for downstream consumers (e.g. orchestrator error messages)
     _skip_tracker.update(skipped)
+
+    # Truth Layer: data integrity preflight (blocks corrupt data from pipeline)
+    if TRUTH_LAYER_FAIL_ON_CORRUPT and data:
+        from ..validation.data_integrity import DataIntegrityValidator
+        validator = DataIntegrityValidator(fail_fast=True)
+        integrity_result = validator.validate_universe(data)
+        if not integrity_result.passed:
+            raise RuntimeError(
+                f"Data integrity preflight failed: "
+                f"{integrity_result.n_stocks_failed} corrupted tickers — "
+                f"{', '.join(integrity_result.failed_tickers[:10])}"
+            )
+
     return data
 
 

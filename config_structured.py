@@ -13,8 +13,71 @@ Usage:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+
+# ── Execution Contract Enums ──────────────────────────────────────────
+
+
+class ReturnType(Enum):
+    """Return computation method."""
+    LOG = "log"
+    SIMPLE = "simple"
+
+
+class PriceType(Enum):
+    """Price type used for entry/exit baseline."""
+    CLOSE = "close"
+    OPEN = "open"
+
+
+class EntryType(Enum):
+    """Entry price execution model."""
+    NEXT_BAR_OPEN = "next_bar_open"
+    MARKET_ON_OPEN = "market_on_open"
+    LIMIT_10BP = "limit_10bp"
+
+
+@dataclass
+class PreconditionsConfig:
+    """Locked-down execution contract for the Truth Layer.
+
+    Validates that core execution assumptions are explicit and sensible
+    before any modeling or backtesting begins.
+    """
+    ret_type: ReturnType = ReturnType.LOG
+    label_h: int = 5
+    px_type: PriceType = PriceType.CLOSE
+    entry_price_type: EntryType = EntryType.NEXT_BAR_OPEN
+
+    def __post_init__(self):
+        # Coerce string values to enums for backward compatibility
+        if isinstance(self.ret_type, str):
+            self.ret_type = ReturnType(self.ret_type)
+        if isinstance(self.px_type, str):
+            self.px_type = PriceType(self.px_type)
+        if isinstance(self.entry_price_type, str):
+            self.entry_price_type = EntryType(self.entry_price_type)
+
+        if not isinstance(self.label_h, int) or self.label_h < 1:
+            raise ValueError(f"LABEL_H must be a positive integer, got {self.label_h}")
+        if self.label_h > 60:
+            raise ValueError(
+                f"LABEL_H={self.label_h} exceeds 60 trading days; "
+                "this is unrealistic for intraday/daily prediction — check config"
+            )
+
+
+# ── Cost Stress Config ───────────────────────────────────────────────
+
+
+@dataclass
+class CostStressConfig:
+    """Configuration for transaction cost stress testing."""
+    multipliers: List[float] = field(default_factory=lambda: [0.5, 1.0, 2.0, 5.0])
+    enabled: bool = False
 
 
 @dataclass
@@ -221,6 +284,8 @@ class SystemConfig:
     domains. Each subsystem is a typed dataclass.
     """
 
+    preconditions: PreconditionsConfig = field(default_factory=PreconditionsConfig)
+    cost_stress: CostStressConfig = field(default_factory=CostStressConfig)
     data: DataConfig = field(default_factory=DataConfig)
     regime: RegimeConfig = field(default_factory=RegimeConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
