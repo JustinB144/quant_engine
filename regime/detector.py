@@ -50,6 +50,7 @@ from .hmm import (
     select_hmm_states_bic,
 )
 from .jump_model_legacy import StatisticalJumpModel
+from .confidence_calibrator import ConfidenceCalibrator
 
 
 @dataclass
@@ -104,6 +105,9 @@ class RegimeDetector:
         self.hmm_max_iter = hmm_max_iter
         self.hmm_stickiness = hmm_stickiness
         self.min_duration = min_duration
+
+        # Confidence calibrator for weighted ensemble voting (SPEC_10)
+        self._confidence_calibrator: Optional[ConfidenceCalibrator] = None
 
         # BOCPD: online changepoint detection (SPEC_03).
         self.enable_bocpd = enable_bocpd
@@ -384,56 +388,112 @@ class RegimeDetector:
         return model.fit(X)
 
     def detect_ensemble(self, features: pd.DataFrame) -> RegimeOutput:
-        """Ensemble regime detection using only genuinely independent methods.
+        """Confidence-weighted ensemble regime detection (SPEC_10 T2).
 
         Runs HMM and rule-based detection always, plus the statistical jump
-        model when REGIME_JUMP_MODEL_ENABLED is True.  Only declares a regime
-        change when at least ``REGIME_ENSEMBLE_CONSENSUS_THRESHOLD`` methods
-        agree (capped at ``n_methods``), reducing false switches.
+        model when REGIME_JUMP_MODEL_ENABLED is True.  Each component
+        contributes a weighted vote based on its confidence score and
+        calibrated component weight.
 
-        With 2 methods the threshold becomes ``min(threshold, 2)`` which
-        requires unanimity — no phantom third vote inflates agreement.
+        When no component achieves a weighted vote share above the
+        disagreement threshold, the detector falls back to the configured
+        uncertain regime (default: high_volatility / stress).
         """
+        from ..config import (
+            REGIME_ENSEMBLE_DEFAULT_WEIGHTS,
+            REGIME_ENSEMBLE_DISAGREEMENT_THRESHOLD,
+            REGIME_ENSEMBLE_UNCERTAIN_FALLBACK,
+        )
+
         rule_out = self._rule_detect(features)
         hmm_out = self._hmm_detect(features)
 
         # Build the method list from genuinely independent detectors only.
-        method_outputs = [("rule", rule_out), ("hmm", hmm_out)]
+        method_outputs: list[tuple[str, RegimeOutput]] = [
+            ("rule", rule_out),
+            ("hmm", hmm_out),
+        ]
         if REGIME_JUMP_MODEL_ENABLED:
             method_outputs.append(("jump", self._jump_detect(features)))
 
         n_methods = len(method_outputs)
-        threshold = min(REGIME_ENSEMBLE_CONSENSUS_THRESHOLD, n_methods)
-
-        # Stack regime arrays: (T, n_methods)
-        methods = np.column_stack([m.regime.values for _, m in method_outputs])
-
-        # Per-timestep majority vote
         T = len(features)
-        consensus = np.full(T, 2, dtype=int)  # default: mean_reverting
+
+        # Get component weights (use calibrated if available, else defaults)
+        if (
+            hasattr(self, '_confidence_calibrator')
+            and self._confidence_calibrator is not None
+            and self._confidence_calibrator.fitted
+        ):
+            comp_weights = self._confidence_calibrator.component_weights
+        else:
+            comp_weights = dict(REGIME_ENSEMBLE_DEFAULT_WEIGHTS)
+
+        # Normalize weights to components actually present
+        present_weights = {
+            name: comp_weights.get(name, 1.0 / n_methods)
+            for name, _ in method_outputs
+        }
+        w_total = sum(present_weights.values())
+        if w_total > 0:
+            present_weights = {k: v / w_total for k, v in present_weights.items()}
+
+        # Confidence-weighted voting
+        consensus = np.full(T, 2, dtype=int)
         vote_confidence = np.full(T, 0.5, dtype=float)
 
         for t in range(T):
-            votes = methods[t]
-            unique, counts = np.unique(votes, return_counts=True)
-            best_idx = np.argmax(counts)
-            if counts[best_idx] >= threshold:
-                consensus[t] = unique[best_idx]
-                vote_confidence[t] = counts[best_idx] / n_methods
+            # Accumulate weighted scores per regime
+            regime_scores = np.zeros(4, dtype=float)
+            for name, out in method_outputs:
+                regime_t = int(out.regime.iloc[t])
+                conf_t = float(out.confidence.iloc[t])
+                weight = present_weights.get(name, 1.0 / n_methods)
+
+                # Calibrate confidence if calibrator is available
+                if (
+                    hasattr(self, '_confidence_calibrator')
+                    and self._confidence_calibrator is not None
+                    and self._confidence_calibrator.fitted
+                ):
+                    conf_t = self._confidence_calibrator.calibrate(
+                        conf_t, name, regime_t,
+                    )
+
+                if 0 <= regime_t <= 3:
+                    regime_scores[regime_t] += weight * conf_t
+
+            total_score = regime_scores.sum()
+            if total_score > 0:
+                best_regime = int(np.argmax(regime_scores))
+                best_fraction = regime_scores[best_regime] / total_score
+
+                if best_fraction >= REGIME_ENSEMBLE_DISAGREEMENT_THRESHOLD:
+                    consensus[t] = best_regime
+                    vote_confidence[t] = best_fraction
+                else:
+                    # Disagreement: fall back to uncertain regime
+                    consensus[t] = REGIME_ENSEMBLE_UNCERTAIN_FALLBACK
+                    vote_confidence[t] = best_fraction
             else:
-                # No consensus — use HMM prediction as tiebreaker (most sophisticated)
-                consensus[t] = hmm_out.regime.iloc[t]
+                # All zero: use HMM as tiebreaker
+                consensus[t] = int(hmm_out.regime.iloc[t])
                 vote_confidence[t] = 1.0 / n_methods
 
         regime = pd.Series(consensus, index=features.index, dtype=int)
 
-        # Blend probabilities: equal weights across available methods
-        weight = 1.0 / n_methods
-        probs = sum(
-            m.probabilities.fillna(0.0) * weight for _, m in method_outputs
+        # Blend probabilities using calibrated weights
+        probs = pd.DataFrame(
+            0.0, index=features.index,
+            columns=[f"regime_prob_{i}" for i in range(4)],
         )
+        for name, out in method_outputs:
+            w = present_weights.get(name, 1.0 / n_methods)
+            probs = probs.add(out.probabilities.fillna(0.0) * w, fill_value=0.0)
+
         probs = probs.fillna(0.0)
-        probs = probs.div(probs.sum(axis=1).replace(0, 1), axis=0)
+        row_sums = probs.sum(axis=1).replace(0, 1)
+        probs = probs.div(row_sums, axis=0)
         probs = probs.fillna(0.0)
 
         confidence = pd.Series(vote_confidence, index=features.index, dtype=float)
@@ -447,6 +507,51 @@ class RegimeDetector:
             model_type="ensemble",
             uncertainty=uncertainty,
         )
+
+    def calibrate_confidence_weights(
+        self,
+        features: pd.DataFrame,
+        actual_regimes: np.ndarray,
+    ) -> Dict:
+        """Calibrate ensemble confidence weights from validation data (SPEC_10 T2).
+
+        Runs all ensemble components on the given features, collects their
+        predictions and confidence scores, then fits the ECM calibrator.
+
+        Parameters
+        ----------
+        features : pd.DataFrame
+            Validation feature DataFrame.
+        actual_regimes : np.ndarray
+            True regime labels for the validation period.
+
+        Returns
+        -------
+        dict
+            Calibrated component weights.
+        """
+        rule_out = self._rule_detect(features)
+        hmm_out = self._hmm_detect(features)
+
+        predictions: Dict[str, np.ndarray] = {
+            "rule": rule_out.confidence.values,
+            "hmm": hmm_out.confidence.values,
+        }
+        predicted_regimes: Dict[str, np.ndarray] = {
+            "rule": rule_out.regime.values,
+            "hmm": hmm_out.regime.values,
+        }
+
+        if REGIME_JUMP_MODEL_ENABLED:
+            jump_out = self._jump_detect(features)
+            predictions["jump"] = jump_out.confidence.values
+            predicted_regimes["jump"] = jump_out.regime.values
+
+        calibrator = ConfidenceCalibrator(n_regimes=4)
+        calibrator.fit(predictions, predicted_regimes, actual_regimes)
+        self._confidence_calibrator = calibrator
+
+        return calibrator.component_weights
 
     def detect_with_confidence(self, features: pd.DataFrame) -> tuple:
         """detect with confidence."""

@@ -77,6 +77,7 @@ except ImportError:  # pragma: no cover
 from ..config import (
     MODEL_PARAMS, MAX_FEATURES_SELECTED, MAX_IS_OOS_GAP,
     CV_FOLDS, HOLDOUT_FRACTION, MODEL_DIR, MIN_REGIME_SAMPLES,
+    MIN_REGIME_DAYS,
     REGIME_NAMES, RECENCY_DECAY, REGIME_SOFT_ASSIGNMENT_THRESHOLD,
     ENSEMBLE_DIVERSIFY, WF_MAX_TRAIN_DATES,
 )
@@ -653,16 +654,28 @@ class ModelTrainer:
                 mask = r == regime_code
             n_samples = mask.sum()
 
-            if n_samples < MIN_REGIME_SAMPLES:
+            # Check both minimum samples and minimum distinct days (SPEC_10 T7)
+            if mask.any():
+                n_days = mask.index[mask].nunique() if hasattr(mask, 'index') else n_samples
+            else:
+                n_days = 0
+
+            if n_samples < MIN_REGIME_SAMPLES or n_days < MIN_REGIME_DAYS:
+                skip_reason = (
+                    f"insufficient_samples ({n_samples} < {MIN_REGIME_SAMPLES})"
+                    if n_samples < MIN_REGIME_SAMPLES
+                    else f"insufficient_days ({n_days} < {MIN_REGIME_DAYS})"
+                )
                 if verbose:
-                    print(f"\n── {regime_name} — SKIPPED ({n_samples} < "
-                          f"{MIN_REGIME_SAMPLES} samples) ──")
+                    print(f"\n── {regime_name} — SKIPPED ({skip_reason}) ──")
                     print(f"  Global model will be used for regime {regime_code} predictions.")
                 skipped_regimes[regime_code] = {
                     "name": regime_name,
                     "n_samples": int(n_samples),
-                    "min_required": MIN_REGIME_SAMPLES,
-                    "reason": "insufficient_samples",
+                    "n_days": int(n_days),
+                    "min_required_samples": MIN_REGIME_SAMPLES,
+                    "min_required_days": MIN_REGIME_DAYS,
+                    "reason": skip_reason,
                 }
                 regime_models[regime_code] = None  # Explicitly mark as unavailable
                 continue

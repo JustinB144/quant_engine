@@ -438,12 +438,12 @@ def select_hmm_states_bic(
 def build_hmm_observation_matrix(features: pd.DataFrame) -> pd.DataFrame:
     """Build an expanded observation matrix for HMM regime inference.
 
-    Constructs an 11-dimensional observation vector from available features.
-    Each feature is selected for its ability to distinguish market regimes
-    while maintaining causal validity (no look-ahead bias).
+    Constructs up to a 15-dimensional observation vector from available
+    features.  Each feature is selected for its ability to distinguish
+    market regimes while maintaining causal validity (no look-ahead bias).
 
-    Feature Composition (11 features)
-    ----------------------------------
+    Feature Composition (up to 15 features)
+    ----------------------------------------
     **Core features (4, always available from OHLCV):**
 
     ====  ================  ========  ==========  ========================================
@@ -553,6 +553,44 @@ def build_hmm_observation_matrix(features: pd.DataFrame) -> pd.DataFrame:
     # Cross-correlation proxy: lagged return autocorrelation
     if "AutoCorr_20_1" in features.columns:
         obs["cross_correlation"] = features["AutoCorr_20_1"].fillna(0.0)
+
+    # ── Structural features (SPEC_10 T4 — graceful fallback) ──
+    # These features are computed by the feature pipeline when available.
+    # They expand the observation matrix from 11 to 14-15 features.
+    from ..config import REGIME_EXPANDED_FEATURES_ENABLED
+    if REGIME_EXPANDED_FEATURES_ENABLED:
+        # Spectral entropy: high = noise-like (flat spectrum), low = periodic
+        if "SpectralEntropy_252" in features.columns:
+            obs["spectral_entropy"] = features["SpectralEntropy_252"].fillna(0.5)
+
+        # SSA trend strength: high = strong trend, low = noisy/oscillatory
+        if "SSATrendStr_60" in features.columns:
+            obs["ssa_trend_strength"] = features["SSATrendStr_60"].fillna(0.3)
+
+        # BOCPD changepoint confidence: computed inline if not pre-computed
+        if "bocpd_changepoint_prob" in features.columns:
+            obs["bocpd_changepoint"] = features["bocpd_changepoint_prob"].fillna(0.0)
+        elif "return_1d" in features.columns:
+            # Compute BOCPD inline with a lightweight pass
+            try:
+                from .bocpd import BOCPDDetector
+                bocpd = BOCPDDetector(hazard_lambda=1.0 / 60, max_runlength=200)
+                ret_vals = features["return_1d"].fillna(0.0).values
+                if len(ret_vals) >= 10:
+                    batch_result = bocpd.batch_update(ret_vals)
+                    # Use rolling max of changepoint probs over 5 bars
+                    cp_probs = pd.Series(
+                        batch_result.changepoint_probs, index=features.index,
+                    )
+                    obs["bocpd_changepoint"] = cp_probs.rolling(
+                        5, min_periods=1,
+                    ).max().fillna(0.0)
+            except Exception:
+                pass  # Graceful fallback: omit BOCPD feature
+
+        # Jump intensity: if available from feature pipeline
+        if "JumpIntensity_20" in features.columns:
+            obs["jump_intensity"] = features["JumpIntensity_20"].fillna(0.0)
 
     obs = obs.replace([np.inf, -np.inf], np.nan).ffill().bfill().fillna(0.0)
 

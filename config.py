@@ -199,7 +199,7 @@ REGIME_NAMES = {                                   # STATUS: ACTIVE — used in 
     2: "mean_reverting",
     3: "high_volatility",
 }
-MIN_REGIME_SAMPLES = 500                          # STATUS: ACTIVE — models/trainer.py; minimum training samples per regime model
+MIN_REGIME_SAMPLES = 50                           # STATUS: ACTIVE — models/trainer.py; minimum training samples per regime model (reduced from 500 for short regimes, SPEC_10)
 REGIME_MODEL_TYPE = "jump"                        # STATUS: ACTIVE — regime/detector.py; "jump", "hmm", or "rule"
 REGIME_HMM_STATES = 4                             # STATUS: ACTIVE — regime/hmm.py; number of hidden states
 REGIME_HMM_MAX_ITER = 60                          # STATUS: ACTIVE — regime/hmm.py; EM iteration limit
@@ -226,6 +226,42 @@ REGIME_JUMP_MAX_ITER = 50                         # STATUS: ACTIVE — regime/ju
 REGIME_JUMP_TOL = 1e-6                            # STATUS: ACTIVE — regime/jump_model_pypi.py; convergence tolerance
 REGIME_JUMP_USE_CONTINUOUS = True                  # STATUS: ACTIVE — regime/jump_model_pypi.py; continuous JM for soft probabilities
 REGIME_JUMP_MODE_LOSS_WEIGHT = 0.1                # STATUS: ACTIVE — regime/jump_model_pypi.py; mode loss penalty (continuous JM)
+
+# ── Regime Detection Upgrade (SPEC_10) ────────────────────────────────
+# Confidence-weighted ensemble voting
+REGIME_ENSEMBLE_DEFAULT_WEIGHTS = {               # STATUS: ACTIVE — regime/detector.py; default component weights before calibration
+    "hmm": 0.5,
+    "rule": 0.3,
+    "jump": 0.2,
+}
+REGIME_ENSEMBLE_DISAGREEMENT_THRESHOLD = 0.40     # STATUS: ACTIVE — regime/detector.py; if max weighted vote < this, regime is uncertain
+REGIME_ENSEMBLE_UNCERTAIN_FALLBACK = 3            # STATUS: ACTIVE — regime/detector.py; regime to assume when uncertain (3=high_volatility)
+
+# Regime uncertainty gating
+REGIME_UNCERTAINTY_ENTROPY_THRESHOLD = 0.50       # STATUS: ACTIVE — regime/uncertainty_gate.py; flag if normalized entropy > this
+REGIME_UNCERTAINTY_STRESS_THRESHOLD = 0.80        # STATUS: ACTIVE — regime/uncertainty_gate.py; assume stress if entropy > this
+REGIME_UNCERTAINTY_SIZING_MAP = {                 # STATUS: ACTIVE — regime/uncertainty_gate.py; entropy->sizing multiplier
+    0.0: 1.0,
+    0.5: 0.95,
+    1.0: 0.85,
+}
+REGIME_UNCERTAINTY_MIN_MULTIPLIER = 0.80          # STATUS: ACTIVE — regime/uncertainty_gate.py; floor for sizing multiplier
+
+# Cross-sectional regime consensus
+REGIME_CONSENSUS_THRESHOLD = 0.80                 # STATUS: ACTIVE — regime/consensus.py; high confidence consensus threshold
+REGIME_CONSENSUS_EARLY_WARNING = 0.60             # STATUS: ACTIVE — regime/consensus.py; early warning if consensus drops below
+REGIME_CONSENSUS_DIVERGENCE_WINDOW = 20           # STATUS: ACTIVE — regime/consensus.py; window for trend detection
+REGIME_CONSENSUS_DIVERGENCE_SLOPE = -0.01         # STATUS: ACTIVE — regime/consensus.py; slope threshold for divergence
+
+# Online regime updating
+REGIME_ONLINE_UPDATE_ENABLED = True               # STATUS: ACTIVE — regime/online_update.py; enable incremental HMM updates
+REGIME_ONLINE_REFIT_DAYS = 30                     # STATUS: ACTIVE — regime/online_update.py; full refit every N days
+
+# Expanded observation matrix
+REGIME_EXPANDED_FEATURES_ENABLED = True           # STATUS: ACTIVE — regime/hmm.py; add spectral/SSA/BOCPD to observation matrix
+
+# Regime training thresholds
+MIN_REGIME_DAYS = 10                              # STATUS: ACTIVE — models/trainer.py; minimum days in regime before training
 
 # ── Bayesian Online Change-Point Detection ─────────────────────────────
 BOCPD_ENABLED = True                              # STATUS: ACTIVE — regime/detector.py, regime/bocpd.py; enable BOCPD alongside HMM
@@ -367,13 +403,69 @@ PROMOTION_REQUIRE_STATISTICAL_TESTS = True        # STATUS: ACTIVE — autopilot
 PROMOTION_REQUIRE_CPCV = True                     # STATUS: ACTIVE — autopilot/promotion_gate.py; require CPCV to pass
 PROMOTION_REQUIRE_SPA = False                     # STATUS: ACTIVE — autopilot/promotion_gate.py; SPA is informational by default
 
+# ── Signal Selection — Spec 04 ─────────────────────────────────────
+SIGNAL_TOPK_QUANTILE = 0.70                      # STATUS: ACTIVE — autopilot/engine.py; select top 70% by cross-sectional z-score
+SIGNAL_Z_THRESHOLD = 1.5                         # STATUS: DEPRECATED — superseded by SIGNAL_TOPK_QUANTILE; kept for backward compat
+
+# ── Meta-Labeling — Spec 04 ───────────────────────────────────────
+META_LABELING_ENABLED = True                     # STATUS: ACTIVE — autopilot/engine.py, autopilot/meta_labeler.py
+META_LABELING_RETRAIN_FREQ_DAYS = 7              # STATUS: ACTIVE — autopilot/engine.py; weekly retraining schedule
+META_LABELING_FOLD_COUNT = 5                     # STATUS: ACTIVE — autopilot/meta_labeler.py; CV folds for training
+META_LABELING_MIN_SAMPLES = 500                  # STATUS: ACTIVE — autopilot/meta_labeler.py; minimum samples to train
+META_LABELING_CONFIDENCE_THRESHOLD = 0.55        # STATUS: ACTIVE — autopilot/engine.py; min confidence to pass filter
+META_LABELING_XGB_PARAMS = {                     # STATUS: ACTIVE — autopilot/meta_labeler.py; XGBoost hyperparameters
+    "max_depth": 5,
+    "learning_rate": 0.1,
+    "n_estimators": 100,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+}
+
+# ── Fold-Level Metrics — Spec 04 ──────────────────────────────────
+FOLD_CONSISTENCY_PENALTY_WEIGHT = 0.15           # STATUS: ACTIVE — autopilot/promotion_gate.py; weight in composite score
+
 # ── Kelly Sizing ──────────────────────────────────────────────────────
 KELLY_FRACTION = 0.50                             # STATUS: ACTIVE — risk/position_sizer.py; half-Kelly (conservative default)
-MAX_PORTFOLIO_DD = 0.20                           # STATUS: PLACEHOLDER — defined but never imported; max portfolio drawdown for governor
+MAX_PORTFOLIO_DD = 0.20                           # STATUS: ACTIVE — risk/position_sizer.py; max portfolio drawdown for governor
 KELLY_PORTFOLIO_BLEND = 0.30                      # STATUS: PLACEHOLDER — defined but never imported; Kelly weight in composite blend
-KELLY_BAYESIAN_ALPHA = 2.0                        # STATUS: PLACEHOLDER — defined but never imported; Beta prior alpha for win rate
-KELLY_BAYESIAN_BETA = 2.0                         # STATUS: PLACEHOLDER — defined but never imported; Beta prior beta for win rate
+KELLY_BAYESIAN_ALPHA = 2.0                        # STATUS: ACTIVE — risk/position_sizer.py; Beta prior alpha for win rate
+KELLY_BAYESIAN_BETA = 2.0                         # STATUS: ACTIVE — risk/position_sizer.py; Beta prior beta for win rate
 KELLY_REGIME_CONDITIONAL = True                   # STATUS: PLACEHOLDER — defined but never imported; use regime-specific parameters
+KELLY_MIN_SAMPLES_FOR_UPDATE = 10                 # STATUS: ACTIVE — risk/position_sizer.py; min trades before Bayesian posterior overrides prior
+
+# ── Risk Governor — Spec 05 ─────────────────────────────────────────
+# Shock budget: reserve fraction of capital for tail events
+SHOCK_BUDGET_PCT = 0.05                           # STATUS: ACTIVE — risk/position_sizer.py; reserve 5% of capital (positions capped at 95%)
+
+# Concentration limit: max single-position notional as % of portfolio
+CONCENTRATION_LIMIT_PCT = 0.20                    # STATUS: ACTIVE — risk/position_sizer.py; max 20% in any single position
+
+# Turnover budget enforcement
+TURNOVER_BUDGET_ENFORCEMENT = True                # STATUS: ACTIVE — risk/position_sizer.py; enable turnover budget constraint
+TURNOVER_BUDGET_LOOKBACK_DAYS = 252               # STATUS: ACTIVE — risk/position_sizer.py; annualized turnover lookback
+
+# Blend weights — static (regime-insensitive fallback)
+BLEND_WEIGHTS_STATIC = {                          # STATUS: ACTIVE — risk/position_sizer.py; default blend weights
+    'kelly': 0.30,
+    'vol_scaled': 0.40,
+    'atr_based': 0.30,
+}
+
+# Blend weights — regime-conditional (takes precedence over static)
+BLEND_WEIGHTS_BY_REGIME = {                       # STATUS: ACTIVE — risk/position_sizer.py; regime-conditional blend weights
+    'NORMAL': {'kelly': 0.35, 'vol_scaled': 0.35, 'atr_based': 0.30},
+    'WARNING': {'kelly': 0.25, 'vol_scaled': 0.45, 'atr_based': 0.30},
+    'CAUTION': {'kelly': 0.15, 'vol_scaled': 0.50, 'atr_based': 0.35},
+    'CRITICAL': {'kelly': 0.05, 'vol_scaled': 0.50, 'atr_based': 0.45},
+    'RECOVERY': {'kelly': 0.20, 'vol_scaled': 0.40, 'atr_based': 0.40},
+}
+
+# Uncertainty-aware sizing
+UNCERTAINTY_SCALING_ENABLED = True                # STATUS: ACTIVE — risk/position_sizer.py; enable uncertainty-based size reduction
+UNCERTAINTY_SIGNAL_WEIGHT = 0.40                  # STATUS: ACTIVE — risk/position_sizer.py; weight of signal_uncertainty in composite
+UNCERTAINTY_REGIME_WEIGHT = 0.30                  # STATUS: ACTIVE — risk/position_sizer.py; weight of regime_entropy
+UNCERTAINTY_DRIFT_WEIGHT = 0.30                   # STATUS: ACTIVE — risk/position_sizer.py; weight of drift_score (inverted)
+UNCERTAINTY_REDUCTION_FACTOR = 0.30               # STATUS: ACTIVE — risk/position_sizer.py; max reduction from base size (30%)
 
 PAPER_INITIAL_CAPITAL = 1_000_000.0               # STATUS: ACTIVE — autopilot/paper_trader.py
 PAPER_MAX_TOTAL_POSITIONS = 30                    # STATUS: ACTIVE — autopilot/paper_trader.py
