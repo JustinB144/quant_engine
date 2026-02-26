@@ -125,6 +125,25 @@ class HealthService:
             if status == "healthy":
                 status = "degraded"
 
+        # WRDS data source availability
+        try:
+            from quant_engine.config import WRDS_ENABLED
+            if WRDS_ENABLED:
+                from quant_engine.data.wrds_provider import WRDSProvider
+                provider = WRDSProvider()
+                if provider.available():
+                    checks["wrds"] = "connected"
+                else:
+                    checks["wrds"] = "unavailable"
+                    if status == "healthy":
+                        status = "degraded"
+            else:
+                checks["wrds"] = "disabled"
+        except Exception as e:
+            checks["wrds"] = f"error: {e}"
+            if status == "healthy":
+                status = "degraded"
+
         return {"status": status, "checks": checks, "timestamp": datetime.now(timezone.utc).isoformat()}
 
     def get_detailed_health(self) -> Dict[str, Any]:
@@ -235,6 +254,7 @@ class HealthService:
             self._check_survivorship_bias(),
             self._check_data_quality_anomalies(),
             self._check_market_microstructure(),
+            self._check_wrds_status(),
         ]
         for c in data_checks:
             c.severity = "critical"
@@ -1024,6 +1044,55 @@ class HealthService:
                 explanation=f"Participation rate {participation:.4%} — high market impact risk",
                 methodology=methodology, raw_metrics=raw, thresholds=thresholds)
 
+        except Exception as e:
+            logger.warning("Health check '%s' failed: %s", name, e)
+            return _unavailable(name, domain, f"Error: {e}")
+
+    def _check_wrds_status(self) -> HealthCheckResult:
+        """Check whether the WRDS data provider is available.
+
+        WRDS is the primary data source for survivorship-bias-free CRSP prices
+        and alternative data (earnings, options, short interest, insider filings).
+        When unavailable, the system falls back to local cache which may carry
+        survivorship bias and lacks alternative data signals.
+        """
+        domain = "data_integrity"
+        name = "wrds_availability"
+        methodology = (
+            "Checks whether WRDSProvider.available() returns True, which "
+            "requires WRDS_USERNAME env var and a live database connection. "
+            "When WRDS is unavailable, OHLCV data comes from local cache "
+            "(potential survivorship bias) and alternative data features "
+            "(earnings, options, short interest, insider) are disabled."
+        )
+        try:
+            from quant_engine.config import WRDS_ENABLED
+            if not WRDS_ENABLED:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=50.0, status="WARN",
+                    explanation="WRDS_ENABLED=False — operating on cached/local data only",
+                    methodology=methodology,
+                    raw_metrics={"wrds_enabled": False, "wrds_connected": False},
+                )
+
+            from quant_engine.data.wrds_provider import WRDSProvider
+            provider = WRDSProvider()
+            if provider.available():
+                return HealthCheckResult(
+                    name=name, domain=domain, score=85.0, status="PASS",
+                    explanation="WRDS connected — survivorship-bias-free data active",
+                    methodology=methodology,
+                    raw_metrics={"wrds_enabled": True, "wrds_connected": True},
+                )
+            return HealthCheckResult(
+                name=name, domain=domain, score=30.0, status="FAIL",
+                explanation=(
+                    "WRDS_ENABLED=True but connection unavailable — "
+                    "operating on cached/local data only"
+                ),
+                methodology=methodology,
+                raw_metrics={"wrds_enabled": True, "wrds_connected": False},
+            )
         except Exception as e:
             logger.warning("Health check '%s' failed: %s", name, e)
             return _unavailable(name, domain, f"Error: {e}")

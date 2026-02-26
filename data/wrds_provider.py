@@ -34,7 +34,6 @@ Usage:
 import logging
 import os
 import threading
-import warnings
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -63,10 +62,9 @@ _wrds_connection = None
 _wrds_lock = threading.Lock()
 _WRDS_USERNAME = os.environ.get('WRDS_USERNAME')
 if not _WRDS_USERNAME:
-    warnings.warn(
+    logger.debug(
         'WRDS_USERNAME env var not set; WRDS will be unavailable. '
-        'Set it via: export WRDS_USERNAME=<your_username>',
-        stacklevel=1,
+        'Set it via: export WRDS_USERNAME=<your_username>'
     )
 
 import re as _re

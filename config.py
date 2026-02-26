@@ -712,7 +712,10 @@ def validate_config() -> list:
                 "level": "WARNING",
                 "message": (
                     "WRDS_ENABLED=True but WRDS_USERNAME env var is not set. "
-                    "WRDS will be unavailable. Set via: export WRDS_USERNAME=<your_username>"
+                    "The system will operate in degraded mode: "
+                    "OHLCV data falls back to local cache (may have survivorship bias), "
+                    "and alternative data (earnings, options, short interest, insider) will be unavailable. "
+                    "Set via: export WRDS_USERNAME=<your_username>"
                 ),
             })
 
