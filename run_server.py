@@ -58,16 +58,30 @@ def main() -> None:
         app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="static-assets")
 
         # SPA fallback: serve index.html for all non-API routes
+        from fastapi import HTTPException
         from fastapi.responses import FileResponse
 
         @app.get("/{full_path:path}")
         async def spa_fallback(full_path: str):
-            # Don't intercept API routes or OpenAPI docs
-            if full_path.startswith("api/") or full_path in ("docs", "redoc", "openapi.json"):
-                return None
-            file_path = FRONTEND_DIST / full_path
-            if file_path.exists() and file_path.is_file():
+            # Unmatched API routes and OpenAPI docs should return a clean 404,
+            # not the SPA fallback page (which would produce a confusing 200/500).
+            if full_path.startswith("api/") or full_path in (
+                "docs",
+                "redoc",
+                "openapi.json",
+            ):
+                raise HTTPException(
+                    status_code=404, detail=f"Not found: /{full_path}"
+                )
+
+            # Serve a specific static file from dist/ if it exists (e.g. favicon.ico)
+            file_path = (FRONTEND_DIST / full_path).resolve()
+            dist_root = FRONTEND_DIST.resolve()
+            if file_path.is_relative_to(dist_root) and file_path.is_file():
                 return FileResponse(str(file_path))
+
+            # SPA fallback: all other routes get index.html so React Router
+            # can handle client-side routing (including its own 404 page).
             return FileResponse(str(FRONTEND_DIST / "index.html"))
 
         logger.info("Serving frontend static files from %s", FRONTEND_DIST)
