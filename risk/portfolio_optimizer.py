@@ -185,9 +185,12 @@ def optimize_portfolio(
         constraints.append({"type": "ineq", "fun": slack_lower})
 
     # 4. Sector neutrality constraints: |sum of weights in sector| <= max_sector_exposure
-    if (sector_map is None or len(sector_map) == 0) and not _WARNED_GICS_EMPTY[0]:
+    #    When sector_map is not explicitly provided, fall back to GICS_SECTORS from config.
+    if sector_map is None or len(sector_map) == 0:
         from ..config import GICS_SECTORS
-        if not GICS_SECTORS:
+        if GICS_SECTORS:
+            sector_map = GICS_SECTORS
+        elif not _WARNED_GICS_EMPTY[0]:
             logger.warning(
                 "GICS_SECTORS is empty — sector exposure constraint (%.0f%%) is NOT enforced",
                 max_sector_exposure * 100 if max_sector_exposure is not None else 10,

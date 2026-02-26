@@ -12,14 +12,17 @@ Usage:
     python3 run_wrds_daily_refresh.py --verify-only    # Only verify existing files
     python3 run_wrds_daily_refresh.py                  # Full run: download + cleanup
     python3 run_wrds_daily_refresh.py --tickers AAPL,MSFT,NVDA  # Specific tickers
+    python3 run_wrds_daily_refresh.py --gics           # Refresh GICS sector mapping
 """
 import argparse
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, List
 
 import pandas as pd
+import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -166,6 +169,109 @@ def _cleanup_old_daily(cache_dir, downloaded_tickers):
     return removed
 
 
+GICS_SECTOR_NAMES = {
+    "10": "Energy",
+    "15": "Materials",
+    "20": "Industrials",
+    "25": "Consumer Discretionary",
+    "30": "Consumer Staples",
+    "35": "Health Care",
+    "40": "Financials",
+    "45": "Information Technology",
+    "50": "Communication Services",
+    "55": "Utilities",
+    "60": "Real Estate",
+}
+
+
+def refresh_gics_sectors(provider, tickers: List[str]) -> Dict[str, str]:
+    """Query Compustat for GICS sector mapping.
+
+    Queries ``comp.security`` joined with ``comp.company`` to retrieve
+    the GICS sector code for each ticker, then maps the 2-digit code
+    to a human-readable sector name.
+
+    Parameters
+    ----------
+    provider : WRDSProvider
+        An initialised WRDS provider with an active connection.
+    tickers : list[str]
+        Tickers to look up.
+
+    Returns
+    -------
+    dict[str, str]
+        Mapping of ticker -> GICS sector name.
+    """
+    if not tickers:
+        return {}
+
+    # Process in batches to avoid SQL query size limits
+    batch_size = 200
+    all_results: Dict[str, str] = {}
+
+    for i in range(0, len(tickers), batch_size):
+        batch = tickers[i:i + batch_size]
+        placeholders = ",".join(f"'{t}'" for t in batch)
+        query = f"""
+            SELECT DISTINCT a.tic, b.gsector
+            FROM comp.security a
+            JOIN comp.company b ON a.gvkey = b.gvkey
+            WHERE a.tic IN ({placeholders})
+            AND b.gsector IS NOT NULL
+        """
+        df = provider._query(query)
+        if df.empty:
+            continue
+        for _, row in df.iterrows():
+            ticker = str(row["tic"]).strip().upper()
+            sector_code = str(int(row["gsector"])) if pd.notna(row["gsector"]) else None
+            if sector_code and sector_code in GICS_SECTOR_NAMES:
+                all_results[ticker] = GICS_SECTOR_NAMES[sector_code]
+            elif sector_code:
+                all_results[ticker] = "Unknown"
+
+    return all_results
+
+
+def _write_gics_to_universe_yaml(sector_map: Dict[str, str], yaml_path: Path) -> None:
+    """Merge refreshed GICS sectors into universe.yaml.
+
+    Reads the existing YAML, replaces the ``sectors`` key with the new
+    mapping (grouped by sector name), and writes back. Preserves all
+    other keys (liquidity_tiers, borrowability, etc.).
+
+    Parameters
+    ----------
+    sector_map : dict[str, str]
+        Mapping of ticker -> sector name from WRDS.
+    yaml_path : Path
+        Path to ``config_data/universe.yaml``.
+    """
+    # Load existing YAML to preserve non-sector keys
+    if yaml_path.exists():
+        with open(yaml_path) as f:
+            data = yaml.safe_load(f) or {}
+    else:
+        data = {}
+
+    # Group tickers by sector
+    sectors: Dict[str, List[str]] = {}
+    for ticker, sector_name in sorted(sector_map.items()):
+        # Normalize sector name to lowercase for YAML key consistency
+        key = sector_name.lower().replace(" ", "_")
+        sectors.setdefault(key, []).append(ticker)
+
+    # Sort tickers within each sector
+    for key in sectors:
+        sectors[key] = sorted(sectors[key])
+
+    data["sectors"] = sectors
+
+    with open(yaml_path, "w") as f:
+        yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+
+
 def main():
     """Run the WRDS daily refresh workflow and emit a summary of refreshed datasets and outputs."""
     parser = argparse.ArgumentParser(
@@ -183,6 +289,8 @@ def main():
                         help="Tickers per WRDS query (default: 50)")
     parser.add_argument("--verify-only", action="store_true",
                         help="Only run verification on existing _1d.parquet files")
+    parser.add_argument("--gics", action="store_true",
+                        help="Refresh GICS sector mapping from WRDS Compustat and write to config_data/universe.yaml")
     args = parser.parse_args()
 
     print(f"\n{'='*60}")
@@ -196,6 +304,40 @@ def main():
     if args.verify_only:
         print(f"\n── Verification Only ──")
         _verify_all(DATA_CACHE_DIR)
+        return
+
+    if args.gics:
+        print(f"\n── GICS Sector Refresh ──")
+        try:
+            from quant_engine.data.wrds_provider import WRDSProvider
+        except ImportError as e:
+            print(f"  ERROR: Cannot import WRDSProvider: {e}")
+            sys.exit(1)
+
+        provider = WRDSProvider()
+        if not provider.available():
+            print("  ERROR: WRDS connection not available.")
+            print("  Check ~/.pgpass for WRDS credentials.")
+            sys.exit(1)
+
+        print(f"  Querying Compustat for GICS sector codes...")
+        sector_map = refresh_gics_sectors(provider, tickers)
+        print(f"  Found GICS sectors for {len(sector_map)} / {len(tickers)} tickers")
+
+        if sector_map:
+            yaml_path = Path(__file__).parent / "config_data" / "universe.yaml"
+            _write_gics_to_universe_yaml(sector_map, yaml_path)
+            print(f"  Updated {yaml_path}")
+
+            # Print sector summary
+            sector_counts: Dict[str, int] = {}
+            for sector_name in sector_map.values():
+                sector_counts[sector_name] = sector_counts.get(sector_name, 0) + 1
+            print(f"\n  Sector distribution:")
+            for sector_name, count in sorted(sector_counts.items(), key=lambda x: -x[1]):
+                print(f"    {sector_name}: {count} tickers")
+        else:
+            print("  WARNING: No GICS data returned from Compustat.")
         return
 
     if args.dry_run:

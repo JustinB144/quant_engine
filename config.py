@@ -392,17 +392,30 @@ MAX_ANNUALIZED_TURNOVER = 500.0                   # STATUS: ACTIVE — backtest/
 # Enforced by risk/portfolio_optimizer.py ONLY when GICS_SECTORS is populated.
 MAX_SECTOR_EXPOSURE = 0.10                        # STATUS: ACTIVE — risk/portfolio_optimizer.py; but INACTIVE when GICS_SECTORS is empty
 
-# PLACEHOLDER: Populate via `run_wrds_daily_refresh.py --gics` or manually.
-# When empty, MAX_SECTOR_EXPOSURE constraint is NOT enforced in portfolio_optimizer.
 # Maps ticker -> GICS sector name for sector-neutrality constraints.
-# To populate from WRDS Compustat:
-#
-#   SELECT gvkey, gsubind AS gics_code, conm
-#   FROM comp.company
-#   WHERE gsubind IS NOT NULL;
-#
-# Then map the 2-digit sector code to a human-readable name.
-GICS_SECTORS: Dict[str, str] = {}                 # STATUS: PLACEHOLDER — empty; sector constraints not enforced
+# Loaded automatically from config_data/universe.yaml below.
+# Can be refreshed from WRDS Compustat via: run_wrds_daily_refresh.py --gics
+GICS_SECTORS: Dict[str, str] = {}                 # STATUS: ACTIVE — populated from config_data/universe.yaml on import
+
+# Attempt to load GICS_SECTORS from universe.yaml at import time.
+# This ensures sector-neutrality constraints in portfolio_optimizer.py
+# are enforced without requiring a manual WRDS refresh.
+import yaml as _yaml
+
+_UNIVERSE_YAML = Path(__file__).parent / "config_data" / "universe.yaml"
+if _UNIVERSE_YAML.exists() and not GICS_SECTORS:
+    try:
+        with open(_UNIVERSE_YAML) as _f:
+            _universe = _yaml.safe_load(_f)
+        if isinstance(_universe, dict) and "sectors" in _universe:
+            for _sector_name, _tickers in _universe["sectors"].items():
+                if isinstance(_tickers, list):
+                    for _ticker in _tickers:
+                        GICS_SECTORS[str(_ticker).upper()] = str(_sector_name)
+    except Exception:
+        pass  # Will be caught by validate_config()
+
+del _yaml, _UNIVERSE_YAML  # Clean up module namespace
 
 # ── Almgren-Chriss Optimal Execution ─────────────────────────────────
 # PLACEHOLDER — Almgren-Chriss optimal execution model.
@@ -676,7 +689,8 @@ def validate_config() -> list:
             "level": "WARNING",
             "message": (
                 "GICS_SECTORS is empty — sector exposure constraints are disabled. "
-                "Populate via run_wrds_daily_refresh.py --gics or manually in config.py."
+                "Populate via run_wrds_daily_refresh.py --gics, or ensure "
+                "config_data/universe.yaml has a 'sectors' key."
             ),
         })
 
