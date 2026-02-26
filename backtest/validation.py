@@ -779,3 +779,296 @@ def superior_predictive_ability(
             "boot_ci_95_high": float(np.percentile(boot_stats, 97.5)),
         },
     )
+
+
+# ── Walk-Forward with Embargo (Spec 08 T2) ──────────────────────────
+
+
+@dataclass
+class WalkForwardEmbargoFold:
+    """Per-fold result from walk-forward evaluation with embargo."""
+    fold: int
+    train_start: str
+    train_end: str
+    embargo_start: str
+    embargo_end: str
+    test_start: str
+    test_end: str
+    train_sharpe: float
+    test_sharpe: float
+    train_ic: float
+    test_ic: float
+    overfit_gap_sharpe: float
+    overfit_gap_ic: float
+    test_n_samples: int
+
+
+@dataclass
+class WalkForwardEmbargoResult:
+    """Aggregate walk-forward result across all folds."""
+    n_folds: int
+    folds: List[WalkForwardEmbargoFold]
+    mean_train_sharpe: float
+    mean_test_sharpe: float
+    mean_overfit_gap: float
+    is_overfit: bool
+    warnings: List[str] = field(default_factory=list)
+
+
+def walk_forward_with_embargo(
+    returns: pd.Series,
+    predictions: np.ndarray,
+    train_window: int = 250,
+    embargo: int = 5,
+    test_window: int = 60,
+    slide_freq: str = "weekly",
+    risk_free_rate: float = 0.04,
+) -> WalkForwardEmbargoResult:
+    """Walk-forward evaluation with embargo gap.
+
+    Slides a fixed-width training window forward in time, leaving an
+    embargo gap between training and test to prevent data leakage.
+
+    Parameters
+    ----------
+    returns : pd.Series
+        Actual returns indexed by datetime.
+    predictions : np.ndarray
+        Model predictions aligned to returns.
+    train_window : int
+        Training window size in bars.
+    embargo : int
+        Gap between train end and test start (bars).
+    test_window : int
+        Test window size in bars.
+    slide_freq : str
+        ``"weekly"`` (slide 5 bars) or ``"daily"`` (slide 1 bar).
+    risk_free_rate : float
+        Annual risk-free rate for Sharpe calculation.
+
+    Returns
+    -------
+    WalkForwardEmbargoResult
+    """
+    pred_arr = np.asarray(predictions, dtype=float).ravel()
+    ret_vals = returns.values.astype(float)
+    n = min(len(ret_vals), len(pred_arr))
+    ret_vals = ret_vals[:n]
+    pred_arr = pred_arr[:n]
+    index = returns.index[:n]
+
+    slide = 5 if slide_freq == "weekly" else 1
+    min_total = train_window + embargo + test_window
+    warnings: List[str] = []
+
+    if n < min_total:
+        return WalkForwardEmbargoResult(
+            n_folds=0, folds=[], mean_train_sharpe=0.0,
+            mean_test_sharpe=0.0, mean_overfit_gap=0.0,
+            is_overfit=True,
+            warnings=["Insufficient data for walk-forward with embargo"],
+        )
+
+    folds: List[WalkForwardEmbargoFold] = []
+    t = 0
+
+    while t + min_total <= n:
+        train_start = t
+        train_end = t + train_window
+        emb_start = train_end
+        emb_end = emb_start + embargo
+        test_start = emb_end
+        test_end = min(test_start + test_window, n)
+
+        if test_end - test_start < 10:
+            break
+
+        # Compute per-fold metrics
+        train_ret = ret_vals[train_start:train_end]
+        train_pred = pred_arr[train_start:train_end]
+        test_ret = ret_vals[test_start:test_end]
+        test_pred = pred_arr[test_start:test_end]
+
+        train_sharpe = _sharpe(train_ret, risk_free_rate)
+        test_sharpe = _sharpe(test_ret, risk_free_rate)
+        train_ic = _spearman_ic(train_pred, train_ret)
+        test_ic = _spearman_ic(test_pred, test_ret)
+
+        folds.append(WalkForwardEmbargoFold(
+            fold=len(folds) + 1,
+            train_start=str(index[train_start]),
+            train_end=str(index[train_end - 1]),
+            embargo_start=str(index[emb_start]),
+            embargo_end=str(index[min(emb_end - 1, n - 1)]),
+            test_start=str(index[test_start]),
+            test_end=str(index[test_end - 1]),
+            train_sharpe=train_sharpe,
+            test_sharpe=test_sharpe,
+            train_ic=train_ic,
+            test_ic=test_ic,
+            overfit_gap_sharpe=train_sharpe - test_sharpe,
+            overfit_gap_ic=train_ic - test_ic,
+            test_n_samples=test_end - test_start,
+        ))
+
+        t += slide
+
+    if not folds:
+        return WalkForwardEmbargoResult(
+            n_folds=0, folds=[], mean_train_sharpe=0.0,
+            mean_test_sharpe=0.0, mean_overfit_gap=0.0,
+            is_overfit=True,
+            warnings=["No valid folds produced"],
+        )
+
+    mean_train = float(np.mean([f.train_sharpe for f in folds]))
+    mean_test = float(np.mean([f.test_sharpe for f in folds]))
+    mean_gap = float(np.mean([f.overfit_gap_sharpe for f in folds]))
+
+    is_overfit = mean_gap > 0.10 or mean_test <= 0
+    if mean_gap > 0.10:
+        warnings.append(f"Mean overfit gap = {mean_gap:.3f} > 0.10")
+    if mean_test <= 0:
+        warnings.append(f"Mean OOS Sharpe = {mean_test:.3f} <= 0")
+
+    return WalkForwardEmbargoResult(
+        n_folds=len(folds),
+        folds=folds,
+        mean_train_sharpe=mean_train,
+        mean_test_sharpe=mean_test,
+        mean_overfit_gap=mean_gap,
+        is_overfit=is_overfit,
+        warnings=warnings,
+    )
+
+
+# ── Rolling IC and Decay Detection (Spec 08 T3) ─────────────────────
+
+
+def rolling_ic(
+    predictions: np.ndarray,
+    returns: pd.Series,
+    window: int = 60,
+) -> pd.Series:
+    """Compute rolling information coefficient (Spearman rank correlation).
+
+    Parameters
+    ----------
+    predictions : np.ndarray
+        Model predictions.
+    returns : pd.Series
+        Actual returns (same length, same index).
+    window : int
+        Rolling window size in bars.
+
+    Returns
+    -------
+    pd.Series
+        Rolling IC values indexed by date. NaN for the initial ``window-1``
+        bars.
+    """
+    pred_arr = np.asarray(predictions, dtype=float).ravel()
+    ret_arr = returns.values.astype(float)
+    n = min(len(pred_arr), len(ret_arr))
+    pred_arr = pred_arr[:n]
+    ret_arr = ret_arr[:n]
+    index = returns.index[:n]
+
+    ic_vals = np.full(n, np.nan, dtype=float)
+
+    for i in range(window, n):
+        p = pred_arr[i - window:i]
+        r = ret_arr[i - window:i]
+        valid = np.isfinite(p) & np.isfinite(r)
+        if valid.sum() < 10:
+            continue
+        ic_vals[i] = _spearman_ic(p[valid], r[valid])
+
+    return pd.Series(ic_vals, index=index, name="rolling_ic")
+
+
+def detect_ic_decay(
+    ic_series: pd.Series,
+    decay_threshold: float = 0.02,
+    window: int = 20,
+) -> tuple:
+    """Detect whether the information coefficient is decaying.
+
+    Parameters
+    ----------
+    ic_series : pd.Series
+        Rolling IC values (from :func:`rolling_ic`).
+    decay_threshold : float
+        IC values below this are considered weak.
+    window : int
+        Number of recent observations to check.
+
+    Returns
+    -------
+    tuple[bool, dict]
+        ``(decaying, info_dict)`` where ``info_dict`` has keys:
+        ``current_ic``, ``mean_ic``, ``slope``, ``days_below_threshold``,
+        ``pct_below_threshold``.
+    """
+    ic_clean = ic_series.dropna()
+
+    if len(ic_clean) < window:
+        return False, {
+            "current_ic": float(ic_clean.iloc[-1]) if len(ic_clean) > 0 else 0.0,
+            "mean_ic": float(ic_clean.mean()) if len(ic_clean) > 0 else 0.0,
+            "slope": 0.0,
+            "days_below_threshold": 0,
+            "pct_below_threshold": 0.0,
+            "warning": "Insufficient data for decay detection",
+        }
+
+    recent = ic_clean.iloc[-window:]
+    current_ic = float(recent.iloc[-1])
+    mean_ic = float(recent.mean())
+    days_below = int((recent < decay_threshold).sum())
+    pct_below = days_below / len(recent)
+
+    # Linear trend of IC (slope via OLS)
+    x = np.arange(len(ic_clean), dtype=float)
+    y = ic_clean.values.astype(float)
+    if len(x) > 2:
+        # Fit linear regression
+        x_mean = x.mean()
+        y_mean = y.mean()
+        slope = float(np.sum((x - x_mean) * (y - y_mean)) / (np.sum((x - x_mean) ** 2) + 1e-12))
+    else:
+        slope = 0.0
+
+    # Decay = IC below threshold for 80%+ of recent window OR declining slope
+    decaying = (pct_below >= 0.80) or (slope < -0.001 and mean_ic < decay_threshold * 2)
+
+    return decaying, {
+        "current_ic": current_ic,
+        "mean_ic": mean_ic,
+        "slope": slope,
+        "days_below_threshold": days_below,
+        "pct_below_threshold": pct_below,
+    }
+
+
+# ── Private helpers ──────────────────────────────────────────────────
+
+
+def _sharpe(returns: np.ndarray, risk_free_rate: float = 0.04) -> float:
+    """Annualized Sharpe ratio from a return array."""
+    if len(returns) < 2:
+        return 0.0
+    rf_per_day = risk_free_rate / 252.0
+    excess = returns - rf_per_day
+    std = float(np.std(returns, ddof=1))
+    if std < 1e-12:
+        return 0.0
+    return float(np.mean(excess) / std * np.sqrt(252))
+
+
+def _spearman_ic(predictions: np.ndarray, returns: np.ndarray) -> float:
+    """Spearman rank correlation between predictions and returns."""
+    if len(predictions) < 3:
+        return 0.0
+    corr, _ = stats.spearmanr(predictions, returns)
+    return float(corr) if not np.isnan(corr) else 0.0
