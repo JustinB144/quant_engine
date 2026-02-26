@@ -127,8 +127,9 @@ def _get_last_trading_day(ref_date: Optional[pd.Timestamp] = None) -> pd.Timesta
         if len(schedule) > 0:
             return pd.Timestamp(schedule.index[-1]).normalize()
 
-    # Fallback: use business day range
-    bdays = pd.bdate_range(end=ref_date, periods=1)
+    # Fallback: use business day range (start/end form handles weekends
+    # correctly — the periods=1 form returns empty when end is non-business).
+    bdays = pd.bdate_range(start=ref_date - pd.Timedelta(days=10), end=ref_date)
     if len(bdays) > 0:
         return bdays[-1].normalize()
 

@@ -453,8 +453,8 @@ class TestMinRegimeSamplesConfig:
     def test_min_regime_samples_value(self):
         from quant_engine.config import MIN_REGIME_SAMPLES
 
-        assert MIN_REGIME_SAMPLES == 50, (
-            f"MIN_REGIME_SAMPLES={MIN_REGIME_SAMPLES}, expected 50"
+        assert MIN_REGIME_SAMPLES == 100, (
+            f"MIN_REGIME_SAMPLES={MIN_REGIME_SAMPLES}, expected 100 (SPEC-B08)"
         )
 
     def test_min_regime_days_value(self):
@@ -465,10 +465,10 @@ class TestMinRegimeSamplesConfig:
         )
 
     def test_short_regime_would_train(self):
-        """A 50-sample, 15-day regime should pass the training threshold."""
+        """A 100-sample, 15-day regime should pass the training threshold."""
         from quant_engine.config import MIN_REGIME_SAMPLES, MIN_REGIME_DAYS
 
-        n_samples = 50
+        n_samples = 100
         n_days = 15
         assert n_samples >= MIN_REGIME_SAMPLES
         assert n_days >= MIN_REGIME_DAYS
@@ -601,7 +601,7 @@ class TestFullPipelineEndToEnd:
             REGIME_EXPANDED_FEATURES_ENABLED,
         )
 
-        assert MIN_REGIME_SAMPLES == 50
+        assert MIN_REGIME_SAMPLES == 100
         assert MIN_REGIME_DAYS == 10
         assert isinstance(REGIME_ENSEMBLE_DEFAULT_WEIGHTS, dict)
         assert isinstance(REGIME_UNCERTAINTY_SIZING_MAP, dict)

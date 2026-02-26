@@ -102,7 +102,7 @@ def _read_csv_ohlcv(path: Path) -> Optional[pd.DataFrame]:
         if len(raw.columns) == 0:
             return None
         date_col = raw.columns[0]
-    raw.loc[:, date_col] = pd.to_datetime(raw[date_col], errors="coerce")
+    raw[date_col] = pd.to_datetime(raw[date_col], errors="coerce")
     raw = raw.dropna(subset=[date_col])
     raw.index = pd.DatetimeIndex(raw.pop(date_col))
     return _to_daily_ohlcv(raw)

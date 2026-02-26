@@ -211,7 +211,7 @@ REGIME_NAMES = {                                   # STATUS: ACTIVE — used in 
     2: "mean_reverting",
     3: "high_volatility",
 }
-MIN_REGIME_SAMPLES = 50                           # STATUS: ACTIVE — models/trainer.py; minimum training samples per regime model (reduced from 500 for short regimes, SPEC_10)
+MIN_REGIME_SAMPLES = 100                          # STATUS: ACTIVE — models/trainer.py; minimum training samples per regime model (SPEC-B08: 100 for reliable covariance/mean estimation)
 REGIME_MODEL_TYPE = "jump"                        # STATUS: ACTIVE — regime/detector.py; "jump", "hmm", or "rule"
 REGIME_HMM_STATES = 4                             # STATUS: ACTIVE — regime/hmm.py; number of hidden states
 REGIME_HMM_MAX_ITER = 60                          # STATUS: ACTIVE — regime/hmm.py; EM iteration limit

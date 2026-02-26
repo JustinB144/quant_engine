@@ -55,10 +55,38 @@ dev = [
 ]
 
 [project.scripts]
-qe-server = "api.main:run_server"
+qe-server = "quant_engine.api.main:run_server"
 
-[tool.setuptools.packages.find]
-include = ["quant_engine*", "api*", "models*"]
+[tool.setuptools.package-dir]
+quant_engine = "."
+
+[tool.setuptools]
+packages = [
+    "quant_engine",
+    "quant_engine.api",
+    "quant_engine.api.cache",
+    "quant_engine.api.deps",
+    "quant_engine.api.jobs",
+    "quant_engine.api.routers",
+    "quant_engine.api.schemas",
+    "quant_engine.api.services",
+    "quant_engine.autopilot",
+    "quant_engine.backtest",
+    "quant_engine.config_data",
+    "quant_engine.data",
+    "quant_engine.data.providers",
+    "quant_engine.evaluation",
+    "quant_engine.features",
+    "quant_engine.indicators",
+    "quant_engine.kalshi",
+    "quant_engine.kalshi.tests",
+    "quant_engine.models",
+    "quant_engine.models.iv",
+    "quant_engine.regime",
+    "quant_engine.risk",
+    "quant_engine.utils",
+    "quant_engine.validation",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

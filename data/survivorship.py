@@ -380,13 +380,13 @@ def hydrate_universe_history_from_snapshots(
         return 0
 
     df = snapshots[["date", id_col]].copy()
-    df.loc[:, "date"] = pd.to_datetime(df["date"]).dt.date
+    df["date"] = pd.to_datetime(df["date"]).dt.date
     if id_col == "permno":
-        df.loc[:, id_col] = pd.to_numeric(df[id_col], errors="coerce")
+        df[id_col] = pd.to_numeric(df[id_col], errors="coerce")
         df = df.dropna(subset=["date", id_col])
-        df.loc[:, id_col] = df[id_col].astype(int).astype(str)
+        df[id_col] = df[id_col].astype(int).astype(str)
     else:
-        df.loc[:, id_col] = df[id_col].astype(str).str.strip().str.upper()
+        df[id_col] = df[id_col].astype(str).str.strip().str.upper()
         df = df.dropna(subset=["date", id_col])
         df = df[df[id_col] != ""]
     if len(df) == 0:
