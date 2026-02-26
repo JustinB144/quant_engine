@@ -84,7 +84,10 @@ class AlternativeDataProvider:
     # ── 2.1  Earnings Surprise (I/B/E/S) ────────────────────────────────
 
     def get_earnings_surprise(
-        self, ticker: str, lookback_days: int = 90
+        self,
+        ticker: str,
+        lookback_days: int = 90,
+        as_of_date: Optional[datetime] = None,
     ) -> Optional[pd.DataFrame]:
         """Return earnings surprise data for *ticker* from WRDS I/B/E/S.
 
@@ -102,6 +105,11 @@ class AlternativeDataProvider:
         lookback_days : int
             Number of calendar days to look back for earnings reports.
             Set to a large value (e.g. 3650) for longer history.
+        as_of_date : datetime, optional
+            Point-in-time cutoff.  When running inside a backtest this
+            should be set to the current bar date so that no future
+            earnings announcements leak into the feature set.  Defaults
+            to ``datetime.now()`` for live / interactive use.
 
         Returns
         -------
@@ -112,8 +120,9 @@ class AlternativeDataProvider:
             return None
 
         try:
-            end_date = datetime.now().strftime('%Y-%m-%d')
-            start_date = (datetime.now() - timedelta(days=max(lookback_days, 365 * 5))).strftime('%Y-%m-%d')
+            reference_dt = as_of_date if as_of_date is not None else datetime.now()
+            end_date = reference_dt.strftime('%Y-%m-%d')
+            start_date = (reference_dt - timedelta(days=max(lookback_days, 365 * 5))).strftime('%Y-%m-%d')
 
             raw = self._wrds.get_earnings_surprises(
                 tickers=[ticker.upper().strip()],
@@ -163,7 +172,7 @@ class AlternativeDataProvider:
             out["revision_momentum"] = out["eps_estimate"].diff()
 
             # Apply lookback filter
-            cutoff = pd.Timestamp(datetime.now() - timedelta(days=lookback_days))
+            cutoff = pd.Timestamp(reference_dt - timedelta(days=lookback_days))
             out = out[out["report_date"] >= cutoff].reset_index(drop=True)
 
             if out.empty:
@@ -177,7 +186,11 @@ class AlternativeDataProvider:
 
     # ── 2.2  Options Flow (OptionMetrics) ───────────────────────────────
 
-    def get_options_flow(self, ticker: str) -> Optional[pd.DataFrame]:
+    def get_options_flow(
+        self,
+        ticker: str,
+        as_of_date: Optional[datetime] = None,
+    ) -> Optional[pd.DataFrame]:
         """Return options flow data for *ticker* from WRDS OptionMetrics.
 
         Output columns:
@@ -188,6 +201,9 @@ class AlternativeDataProvider:
         ----------
         ticker : str
             Stock ticker symbol.
+        as_of_date : datetime, optional
+            Point-in-time cutoff for backtest safety.  Defaults to
+            ``datetime.now()``.
 
         Returns
         -------
@@ -203,8 +219,9 @@ class AlternativeDataProvider:
                 logger.debug("get_options_flow(%s): cannot resolve PERMNO", ticker)
                 return None
 
-            end_date = datetime.now().strftime('%Y-%m-%d')
-            start_date = (datetime.now() - timedelta(days=365 * 3)).strftime('%Y-%m-%d')
+            reference_dt = as_of_date if as_of_date is not None else datetime.now()
+            end_date = reference_dt.strftime('%Y-%m-%d')
+            start_date = (reference_dt - timedelta(days=365 * 3)).strftime('%Y-%m-%d')
 
             raw = self._wrds.query_options_volume(
                 permno=permno,
@@ -247,7 +264,11 @@ class AlternativeDataProvider:
 
     # ── 2.3  Short Interest (Compustat) ─────────────────────────────────
 
-    def get_short_interest(self, ticker: str) -> Optional[pd.DataFrame]:
+    def get_short_interest(
+        self,
+        ticker: str,
+        as_of_date: Optional[datetime] = None,
+    ) -> Optional[pd.DataFrame]:
         """Return short interest data for *ticker* from Compustat via WRDS.
 
         Output columns:
@@ -259,6 +280,9 @@ class AlternativeDataProvider:
         ----------
         ticker : str
             Stock ticker symbol.
+        as_of_date : datetime, optional
+            Point-in-time cutoff for backtest safety.  Defaults to
+            ``datetime.now()``.
 
         Returns
         -------
@@ -274,8 +298,9 @@ class AlternativeDataProvider:
                 logger.debug("get_short_interest(%s): cannot resolve PERMNO", ticker)
                 return None
 
-            end_date = datetime.now().strftime('%Y-%m-%d')
-            start_date = (datetime.now() - timedelta(days=365 * 3)).strftime('%Y-%m-%d')
+            reference_dt = as_of_date if as_of_date is not None else datetime.now()
+            end_date = reference_dt.strftime('%Y-%m-%d')
+            start_date = (reference_dt - timedelta(days=365 * 3)).strftime('%Y-%m-%d')
 
             raw = self._wrds.query_short_interest(
                 permno=permno,
@@ -329,7 +354,11 @@ class AlternativeDataProvider:
 
     # ── 2.4  Insider Transactions (TFN) ─────────────────────────────────
 
-    def get_insider_transactions(self, ticker: str) -> Optional[pd.DataFrame]:
+    def get_insider_transactions(
+        self,
+        ticker: str,
+        as_of_date: Optional[datetime] = None,
+    ) -> Optional[pd.DataFrame]:
         """Return insider transaction data for *ticker* from TFN via WRDS.
 
         Output columns:
@@ -341,6 +370,9 @@ class AlternativeDataProvider:
         ----------
         ticker : str
             Stock ticker symbol.
+        as_of_date : datetime, optional
+            Point-in-time cutoff for backtest safety.  Defaults to
+            ``datetime.now()``.
 
         Returns
         -------
@@ -356,8 +388,9 @@ class AlternativeDataProvider:
                 logger.debug("get_insider_transactions(%s): cannot resolve PERMNO", ticker)
                 return None
 
-            end_date = datetime.now().strftime('%Y-%m-%d')
-            start_date = (datetime.now() - timedelta(days=365 * 3)).strftime('%Y-%m-%d')
+            reference_dt = as_of_date if as_of_date is not None else datetime.now()
+            end_date = reference_dt.strftime('%Y-%m-%d')
+            start_date = (reference_dt - timedelta(days=365 * 3)).strftime('%Y-%m-%d')
 
             raw = self._wrds.query_insider_transactions(
                 permno=permno,
@@ -446,7 +479,9 @@ class AlternativeDataProvider:
     # ── 2.5  Institutional Ownership Changes (13F / TFN s34) ────────────
 
     def get_institutional_ownership(
-        self, ticker: str
+        self,
+        ticker: str,
+        as_of_date: Optional[datetime] = None,
     ) -> Optional[pd.DataFrame]:
         """Return institutional ownership data with QoQ change features.
 
@@ -459,6 +494,9 @@ class AlternativeDataProvider:
         ----------
         ticker : str
             Stock ticker symbol.
+        as_of_date : datetime, optional
+            Point-in-time cutoff for backtest safety.  Defaults to
+            ``datetime.now()``.
 
         Returns
         -------
@@ -469,8 +507,9 @@ class AlternativeDataProvider:
             return None
 
         try:
-            end_date = datetime.now().strftime('%Y-%m-%d')
-            start_date = (datetime.now() - timedelta(days=365 * 5)).strftime('%Y-%m-%d')
+            reference_dt = as_of_date if as_of_date is not None else datetime.now()
+            end_date = reference_dt.strftime('%Y-%m-%d')
+            start_date = (reference_dt - timedelta(days=365 * 5)).strftime('%Y-%m-%d')
 
             raw = self._wrds.get_institutional_ownership(
                 tickers=[ticker.upper().strip()],
@@ -522,6 +561,7 @@ def compute_alternative_features(
     ticker: str,
     provider: Optional[AlternativeDataProvider] = None,
     cache_dir: Optional[Path] = None,
+    as_of_date: Optional[datetime] = None,
 ) -> pd.DataFrame:
     """Gather all available alternative data and return as a feature DataFrame.
 
@@ -541,6 +581,10 @@ def compute_alternative_features(
     cache_dir : Path, optional
         Passed to :class:`AlternativeDataProvider` when *provider* is
         ``None``.
+    as_of_date : datetime, optional
+        Point-in-time cutoff.  During backtests this should be set to the
+        current bar date to prevent future data from leaking into
+        features.  Defaults to ``datetime.now()`` for live use.
 
     Returns
     -------
@@ -554,7 +598,7 @@ def compute_alternative_features(
     frames: list[pd.DataFrame] = []
 
     # --- Earnings surprise -----------------------------------------------
-    earnings = provider.get_earnings_surprise(ticker)
+    earnings = provider.get_earnings_surprise(ticker, as_of_date=as_of_date)
     if earnings is not None and not earnings.empty:
         if "report_date" in earnings.columns and "surprise_pct" in earnings.columns:
             keep = ["report_date", "surprise_pct"]
@@ -569,7 +613,7 @@ def compute_alternative_features(
             frames.append(ef)
 
     # --- Short interest --------------------------------------------------
-    si = provider.get_short_interest(ticker)
+    si = provider.get_short_interest(ticker, as_of_date=as_of_date)
     if si is not None and not si.empty:
         date_col = "settlement_date" if "settlement_date" in si.columns else si.columns[0]
         keep_cols = [
@@ -586,7 +630,7 @@ def compute_alternative_features(
             frames.append(sf)
 
     # --- Options flow ----------------------------------------------------
-    options = provider.get_options_flow(ticker)
+    options = provider.get_options_flow(ticker, as_of_date=as_of_date)
     if options is not None and not options.empty:
         date_col = "date" if "date" in options.columns else options.columns[0]
         keep_cols = [
@@ -602,7 +646,7 @@ def compute_alternative_features(
             frames.append(of)
 
     # --- Insider transactions --------------------------------------------
-    insider = provider.get_insider_transactions(ticker)
+    insider = provider.get_insider_transactions(ticker, as_of_date=as_of_date)
     if insider is not None and not insider.empty:
         if "filing_date" in insider.columns:
             keep_cols = [
@@ -624,7 +668,7 @@ def compute_alternative_features(
                 frames.append(daily)
 
     # --- Institutional ownership changes ---------------------------------
-    inst = provider.get_institutional_ownership(ticker)
+    inst = provider.get_institutional_ownership(ticker, as_of_date=as_of_date)
     if inst is not None and not inst.empty:
         date_col = "fdate" if "fdate" in inst.columns else inst.columns[0]
         keep_cols = [
