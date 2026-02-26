@@ -10,6 +10,9 @@ Coverage:
     4. Missing bars in primary → detected, counted
     5. 2:1 price ratio (split mismatch) → detected
     6. All bars wrong → quarantine triggered (>5% mismatch rate)
+    7. Volume mismatch detection — corrupted volume data is flagged
+    8. Volume detail reporting — mismatch details contain actual values (not 0)
+    9. Column normalization — lowercase/uppercase columns mapped to titlecase
 """
 
 from datetime import time
@@ -19,7 +22,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quant_engine.data.cross_source_validator import CrossSourceValidator, CrossValidationReport
+from quant_engine.data.cross_source_validator import (
+    CrossSourceValidator,
+    CrossValidationReport,
+    normalize_ohlcv_columns,
+)
+
 
 
 # ---------------------------------------------------------------------------
@@ -457,3 +465,204 @@ class TestCrossValidationReport:
 
         for field_name in required_fields:
             assert hasattr(report, field_name), f"Missing field: {field_name}"
+
+
+# ===========================================================================
+# Test 7: Volume mismatch detection (SPEC-B04)
+# ===========================================================================
+
+
+class TestVolumeMismatchDetection:
+    """Deliberately wrong volume data must be caught by the validator."""
+
+    def test_corrupted_volume_detected(self):
+        """Volume that differs by >5% and >100 shares should be flagged."""
+        ibkr_df = _make_ibkr_like_1h(n_days=3)
+        primary_df = ibkr_df.copy()
+
+        # Corrupt volume on several bars: double the volume (>5% and >100 shares)
+        bad_indices = primary_df.index[:5]
+        for ts in bad_indices:
+            primary_df.loc[ts, "Volume"] = ibkr_df.loc[ts, "Volume"] * 2.0
+
+        validator = _create_mock_validator(volume_tolerance_pct=5.0, volume_min_abs_diff=100)
+        result = validator._compare_bars(primary_df, ibkr_df, "TEST", "1h")
+
+        assert result["volume_anomalies"] == 5, (
+            f"Expected 5 volume anomalies, got {result['volume_anomalies']}"
+        )
+
+    def test_small_volume_diff_not_flagged(self):
+        """Volume difference under min_abs_diff should not be flagged."""
+        ibkr_df = _make_ibkr_like_1h(n_days=3)
+        primary_df = ibkr_df.copy()
+
+        # Add only 50 shares — under the 100-share min_abs_diff threshold
+        primary_df["Volume"] = ibkr_df["Volume"] + 50
+
+        validator = _create_mock_validator(volume_tolerance_pct=5.0, volume_min_abs_diff=100)
+        result = validator._compare_bars(primary_df, ibkr_df, "TEST", "1h")
+
+        assert result["volume_anomalies"] == 0
+
+    def test_volume_zeroed_out_detected(self):
+        """Volume dropped to zero should be flagged (absolute diff > 100)."""
+        ibkr_df = _make_ibkr_like_1h(n_days=3)
+        primary_df = ibkr_df.copy()
+
+        # Zero out all volume in primary
+        primary_df["Volume"] = 0.0
+
+        validator = _create_mock_validator(volume_tolerance_pct=5.0, volume_min_abs_diff=100)
+        result = validator._compare_bars(primary_df, ibkr_df, "TEST", "1h")
+
+        # All bars should flag as volume anomalies (ibkr volume is 5000-200000)
+        assert result["volume_anomalies"] == result["overlapping_bars"]
+
+
+# ===========================================================================
+# Test 8: Volume detail reporting (SPEC-B04 regression test)
+# ===========================================================================
+
+
+class TestVolumeMismatchDetailReporting:
+    """Mismatch detail dicts must contain actual volume values, not 0."""
+
+    def test_volume_detail_reports_actual_values(self):
+        """
+        Regression test for the lowercase 'volume' bug.
+
+        Before the fix, detail["volume_mismatch"]["primary"] and
+        detail["volume_mismatch"]["ibkr"] were always 0 because the code
+        used prim_row.get("volume", 0) instead of prim_row.get("Volume", 0).
+        """
+        ibkr_df = _make_ibkr_like_1h(n_days=3)
+        primary_df = ibkr_df.copy()
+
+        # Corrupt one bar's volume significantly
+        bad_ts = primary_df.index[5]
+        original_ibkr_vol = int(ibkr_df.loc[bad_ts, "Volume"])
+        primary_df.loc[bad_ts, "Volume"] = original_ibkr_vol * 3.0  # 3x different
+
+        validator = _create_mock_validator(volume_tolerance_pct=5.0, volume_min_abs_diff=100)
+        result = validator._compare_bars(primary_df, ibkr_df, "TEST", "1h")
+
+        assert result["volume_anomalies"] >= 1
+
+        # Find the volume mismatch detail for our corrupted bar
+        vol_details = [
+            d for d in result["details"]
+            if d.get("timestamp") == bad_ts and "volume_mismatch" in d
+        ]
+        assert len(vol_details) == 1, "Expected exactly one volume mismatch detail"
+
+        vol_info = vol_details[0]["volume_mismatch"]
+
+        # Key assertion: values must be actual volumes, NOT 0
+        assert vol_info["primary"] == int(original_ibkr_vol * 3.0), (
+            f"Expected primary volume {int(original_ibkr_vol * 3.0)}, got {vol_info['primary']}"
+        )
+        assert vol_info["ibkr"] == original_ibkr_vol, (
+            f"Expected ibkr volume {original_ibkr_vol}, got {vol_info['ibkr']}"
+        )
+        assert vol_info["pct_diff"] > 0, "pct_diff should be positive for mismatched volumes"
+
+
+# ===========================================================================
+# Test 9: Column normalization (SPEC-B04)
+# ===========================================================================
+
+
+class TestColumnNormalization:
+    """Verify normalize_ohlcv_columns maps non-standard casing to canonical titlecase."""
+
+    def test_lowercase_columns_normalized(self):
+        """Lowercase OHLCV columns should be mapped to titlecase."""
+        df = pd.DataFrame({
+            "open": [100.0], "high": [105.0], "low": [95.0],
+            "close": [102.0], "volume": [50000],
+        })
+        result = normalize_ohlcv_columns(df)
+
+        assert "Open" in result.columns
+        assert "High" in result.columns
+        assert "Low" in result.columns
+        assert "Close" in result.columns
+        assert "Volume" in result.columns
+        # Original lowercase should be gone
+        assert "open" not in result.columns
+        assert "volume" not in result.columns
+
+    def test_uppercase_columns_normalized(self):
+        """UPPERCASE OHLCV columns should be mapped to titlecase."""
+        df = pd.DataFrame({
+            "OPEN": [100.0], "HIGH": [105.0], "LOW": [95.0],
+            "CLOSE": [102.0], "VOLUME": [50000],
+        })
+        result = normalize_ohlcv_columns(df)
+
+        assert "Open" in result.columns
+        assert "High" in result.columns
+        assert "Low" in result.columns
+        assert "Close" in result.columns
+        assert "Volume" in result.columns
+
+    def test_already_titlecase_unchanged(self):
+        """Columns already in titlecase should not be changed."""
+        df = pd.DataFrame({
+            "Open": [100.0], "High": [105.0], "Low": [95.0],
+            "Close": [102.0], "Volume": [50000],
+        })
+        result = normalize_ohlcv_columns(df)
+
+        assert list(result.columns) == ["Open", "High", "Low", "Close", "Volume"]
+
+    def test_vol_abbreviation_normalized(self):
+        """'vol' should be mapped to 'Volume'."""
+        df = pd.DataFrame({"Open": [100.0], "High": [105.0], "Low": [95.0],
+                           "Close": [102.0], "vol": [50000]})
+        result = normalize_ohlcv_columns(df)
+        assert "Volume" in result.columns
+        assert "vol" not in result.columns
+
+    def test_extra_columns_preserved(self):
+        """Non-OHLCV columns should be passed through unchanged."""
+        df = pd.DataFrame({
+            "open": [100.0], "high": [105.0], "low": [95.0],
+            "close": [102.0], "volume": [50000], "vwap": [101.5],
+        })
+        result = normalize_ohlcv_columns(df)
+
+        assert "vwap" in result.columns
+        assert result["vwap"].iloc[0] == 101.5
+
+    def test_empty_dataframe_no_error(self):
+        """Empty DataFrame should be returned without error."""
+        df = pd.DataFrame()
+        result = normalize_ohlcv_columns(df)
+        assert result.empty
+
+    def test_compare_bars_normalizes_lowercase_input(self):
+        """
+        _compare_bars should detect volume mismatches even when input uses
+        lowercase column names, thanks to built-in normalization.
+        """
+        ibkr_df = _make_ibkr_like_1h(n_days=3)
+
+        # Create primary with lowercase columns
+        primary_df = pd.DataFrame({
+            "open": ibkr_df["Open"].values,
+            "high": ibkr_df["High"].values,
+            "low": ibkr_df["Low"].values,
+            "close": ibkr_df["Close"].values,
+            "volume": ibkr_df["Volume"].values * 3.0,  # Deliberately wrong
+        }, index=ibkr_df.index)
+
+        validator = _create_mock_validator(volume_tolerance_pct=5.0, volume_min_abs_diff=100)
+        result = validator._compare_bars(primary_df, ibkr_df, "TEST", "1h")
+
+        # Despite lowercase input, normalization should enable volume detection
+        assert result["volume_anomalies"] == result["overlapping_bars"], (
+            f"Expected all bars flagged, got {result['volume_anomalies']} "
+            f"of {result['overlapping_bars']}"
+        )

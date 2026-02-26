@@ -18,6 +18,49 @@ from ib_insync import IB, Stock, util as ib_util
 
 logger = logging.getLogger(__name__)
 
+# Canonical OHLCV column names used throughout quant_engine
+CANONICAL_OHLCV = ["Open", "High", "Low", "Close", "Volume"]
+
+
+def normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize OHLCV column names to canonical titlecase.
+
+    Maps any casing variant (lowercase, UPPERCASE, mixed) to the standard
+    quant_engine convention: Open, High, Low, Close, Volume.
+
+    Args:
+        df: DataFrame with potentially non-standard column names.
+
+    Returns:
+        DataFrame with columns renamed to canonical titlecase.
+    """
+    if df.empty:
+        return df
+
+    col_map = {}
+    used = set()
+    for col in df.columns:
+        col_lower = str(col).lower().strip()
+        target = None
+        if col_lower == "open":
+            target = "Open"
+        elif col_lower == "high":
+            target = "High"
+        elif col_lower == "low":
+            target = "Low"
+        elif col_lower == "close":
+            target = "Close"
+        elif col_lower in ("volume", "vol"):
+            target = "Volume"
+        if target and target not in used and str(col) != target:
+            col_map[col] = target
+            used.add(target)
+
+    if col_map:
+        df = df.rename(columns=col_map)
+    return df
+
 
 @dataclass
 class CrossValidationReport:
@@ -147,6 +190,9 @@ class CrossSourceValidator:
             logger.warning(f"Primary data empty for {ticker}")
             report.details.append({"error": "Primary data empty"})
             return primary_df, report
+
+        # Normalize OHLCV column names to canonical titlecase
+        primary_df = normalize_ohlcv_columns(primary_df)
 
         # Ensure datetime index
         if not isinstance(primary_df.index, pd.DatetimeIndex):
@@ -423,6 +469,10 @@ class CrossSourceValidator:
             "mismatches": [],
         }
 
+        # Normalize OHLCV column names to canonical titlecase
+        primary_df = normalize_ohlcv_columns(primary_df)
+        ibkr_df = normalize_ohlcv_columns(ibkr_df)
+
         # Ensure datetime indices
         if not isinstance(primary_df.index, pd.DatetimeIndex):
             primary_df.index = pd.to_datetime(primary_df.index)
@@ -507,8 +557,8 @@ class CrossSourceValidator:
                                      self.volume_min_abs_diff):
                 result["volume_anomalies"] += 1
                 bar_detail["volume_mismatch"] = {
-                    "primary": int(prim_row.get("volume", 0)),
-                    "ibkr": int(ibkr_row.get("volume", 0)),
+                    "primary": int(prim_row.get("Volume", 0)),
+                    "ibkr": int(ibkr_row.get("Volume", 0)),
                     "pct_diff": self._pct_diff(prim_row.get("Volume"),
                                                ibkr_row.get("Volume")),
                 }
