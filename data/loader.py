@@ -183,6 +183,10 @@ def _cache_is_usable(
 
     Falls back to ``pd.bdate_range`` when ``pandas_market_calendars``
     is unavailable.
+
+    Terminal cache entries (delisted stocks whose history is immutable)
+    bypass the staleness check entirely — a stock that delisted will
+    never produce new bars.
     """
     if cached is None or len(cached) < MIN_BARS:
         return False
@@ -204,6 +208,19 @@ def _cache_is_usable(
     # Allow a modest buffer for partial history windows/market holidays.
     if idx.min() > required_start + pd.Timedelta(days=90):
         return False
+
+    # Terminal entries (delisted stocks) skip the staleness check entirely.
+    # A stock that delisted is historically immutable — its data is complete.
+    if meta and meta.get("is_terminal") is True:
+        logger.debug("Terminal cache hit — skipping staleness check (meta)")
+        return True
+
+    # Also detect terminal state from the data itself if metadata is missing
+    if "delist_event" in cached.columns:
+        delist_col = pd.to_numeric(cached["delist_event"], errors="coerce").fillna(0)
+        if int(delist_col.max()) == 1:
+            logger.debug("Terminal cache hit — skipping staleness check (delist_event)")
+            return True
 
     if require_recent:
         last_trading_day = _get_last_trading_day()

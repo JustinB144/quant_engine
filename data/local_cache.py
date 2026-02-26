@@ -6,7 +6,7 @@ engine can run in minimal environments without pyarrow/fastparquet.
 """
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Tuple
 
@@ -206,6 +206,8 @@ def save_ohlcv(
         ticker: Stock ticker symbol
         df: DataFrame with OHLCV columns and DatetimeIndex
         cache_dir: Override cache directory (default: DATA_CACHE_DIR)
+        source: Data provenance label (e.g. "wrds", "ibkr")
+        meta: Additional metadata to persist in the sidecar JSON
 
     Returns:
         Path to saved file
@@ -215,16 +217,30 @@ def save_ohlcv(
     daily = _to_daily_ohlcv(df)
     if daily is None:
         raise ValueError(f"Invalid OHLCV data for {ticker}")
+
+    # Detect terminal delisting event in the data.
+    # A stock with delist_event == 1 is historically immutable — its cache
+    # can be marked terminal so downstream code skips staleness checks.
+    extra_meta: Dict[str, object] = dict(meta) if meta else {}
+    if "delist_event" in df.columns:
+        delist_col = pd.to_numeric(df["delist_event"], errors="coerce").fillna(0)
+        if int(delist_col.max()) == 1:
+            delist_rows = df[delist_col == 1]
+            delist_date = str(pd.to_datetime(delist_rows.index.max()).date())
+            extra_meta.setdefault("is_terminal", True)
+            extra_meta.setdefault("terminal_date", delist_date)
+            extra_meta.setdefault("terminal_reason", "delisted")
+
     parquet_path = d / f"{ticker.upper()}_1d.parquet"
     try:
         daily.to_parquet(parquet_path)
-        _write_cache_meta(parquet_path, ticker=ticker, df=daily, source=source, meta=meta)
+        _write_cache_meta(parquet_path, ticker=ticker, df=daily, source=source, meta=extra_meta)
         return parquet_path
     except (ImportError, OSError) as e:
         logger.debug("Parquet write failed for %s, falling back to CSV: %s", ticker, e)
         csv_path = d / f"{ticker.upper()}_1d.csv"
         daily.to_csv(csv_path, index=True)
-        _write_cache_meta(csv_path, ticker=ticker, df=daily, source=source, meta=meta)
+        _write_cache_meta(csv_path, ticker=ticker, df=daily, source=source, meta=extra_meta)
         return csv_path
 
 
@@ -633,6 +649,94 @@ def rehydrate_cache_metadata(
                     meta=meta_extras,
                 )
             summary["written"] += 1
+
+    return summary
+
+
+def backfill_terminal_metadata(
+    cache_dir: Optional[Path] = None,
+    dry_run: bool = False,
+) -> Dict[str, int]:
+    """Scan cache for delisted stocks and set is_terminal in their metadata.
+
+    Reads each parquet file, checks for ``delist_event == 1``, and updates
+    the metadata sidecar if found.  Falls back to the ``DelistingHandler``
+    SQLite DB for cache entries that lack a ``delist_event`` column.
+
+    Idempotent — safe to run multiple times.
+
+    Args:
+        cache_dir: Override cache root (default: DATA_CACHE_DIR).
+        dry_run: If True, report counts without writing metadata.
+
+    Returns:
+        Summary dict with counts of files scanned, updated, and skipped.
+    """
+    d = Path(cache_dir) if cache_dir else DATA_CACHE_DIR
+    summary: Dict[str, int] = {
+        "scanned": 0,
+        "updated": 0,
+        "already_terminal": 0,
+        "active": 0,
+        "errors": 0,
+    }
+
+    for path in sorted(d.glob("*_1d.parquet")):
+        summary["scanned"] += 1
+        ticker = path.stem.replace("_1d", "").upper()
+
+        meta = _read_cache_meta(path, ticker)
+        if meta.get("is_terminal") is True:
+            summary["already_terminal"] += 1
+            continue
+
+        try:
+            df = pd.read_parquet(path)
+        except (OSError, ValueError, ImportError):
+            summary["errors"] += 1
+            continue
+
+        has_delist = False
+        terminal_date: Optional[str] = None
+
+        if "delist_event" in df.columns:
+            delist_col = pd.to_numeric(df["delist_event"], errors="coerce").fillna(0)
+            if int(delist_col.max()) == 1:
+                has_delist = True
+                delist_rows = df[delist_col == 1]
+                terminal_date = str(pd.to_datetime(delist_rows.index.max()).date())
+
+        # Cross-reference DelistingHandler for cache entries without delist_event
+        if not has_delist:
+            try:
+                from .survivorship import DelistingHandler
+                from ..config import SURVIVORSHIP_DB
+
+                delist_handler = DelistingHandler(db_path=str(SURVIVORSHIP_DB))
+                event = delist_handler.get_delisting_event(ticker)
+                if event is not None:
+                    last_bar_date = pd.to_datetime(df.index.max()).date()
+                    if last_bar_date <= event.delisting_date + timedelta(days=5):
+                        has_delist = True
+                        terminal_date = str(event.delisting_date)
+            except (ImportError, OSError):
+                pass  # DelistingHandler not available — skip this check
+
+        if has_delist:
+            if not dry_run:
+                meta["is_terminal"] = True
+                meta["terminal_date"] = terminal_date
+                meta["terminal_reason"] = "delisted"
+                _write_cache_meta(
+                    path,
+                    ticker=ticker,
+                    df=df,
+                    source=str(meta.get("source", "unknown")),
+                    meta=meta,
+                )
+            summary["updated"] += 1
+        else:
+            summary["active"] += 1
 
     return summary
 

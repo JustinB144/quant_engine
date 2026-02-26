@@ -27,18 +27,38 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from quant_engine.config import DATA_CACHE_DIR, UNIVERSE_FULL, BENCHMARK
-from quant_engine.data.local_cache import list_cached_tickers, save_ohlcv
+from quant_engine.data.local_cache import list_cached_tickers, load_ohlcv_with_meta, save_ohlcv
 
 
-def _build_ticker_list(tickers_arg):
-    """Build the full ticker list from cached + UNIVERSE_FULL + BENCHMARK."""
+def _build_ticker_list(tickers_arg, skip_terminal=True):
+    """Build the full ticker list from cached + UNIVERSE_FULL + BENCHMARK.
+
+    If *skip_terminal* is True, exclude tickers whose cache metadata has
+    ``is_terminal=True`` (delisted stocks with complete, immutable data).
+    """
     if tickers_arg:
         return [t.strip().upper() for t in tickers_arg.split(",") if t.strip()]
     cached = set(list_cached_tickers())
     universe = set(UNIVERSE_FULL)
     benchmark = {BENCHMARK}
     combined = sorted(cached | universe | benchmark)
-    return combined
+
+    if not skip_terminal:
+        return combined
+
+    active = []
+    skipped_terminal = []
+    for ticker in combined:
+        _, meta, _ = load_ohlcv_with_meta(ticker)
+        if meta and meta.get("is_terminal") is True:
+            skipped_terminal.append(ticker)
+            continue
+        active.append(ticker)
+    if skipped_terminal:
+        print(f"  Skipping {len(skipped_terminal)} terminal/delisted tickers "
+              f"(immutable cache): {', '.join(skipped_terminal[:10])}"
+              f"{'...' if len(skipped_terminal) > 10 else ''}")
+    return active
 
 
 def _verify_file(path):
@@ -291,13 +311,29 @@ def main():
                         help="Only run verification on existing _1d.parquet files")
     parser.add_argument("--gics", action="store_true",
                         help="Refresh GICS sector mapping from WRDS Compustat and write to config_data/universe.yaml")
+    parser.add_argument("--include-terminal", action="store_true",
+                        help="Include delisted/terminal tickers in refresh (normally skipped as immutable)")
+    parser.add_argument("--backfill-terminal", action="store_true",
+                        help="Scan cache and mark delisted stocks as terminal (one-time migration)")
     args = parser.parse_args()
 
     print(f"\n{'='*60}")
     print(f"WRDS DAILY DATA RE-DOWNLOAD")
     print(f"{'='*60}")
 
-    tickers = _build_ticker_list(args.tickers)
+    # Handle --backfill-terminal before building the ticker list
+    if args.backfill_terminal:
+        print(f"\n── Backfill Terminal Metadata ──")
+        from quant_engine.data.local_cache import backfill_terminal_metadata
+        result = backfill_terminal_metadata(DATA_CACHE_DIR)
+        print(f"  Scanned: {result['scanned']}")
+        print(f"  Newly marked terminal: {result['updated']}")
+        print(f"  Already terminal: {result['already_terminal']}")
+        print(f"  Active (no delist): {result['active']}")
+        print(f"  Errors: {result['errors']}")
+        return
+
+    tickers = _build_ticker_list(args.tickers, skip_terminal=not args.include_terminal)
     print(f"  Tickers: {len(tickers)}")
     print(f"  Cache dir: {DATA_CACHE_DIR}")
 
