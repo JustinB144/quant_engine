@@ -5,7 +5,7 @@
 **Last Merged**: 2026-02-26 (combined MASTER_IMPLEMENTATION_SPECS.md + SPECS_STARTUP_AND_ROADMAP.md)
 **Scope**: All verified improvements, audit findings, startup fixes, and integration wiring gaps
 **Verification Method**: Every spec was verified against actual source code — no assumptions
-**Total Specs**: 35 specs across 8 phases
+**Total Specs**: 36 specs across 8 phases
 
 ---
 
@@ -170,7 +170,7 @@ All 8 critical bugs in this phase have been resolved. They are preserved here fo
 
 This is the highest-ROI work. These modules already exist and are tested individually, but their outputs aren't passed to consumers. Also includes two startup warning fixes.
 
-## SPEC-W01: Wire structural state into execution simulator [CRITICAL]
+## SPEC-W01: Wire structural state into execution simulator [CRITICAL] ✅ COMPLETE
 
 **STATUS**: `backtest/execution.py` lines 255-258: `simulate()` accepts `break_probability`, `structure_uncertainty`, `drift_score`, `systemic_stress` parameters. These feed into a structural multiplier that scales spreads and impact (lines 399-416). But `backtest/engine.py` NEVER passes these when calling `simulate()` (lines 325-336, 399-410). Only passes `realized_vol`, `overnight_gap`, `intraday_range`, `urgency_type`, `volume_trend`.
 
@@ -224,7 +224,7 @@ Pre-compute shock vectors for the entire backtest period to avoid redundant regi
 
 ---
 
-## SPEC-W02: Wire cost calibrator into backtest execution [HIGH]
+## SPEC-W02: Wire cost calibrator into backtest execution [HIGH] ✅ COMPLETE
 
 **STATUS**: `backtest/cost_calibrator.py` has a complete `CostCalibrator` class with per-segment (micro/small/mid/large) impact coefficients. NEVER imported in `backtest/engine.py`. `backtest/execution.py` line 75 uses flat `EXEC_IMPACT_COEFF_BPS = 25.0` for all securities. `simulate()` accepts `impact_coeff_override` parameter (line 263) — already designed for this.
 
@@ -261,7 +261,7 @@ After each trade, feed actual cost data back: `calibrator.record_trade(...)` for
 
 ---
 
-## SPEC-W03: Wire uncertainty gate into position sizing and portfolio weights [CRITICAL]
+## SPEC-W03: Wire uncertainty gate into position sizing and portfolio weights [CRITICAL] ✅ COMPLETE
 
 **STATUS**: `regime/uncertainty_gate.py` has a complete `UncertaintyGate` class with `compute_size_multiplier()` and `apply_uncertainty_gate()`. Exported from `regime/__init__.py` line 18. NEVER imported in `backtest/engine.py` or `autopilot/engine.py`. Only used in test files.
 
@@ -298,7 +298,7 @@ weights = gate.apply_uncertainty_gate(weights, current_uncertainty)
 
 ---
 
-## SPEC-W04: Wire regime covariance into portfolio optimizer [HIGH]
+## SPEC-W04: Wire regime covariance into portfolio optimizer [HIGH] ✅ COMPLETE
 
 **STATUS**: `risk/covariance.py` line 230: `compute_regime_covariance()` exists — takes returns + regime labels, returns `Dict[int, pd.DataFrame]`. `risk/covariance.py` line 317: `get_regime_covariance()` also exists. But `autopilot/engine.py` (lines 1230-1248) uses generic `CovarianceEstimator().estimate(returns_df)` — NOT regime-aware. Line 1231 even has a comment: "regime-conditional covariance requires aligned regime labels" — acknowledging the gap.
 
@@ -337,7 +337,7 @@ weights = optimize_portfolio(
 
 ---
 
-## SPEC-W05: Wire reproducibility manifests into all entry points [HIGH]
+## SPEC-W05: Wire reproducibility manifests into all entry points [HIGH] ✅ COMPLETE
 
 **STATUS**: `reproducibility.py` has `build_run_manifest()`, `write_run_manifest()`, and `verify_manifest()` fully implemented (lines 117-235). None of `run_backtest.py`, `run_train.py`, `run_retrain.py`, `run_autopilot.py`, `run_predict.py` call any of these functions.
 
@@ -868,7 +868,7 @@ EDGE_COST_BUFFER_BASE_BPS = 5.0  # Additional buffer beyond expected cost
 
 ---
 
-## SPEC-E02: Generalize regime suppression beyond "regime 2" [HIGH]
+## SPEC-E02: Generalize regime suppression beyond "regime 2" [HIGH] ✅ COMPLETE
 
 **STATUS**: `backtest/engine.py` line 603 hardcodes `regime == 2`:
 ```python
@@ -1537,20 +1537,20 @@ The user correctly identified that regime state (probabilities + uncertainty + s
 **Phase 0 — Critical Bugs** ✅ COMPLETE (8 specs done)
 
 **Phase 1 — Critical Wiring + Startup Fixes (~25 hours)**:
-SPEC-W01 through SPEC-W08 (8 specs)
-- W01: Wire structural state → execution [CRITICAL] (3h)
-- W02: Wire cost calibrator → backtest [HIGH] (2h)
-- W03: Wire uncertainty gate → sizing [CRITICAL] (2h)
-- W04: Wire regime covariance → optimizer [HIGH] (2h)
-- W05: Wire reproducibility manifests → entry points [HIGH] (2h)
-- W06: Populate GICS_SECTORS + --gics flag [HIGH] (2h)
-- W07: Handle WRDS warning gracefully [MEDIUM] (1h)
+SPEC-W01 through SPEC-W08 (8 specs — 6 done, 2 remaining)
+- W01: Wire structural state → execution [CRITICAL] ✅ DONE (3h)
+- W02: Wire cost calibrator → backtest [HIGH] ✅ DONE (2h)
+- W03: Wire uncertainty gate → sizing [CRITICAL] ✅ DONE (2h)
+- W04: Wire regime covariance → optimizer [HIGH] ✅ DONE (2h)
+- W05: Wire reproducibility manifests → entry points [HIGH] ✅ DONE (2h)
+- W06: Populate GICS_SECTORS + --gics flag [HIGH] ✅ DONE (2h)
+- W07: Handle WRDS warning gracefully [MEDIUM] **← NEXT** (1h)
 - W08: Permanent cache for delisted stock data [HIGH] (3h)
 
 **Phase 2 — Execution Layer (~12 hours)**:
 SPEC-E01 through SPEC-E04 (4 specs)
 - E01: Edge-after-costs trade gating [CRITICAL] (4h)
-- E02: Generalize regime suppression [HIGH] (2h)
+- E02: Generalize regime suppression [HIGH] (2h) ✅ COMPLETE
 - E03: Shock-mode execution policy [HIGH] (3h)
 - E04: Calibration feedback loop [MEDIUM] (3h)
 
@@ -1591,16 +1591,16 @@ SPEC-H01 through SPEC-H03 (3 specs)
 | Phase | Specs | Hours | Status |
 |-------|-------|-------|--------|
 | 0 — Critical Bugs | 8 | ~16h | ✅ COMPLETE |
-| 1 — Critical Wiring + Startup | 7 | ~22h | **START HERE** |
+| 1 — Critical Wiring + Startup | 8 (6 done) | ~25h | W07-W08 remaining |
 | 2 — Execution Layer | 4 | ~12h | Pending |
 | 3 — Portfolio Layer | 4 | ~12h | Pending |
 | 4 — Evaluation Layer | 3 | ~10h | Pending |
 | 5 — Data & Features | 3 | ~8h | Pending |
 | 6 — Config & Architecture | 2 | ~8h | Pending |
 | 7 — Health & Monitoring | 3 | ~8h | Pending |
-| **TOTAL** | **34 active + 8 done** | **~96h** | Phase 0 done |
+| **TOTAL** | **22 remaining + 14 done** | **~99h** | W07 next |
 
-**Note**: Phase 0's 8 specs are preserved in collapsed sections for audit trail but are marked complete. Active work begins at Phase 1 with 27 remaining specs (~80 hours).
+**Note**: Phase 0 (8 specs) and W01-W06 (6 specs) are complete. Active work continues at W07 with 22 remaining specs (~69 hours).
 
 ---
 
