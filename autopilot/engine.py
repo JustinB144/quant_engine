@@ -1177,17 +1177,40 @@ class AutopilotEngine:
         self,
         latest_predictions: pd.DataFrame,
         data: Dict[str, pd.DataFrame],
+        predictions_hist: Optional[pd.DataFrame] = None,
     ) -> Optional[pd.Series]:
         """Compute confidence-weighted portfolio optimizer weights.
 
         Uses the predicted returns from latest predictions as expected returns
-        and regime-conditional covariance for risk budgeting.  After
-        optimisation, each asset's weight is scaled by its calibrated
+        and regime-conditional covariance for risk budgeting.  When regime
+        data is available (via ``predictions_hist``), the optimizer uses
+        the covariance matrix estimated for the current market regime rather
+        than a full-sample estimate.  This causes the optimizer to reflect
+        the higher correlations typical of stress regimes, producing more
+        diversified portfolios when it matters most.
+
+        After optimisation, each asset's weight is scaled by its calibrated
         confidence score so that high-confidence predictions receive full
         exposure while low-confidence predictions are reduced.
 
-        Returns None if optimisation is not feasible (too few assets, missing
-        data, etc.).
+        Parameters
+        ----------
+        latest_predictions : pd.DataFrame
+            Cross-sectional predictions for the most recent date with columns
+            including ``permno``, ``predicted_return`` (or ``cs_zscore``),
+            ``regime``, and optionally ``confidence``.
+        data : dict[str, pd.DataFrame]
+            Historical OHLCV data keyed by permno.
+        predictions_hist : pd.DataFrame, optional
+            Full panel of historical predictions (MultiIndex: permno × date)
+            with a ``regime`` column.  Used to construct a date-level regime
+            time-series for regime-conditional covariance estimation.
+
+        Returns
+        -------
+        pd.Series or None
+            Optimal portfolio weights indexed by permno, or ``None`` if
+            optimisation is not feasible (too few assets, missing data, etc.).
         """
         if len(latest_predictions) < 2:
             return None
@@ -1228,15 +1251,65 @@ class AutopilotEngine:
         if returns_df.shape[0] < 30 or returns_df.shape[1] < 2:
             return None
 
-        # Compute covariance (use full-sample for simplicity here;
-        # regime-conditional covariance requires aligned regime labels)
-        try:
-            from ..risk.covariance import CovarianceEstimator
-            estimator = CovarianceEstimator()
-            cov_estimate = estimator.estimate(returns_df)
-            cov_matrix = cov_estimate.covariance
-        except (ImportError, ValueError, RuntimeError):
-            cov_matrix = returns_df.cov()
+        # ── SPEC-W04: Regime-conditional covariance ──
+        # When regime data is available, use regime-specific covariance so the
+        # optimizer reflects the higher correlations typical of stress regimes.
+        # Falls back to generic Ledoit-Wolf when regime data is missing or
+        # insufficient.
+        from ..risk.covariance import (
+            CovarianceEstimator,
+            compute_regime_covariance,
+            get_regime_covariance,
+        )
+
+        # Determine the current regime from latest cross-sectional predictions.
+        current_regime: Optional[int] = None
+        if "regime" in latest_predictions.columns:
+            regime_vals = latest_predictions["regime"].dropna()
+            if len(regime_vals) > 0:
+                current_regime = int(regime_vals.mode().iloc[0])
+
+        # Build a date-level regime time-series from prediction history.
+        regime_series: Optional[pd.Series] = None
+        if predictions_hist is not None and "regime" in predictions_hist.columns:
+            try:
+                if predictions_hist.index.nlevels > 1:
+                    # MultiIndex (permno, date) — aggregate per date
+                    regime_by_date = (
+                        predictions_hist
+                        .groupby(level=1)["regime"]
+                        .agg(lambda x: int(x.mode().iloc[0]) if len(x) > 0 else 0)
+                    )
+                else:
+                    regime_by_date = predictions_hist["regime"]
+                regime_series = regime_by_date.astype(int)
+            except (KeyError, IndexError, ValueError):
+                regime_series = None
+
+        cov_matrix: Optional[pd.DataFrame] = None
+        if current_regime is not None and regime_series is not None and len(regime_series) >= 30:
+            try:
+                regime_covs = compute_regime_covariance(returns_df, regime_series)
+                cov_matrix = get_regime_covariance(regime_covs, current_regime)
+                logger.debug(
+                    "Regime-conditional covariance: regime=%d, %d regime obs",
+                    current_regime,
+                    len(regime_series),
+                )
+            except (ValueError, KeyError) as e:
+                logger.debug(
+                    "Regime covariance failed (%s), falling back to generic estimator",
+                    e,
+                )
+                cov_matrix = None
+
+        if cov_matrix is None:
+            try:
+                estimator = CovarianceEstimator()
+                cov_estimate = estimator.estimate(returns_df)
+                cov_matrix = cov_estimate.covariance
+            except (ValueError, RuntimeError):
+                cov_matrix = returns_df.cov()
 
         # Align assets between expected returns and covariance
         common = sorted(set(expected_returns.index) & set(cov_matrix.columns))
@@ -1347,7 +1420,9 @@ class AutopilotEngine:
         # Weights are already confidence-scaled inside _compute_optimizer_weights.
         # We also store a per-row confidence_weight column so downstream
         # consumers (e.g. paper trader) can use it for independent sizing.
-        optimizer_weights = self._compute_optimizer_weights(latest_predictions, data)
+        optimizer_weights = self._compute_optimizer_weights(
+            latest_predictions, data, predictions_hist=predictions_hist,
+        )
         if "confidence" in latest_predictions.columns:
             latest_predictions["confidence_weight"] = (
                 latest_predictions["confidence"]
