@@ -1,0 +1,176 @@
+# Universe configuration — sectors, liquidity tiers, borrowability, constraints.
+# Used by PortfolioRiskManager and FactorExposureManager (Spec 07).
+
+sectors:
+  tech:
+    - AAPL
+    - MSFT
+    - GOOGL
+    - META
+    - NVDA
+    - AMD
+    - INTC
+    - CRM
+    - ADBE
+    - ORCL
+    - DDOG
+    - NET
+    - CRWD
+    - ZS
+    - SNOW
+    - MDB
+    - PANW
+    - FTNT
+    - TOST
+    - AVGO
+    - CSCO
+    - INTU
+    - ADSK
+    - MSI
+    - MU
+  healthcare:
+    - JNJ
+    - PFE
+    - UNH
+    - ABBV
+    - MRK
+    - LLY
+    - TMO
+    - ABT
+    - DHR
+    - BSX
+    - BDX
+    - GILD
+    - HUM
+  consumer:
+    - AMZN
+    - TSLA
+    - HD
+    - NKE
+    - SBUX
+    - MCD
+    - TGT
+    - COST
+    - CAVA
+    - BROS
+    - CHWY
+    - ETSY
+    - POOL
+    - DRI
+    - BBY
+    - CCL
+    - CLX
+    - CPB
+    - CL
+    - GIS
+    - GPC
+    - HSY
+    - KMB
+    - KR
+    - LEN
+    - LUV
+    - MAR
+    - NKE
+  financial:
+    - JPM
+    - BAC
+    - GS
+    - MS
+    - BLK
+    - V
+    - MA
+    - AXP
+    - MCO
+  industrial:
+    - CAT
+    - DE
+    - GE
+    - HON
+    - BA
+    - LMT
+    - GD
+    - DOV
+    - EMR
+    - ETN
+    - ITW
+    - MMM
+  energy:
+    - CVX
+    - EOG
+    - DVN
+    - HAL
+    - FCX
+  utilities:
+    - NEE
+    - DUK
+    - AEP
+  materials:
+    - ECL
+    - ADM
+  communication:
+    - CMCSA
+    - DIS
+    - EBAY
+
+liquidity_tiers:
+  Mega:
+    market_cap_min: 200.0e9
+    dollar_volume_min: 100.0e6
+  Large:
+    market_cap_min: 10.0e9
+    dollar_volume_min: 1.0e6
+  Mid:
+    market_cap_min: 2.0e9
+    dollar_volume_min: 500.0e3
+  Small:
+    market_cap_min: 300.0e6
+    dollar_volume_min: 100.0e3
+
+borrowability:
+  hard_to_borrow:
+    - TSLA
+    - GME
+    - AMC
+  restricted:
+    - ORCL
+
+constraint_base:
+  sector_cap: 0.40
+  correlation_limit: 0.85
+  gross_exposure: 1.00
+  single_name_cap: 0.10
+  annualized_turnover_max: 5.00
+
+stress_multipliers:
+  normal:
+    sector_cap: 1.0
+    correlation_limit: 1.0
+    gross_exposure: 1.0
+    turnover: 1.0
+  stress:
+    sector_cap: 0.6
+    correlation_limit: 0.7
+    gross_exposure: 0.8
+    turnover: 0.5
+
+factor_limits:
+  beta:
+    normal: [0.8, 1.2]
+    stress: [0.9, 1.1]
+  volatility:
+    normal: [0.8, 1.2]
+    stress: [0.5, 1.0]
+  size:
+    normal: null
+    stress: null
+  value:
+    normal: null
+    stress: null
+  momentum:
+    normal: null
+    stress: null
+
+backoff_policy:
+  mode: continuous
+  thresholds: [0.70, 0.80, 0.90, 0.95]
+  backoff_factors: [0.9, 0.7, 0.5, 0.25]

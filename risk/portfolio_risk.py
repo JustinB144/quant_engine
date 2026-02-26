@@ -2,46 +2,49 @@
 Portfolio Risk Manager — enforces sector, correlation, and exposure limits.
 
 Prevents concentration risk across multiple dimensions:
-    - Sector/industry exposure caps
-    - Pairwise correlation limits
+    - Sector/industry exposure caps (regime-conditioned via Spec 07)
+    - Pairwise correlation limits (regime-conditional covariance)
     - Beta exposure limits
     - Gross/net exposure limits
     - Single-name concentration
+    - Factor exposure bounds (beta, volatility, size, value, momentum)
+    - Continuous sizing backoff when constraints approach binding
+    - Smooth constraint transitions across regime changes
+
+Spec 07: Regime-Conditioned Portfolio Risk Manager
 """
+import logging
+import math
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
 from ..config import MAX_PORTFOLIO_VOL
-from .covariance import CovarianceEstimator
+from .covariance import CovarianceEstimator, compute_regime_covariance, get_regime_covariance
+from .universe_config import UniverseConfig, ConfigError
+
+logger = logging.getLogger(__name__)
 
 
-# Default sector mappings for common tickers
-SECTOR_MAP = {
-    # Tech
+# Legacy sector map — used as fallback when UniverseConfig is unavailable.
+_LEGACY_SECTOR_MAP = {
     "AAPL": "tech", "MSFT": "tech", "GOOGL": "tech", "META": "tech",
     "NVDA": "tech", "AMD": "tech", "INTC": "tech", "CRM": "tech",
     "ADBE": "tech", "ORCL": "tech",
-    # Mid-cap tech
     "DDOG": "tech", "NET": "tech", "CRWD": "tech", "ZS": "tech",
     "SNOW": "tech", "MDB": "tech", "PANW": "tech", "FTNT": "tech",
-    # Healthcare
     "JNJ": "healthcare", "PFE": "healthcare", "UNH": "healthcare",
     "ABBV": "healthcare", "MRK": "healthcare", "LLY": "healthcare",
     "TMO": "healthcare", "ABT": "healthcare",
-    # Consumer
     "AMZN": "consumer", "TSLA": "consumer", "HD": "consumer",
     "NKE": "consumer", "SBUX": "consumer", "MCD": "consumer",
     "TGT": "consumer", "COST": "consumer",
-    # Financial
     "JPM": "financial", "BAC": "financial", "GS": "financial",
     "MS": "financial", "BLK": "financial", "V": "financial", "MA": "financial",
-    # Industrial
     "CAT": "industrial", "DE": "industrial", "GE": "industrial",
     "HON": "industrial", "BA": "industrial", "LMT": "industrial",
-    # Small/mid volatile
     "CAVA": "consumer", "BROS": "consumer", "TOST": "tech",
     "CHWY": "consumer", "ETSY": "consumer", "POOL": "consumer",
 }
@@ -53,29 +56,137 @@ class RiskCheck:
     passed: bool
     violations: List[str] = field(default_factory=list)
     metrics: Dict = field(default_factory=dict)
+    constraint_utilization: Dict[str, float] = field(default_factory=dict)
+    recommended_weights: Optional[np.ndarray] = None
+
+
+class ConstraintMultiplier:
+    """Compute regime-conditioned constraint multipliers.
+
+    In normal regimes (0=trending_bull, 1=trending_bear), multipliers are 1.0.
+    In stress regimes (2=mean_reverting, 3=high_volatility), multipliers tighten
+    constraints by the factors specified in ``universe.yaml``.
+
+    Smooth transitions use exponential smoothing across regime changes to
+    avoid abrupt position liquidations (Spec 07, Task 7).
+    """
+
+    def __init__(self, universe_config: Optional[UniverseConfig] = None):
+        if universe_config is not None:
+            self._normal_mults = universe_config.get_stress_multiplier_set(is_stress=False)
+            self._stress_mults = universe_config.get_stress_multiplier_set(is_stress=True)
+        else:
+            self._normal_mults = {
+                "sector_cap": 1.0, "correlation_limit": 1.0,
+                "gross_exposure": 1.0, "turnover": 1.0,
+            }
+            self._stress_mults = {
+                "sector_cap": 0.6, "correlation_limit": 0.7,
+                "gross_exposure": 0.8, "turnover": 0.5,
+            }
+        # Initialize smoothed multipliers to normal
+        self._smoothed: Dict[str, float] = dict(self._normal_mults)
+        self._prev_regime_is_stress: Optional[bool] = None
+
+    @staticmethod
+    def is_stress_regime(regime: int) -> bool:
+        """Return True if the integer regime represents a stress state.
+
+        Regime mapping (from ``config.REGIME_NAMES``):
+            0 = trending_bull  (normal)
+            1 = trending_bear  (normal — directional, not structural stress)
+            2 = mean_reverting (stress — structural break/rotation)
+            3 = high_volatility (stress — crisis/tail)
+        """
+        return regime in (2, 3)
+
+    def get_multipliers(self, regime: int) -> Dict[str, float]:
+        """Return raw (unsmoothed) constraint multipliers for *regime*."""
+        if self.is_stress_regime(regime):
+            return dict(self._stress_mults)
+        return dict(self._normal_mults)
+
+    def get_multipliers_smoothed(
+        self, regime: int, alpha: float = 0.3,
+    ) -> Dict[str, float]:
+        """Return exponentially smoothed constraint multipliers.
+
+        Smoothing prevents step discontinuities when regime changes:
+        ``smoothed = alpha * current + (1 - alpha) * previous``
+
+        Parameters
+        ----------
+        regime : int
+            Current regime label (0-3).
+        alpha : float
+            Smoothing factor.  Default 0.3 gives ~2-day half-life.
+            Can be overridden via ``CONSTRAINT_MULTIPLIER_SMOOTHING_ALPHA`` env var.
+
+        Returns
+        -------
+        Dict[str, float]
+            Smoothed multipliers for each constraint dimension.
+        """
+        import os
+        alpha = float(os.environ.get("CONSTRAINT_MULTIPLIER_SMOOTHING_ALPHA", alpha))
+        alpha = max(0.0, min(1.0, alpha))
+
+        target = self.get_multipliers(regime)
+        is_stress = self.is_stress_regime(regime)
+
+        # On first call, initialize directly (no smoothing)
+        if self._prev_regime_is_stress is None:
+            self._smoothed = dict(target)
+            self._prev_regime_is_stress = is_stress
+            return dict(self._smoothed)
+
+        # Apply exponential smoothing
+        for key in target:
+            prev = self._smoothed.get(key, target[key])
+            self._smoothed[key] = alpha * target[key] + (1.0 - alpha) * prev
+
+        self._prev_regime_is_stress = is_stress
+        return dict(self._smoothed)
+
+    def reset(self) -> None:
+        """Reset smoothed state (e.g., at start of a new backtest)."""
+        self._smoothed = dict(self._normal_mults)
+        self._prev_regime_is_stress = None
 
 
 class PortfolioRiskManager:
     """
-    Enforces portfolio-level risk constraints.
+    Enforces portfolio-level risk constraints with regime conditioning.
 
     Checks run before each trade entry to ensure the portfolio
-    stays within predefined risk bounds.
+    stays within predefined risk bounds.  Constraint thresholds adapt
+    to the detected market regime via ``ConstraintMultiplier``.
+
+    Spec 07: Regime-Conditioned Portfolio Risk Manager.
     """
 
     def __init__(
         self,
-        max_sector_pct: float = 0.40,         # 40% max per sector
-        max_corr_between: float = 0.85,        # reject if corr > 85% with existing
-        max_gross_exposure: float = 1.0,        # 100% of capital (no leverage)
-        max_single_name_pct: float = 0.10,     # 10% max single name
-        max_beta_exposure: float = 1.5,         # net beta limit
-        max_portfolio_vol: float = MAX_PORTFOLIO_VOL,  # annualized
-        correlation_lookback: int = 60,         # days for correlation calc
+        max_sector_pct: float = 0.40,
+        max_corr_between: float = 0.85,
+        max_gross_exposure: float = 1.0,
+        max_single_name_pct: float = 0.10,
+        max_beta_exposure: float = 1.5,
+        max_portfolio_vol: float = MAX_PORTFOLIO_VOL,
+        correlation_lookback: int = 60,
         covariance_method: str = "ledoit_wolf",
         sector_map: Optional[Dict[str, str]] = None,
+        universe_config: Optional[UniverseConfig] = None,
     ):
-        """Initialize PortfolioRiskManager."""
+        """Initialize PortfolioRiskManager.
+
+        Parameters
+        ----------
+        universe_config : UniverseConfig, optional
+            Centralized universe metadata.  If None, falls back to the
+            legacy hardcoded sector map and default constraints.
+        """
+        # Base constraint thresholds (may be overridden by universe_config)
         self.max_sector_pct = max_sector_pct
         self.max_corr = max_corr_between
         self.max_gross = max_gross_exposure
@@ -83,9 +194,40 @@ class PortfolioRiskManager:
         self.max_beta = max_beta_exposure
         self.max_portfolio_vol = max_portfolio_vol
         self.corr_lookback = correlation_lookback
-        raw_sector_map = sector_map or SECTOR_MAP
-        self.sector_map = {str(k).upper(): str(v) for k, v in raw_sector_map.items()}
+
+        # Universe config (centralized metadata from YAML)
+        self.universe_config = universe_config
+        if universe_config is None:
+            try:
+                self.universe_config = UniverseConfig()
+            except ConfigError:
+                logger.info(
+                    "UniverseConfig not available — using legacy sector map and default constraints."
+                )
+
+        # Load base constraints from universe config if available
+        if self.universe_config is not None:
+            cb = self.universe_config.constraint_base
+            self.max_sector_pct = cb.get("sector_cap", max_sector_pct)
+            self.max_corr = cb.get("correlation_limit", max_corr_between)
+            self.max_gross = cb.get("gross_exposure", max_gross_exposure)
+            self.max_single = cb.get("single_name_cap", max_single_name_pct)
+
+        # Sector lookup: universe_config takes precedence over legacy map
+        if sector_map is not None:
+            self.sector_map = {str(k).upper(): str(v) for k, v in sector_map.items()}
+        elif self.universe_config is not None:
+            self.sector_map = {}  # Will use universe_config.get_sector()
+        else:
+            self.sector_map = {str(k).upper(): str(v) for k, v in _LEGACY_SECTOR_MAP.items()}
+
         self.covariance_estimator = CovarianceEstimator(method=covariance_method)
+
+        # Regime-conditioned constraint multiplier
+        self.multiplier = ConstraintMultiplier(self.universe_config)
+
+        # Cache for regime-conditional covariance matrices
+        self._regime_cov_cache: Dict[int, pd.DataFrame] = {}
 
     @staticmethod
     def _infer_ticker_from_price_df(df: Optional[pd.DataFrame]) -> Optional[str]:
@@ -104,14 +246,33 @@ class PortfolioRiskManager:
     def _resolve_sector(self, asset_id: str, price_data: Dict[str, pd.DataFrame]) -> str:
         """
         Resolve sector for a PERMNO-first key, falling back to ticker metadata.
+
+        Checks ``universe_config`` first (centralized YAML), then the legacy
+        ``sector_map`` dict, then infers from price DataFrame attrs.
         """
         key = str(asset_id).upper().strip()
+
+        # Prefer UniverseConfig (centralized YAML metadata)
+        if self.universe_config is not None:
+            sector = self.universe_config.get_sector(key)
+            if sector != "other":
+                return sector
+
+        # Legacy sector_map fallback
         if key in self.sector_map:
             return self.sector_map[key]
+
+        # Infer ticker from price DataFrame metadata
         df = price_data.get(str(asset_id))
         mapped_ticker = self._infer_ticker_from_price_df(df)
-        if mapped_ticker and mapped_ticker in self.sector_map:
-            return self.sector_map[mapped_ticker]
+        if mapped_ticker:
+            if self.universe_config is not None:
+                sector = self.universe_config.get_sector(mapped_ticker)
+                if sector != "other":
+                    return sector
+            if mapped_ticker in self.sector_map:
+                return self.sector_map[mapped_ticker]
+
         return "other"
 
     def check_new_position(
@@ -121,9 +282,14 @@ class PortfolioRiskManager:
         current_positions: Dict[str, float],
         price_data: Dict[str, pd.DataFrame],
         benchmark_data: Optional[pd.DataFrame] = None,
+        regime: Optional[int] = None,
+        regime_labels: Optional[pd.Series] = None,
     ) -> RiskCheck:
         """
         Check if adding a new position violates any risk constraints.
+
+        When *regime* is provided, constraint thresholds are adjusted by
+        regime-conditioned multipliers (tighter in stress regimes).
 
         Args:
             ticker: proposed new position
@@ -131,26 +297,48 @@ class PortfolioRiskManager:
             current_positions: {ticker: size_pct} of existing positions
             price_data: OHLCV data for all tickers
             benchmark_data: SPY OHLCV for beta calculation
+            regime: current regime label (0-3) for constraint conditioning
+            regime_labels: per-bar regime labels for regime-conditional covariance
 
         Returns:
-            RiskCheck with pass/fail and violation details
+            RiskCheck with pass/fail, violation details, constraint utilization,
+            and recommended (backoff-adjusted) weights.
         """
         violations = []
         metrics = {}
+        constraint_util = {}
         proposed_positions = {**current_positions, ticker: position_size}
 
+        # ── Compute effective constraints (regime-conditioned) ──
+        eff_sector_cap = self.max_sector_pct
+        eff_corr_limit = self.max_corr
+        eff_gross = self.max_gross
+        eff_single = self.max_single
+
+        if regime is not None:
+            mults = self.multiplier.get_multipliers_smoothed(regime)
+            eff_sector_cap = self.max_sector_pct * mults.get("sector_cap", 1.0)
+            eff_corr_limit = self.max_corr * mults.get("correlation_limit", 1.0)
+            eff_gross = self.max_gross * mults.get("gross_exposure", 1.0)
+            metrics["regime"] = regime
+            metrics["constraint_multipliers"] = mults
+
         # ── Single-name check ──
-        if position_size > self.max_single:
+        if position_size > eff_single:
             violations.append(
-                f"Position size {position_size:.1%} > max {self.max_single:.1%}"
+                f"Position size {position_size:.1%} > max {eff_single:.1%}"
             )
+        if eff_single > 0:
+            constraint_util["single_name"] = position_size / eff_single
 
         # ── Gross exposure check ──
         gross = sum(proposed_positions.values())
         metrics["gross_exposure"] = gross
-        if gross > self.max_gross:
+        if eff_gross > 0:
+            constraint_util["gross_exposure"] = gross / eff_gross
+        if gross > eff_gross:
             violations.append(
-                f"Gross exposure {gross:.1%} > max {self.max_gross:.1%}"
+                f"Gross exposure {gross:.1%} > max {eff_gross:.1%}"
             )
 
         # ── Sector concentration check ──
@@ -160,20 +348,25 @@ class PortfolioRiskManager:
             if self._resolve_sector(t, price_data) == sector:
                 sector_exposure += s
         metrics["sector_exposure"] = {sector: sector_exposure}
-        if sector_exposure > self.max_sector_pct:
+        if eff_sector_cap > 0:
+            constraint_util["sector_cap"] = sector_exposure / eff_sector_cap
+        if sector_exposure > eff_sector_cap:
             violations.append(
-                f"Sector '{sector}' exposure {sector_exposure:.1%} > max {self.max_sector_pct:.1%}"
+                f"Sector '{sector}' exposure {sector_exposure:.1%} > max {eff_sector_cap:.1%}"
             )
 
-        # ── Correlation check ──
+        # ── Correlation check (regime-conditional covariance) ──
         if ticker in price_data and current_positions:
             max_corr_found = self._check_correlations(
-                ticker, list(current_positions.keys()), price_data
+                ticker, list(current_positions.keys()), price_data,
+                regime=regime, regime_labels=regime_labels,
             )
             metrics["max_pairwise_corr"] = max_corr_found
-            if max_corr_found > self.max_corr:
+            if eff_corr_limit > 0:
+                constraint_util["correlation"] = max_corr_found / eff_corr_limit
+            if max_corr_found > eff_corr_limit:
                 violations.append(
-                    f"Max pairwise correlation {max_corr_found:.2f} > {self.max_corr:.2f}"
+                    f"Max pairwise correlation {max_corr_found:.2f} > {eff_corr_limit:.2f}"
                 )
 
         # ── Beta exposure check ──
@@ -199,22 +392,148 @@ class PortfolioRiskManager:
                 f"Portfolio vol {portfolio_vol:.1%} > max {self.max_portfolio_vol:.1%}"
             )
 
+        # ── Compute sizing backoff recommendation ──
+        recommended_weights = None
+        if constraint_util:
+            max_util = max(constraint_util.values())
+            if max_util > 0.70:
+                backoff_factor = self._compute_backoff_factor(max_util)
+                recommended_weights = np.array([
+                    v * backoff_factor for v in proposed_positions.values()
+                ])
+                metrics["backoff_factor"] = backoff_factor
+                metrics["max_constraint_utilization"] = max_util
+
         return RiskCheck(
             passed=len(violations) == 0,
             violations=violations,
             metrics=metrics,
+            constraint_utilization=constraint_util,
+            recommended_weights=recommended_weights,
         )
+
+    def compute_constraint_utilization(
+        self,
+        positions: Dict[str, float],
+        price_data: Dict[str, pd.DataFrame],
+        regime: Optional[int] = None,
+    ) -> Dict[str, float]:
+        """Compute utilization ratios for all constraints.
+
+        Utilization = current_value / limit.  Values > 1.0 indicate violations.
+
+        Parameters
+        ----------
+        positions : dict
+            {ticker: weight} of current portfolio.
+        price_data : dict
+            {ticker: OHLCV DataFrame}.
+        regime : int, optional
+            Current regime for conditioned limits.
+
+        Returns
+        -------
+        Dict[str, float]
+            Utilization ratios keyed by constraint name.
+        """
+        util = {}
+
+        # Effective limits
+        eff_sector_cap = self.max_sector_pct
+        eff_corr_limit = self.max_corr
+        eff_gross = self.max_gross
+
+        if regime is not None:
+            mults = self.multiplier.get_multipliers_smoothed(regime)
+            eff_sector_cap *= mults.get("sector_cap", 1.0)
+            eff_corr_limit *= mults.get("correlation_limit", 1.0)
+            eff_gross *= mults.get("gross_exposure", 1.0)
+
+        # Gross
+        gross = sum(positions.values())
+        if eff_gross > 0:
+            util["gross_exposure"] = gross / eff_gross
+
+        # Single name
+        if positions and self.max_single > 0:
+            util["single_name"] = max(positions.values()) / self.max_single
+
+        # Sector
+        sector_weights: Dict[str, float] = {}
+        for t, w in positions.items():
+            sector = self._resolve_sector(t, price_data)
+            sector_weights[sector] = sector_weights.get(sector, 0.0) + w
+        if sector_weights and eff_sector_cap > 0:
+            util["sector_cap"] = max(sector_weights.values()) / eff_sector_cap
+
+        return util
+
+    def _compute_backoff_factor(self, max_utilization: float) -> float:
+        """Compute continuous backoff factor from constraint utilization.
+
+        Uses the backoff policy from universe config: when utilization
+        crosses threshold levels, position sizes are scaled down by
+        the corresponding factor.
+
+        Parameters
+        ----------
+        max_utilization : float
+            Maximum constraint utilization ratio across all dimensions.
+
+        Returns
+        -------
+        float
+            Scaling factor in (0, 1] to apply to position sizes.
+        """
+        if self.universe_config is not None:
+            policy = self.universe_config.backoff_policy
+        else:
+            policy = {
+                "thresholds": [0.70, 0.80, 0.90, 0.95],
+                "backoff_factors": [0.9, 0.7, 0.5, 0.25],
+            }
+
+        thresholds = policy.get("thresholds", [0.70, 0.80, 0.90, 0.95])
+        factors = policy.get("backoff_factors", [0.9, 0.7, 0.5, 0.25])
+
+        backoff = 1.0
+        for threshold, factor in zip(thresholds, factors):
+            if max_utilization >= threshold:
+                backoff = factor
+            else:
+                break
+
+        return backoff
 
     def _check_correlations(
         self,
         new_ticker: str,
         existing_tickers: List[str],
         price_data: Dict[str, pd.DataFrame],
+        regime: Optional[int] = None,
+        regime_labels: Optional[pd.Series] = None,
     ) -> float:
-        """Find max correlation between new ticker and existing positions."""
+        """Find max correlation between new ticker and existing positions.
+
+        When *regime* and *regime_labels* are provided, uses
+        ``compute_regime_covariance()`` to estimate the correlation structure
+        for the current regime.  Falls back to pairwise sample correlation
+        when regime-conditional estimation is unavailable.
+        """
         if new_ticker not in price_data:
             return 0.0
 
+        # Attempt regime-conditional covariance
+        if regime is not None and regime_labels is not None:
+            try:
+                return self._check_correlations_regime(
+                    new_ticker, existing_tickers, price_data,
+                    regime, regime_labels,
+                )
+            except (ValueError, KeyError):
+                pass  # Fall through to pairwise method
+
+        # Pairwise sample correlation fallback
         new_returns = price_data[new_ticker]["Close"].pct_change().iloc[-self.corr_lookback:]
         max_corr = 0.0
 
@@ -222,7 +541,6 @@ class PortfolioRiskManager:
             if ticker not in price_data:
                 continue
             existing_returns = price_data[ticker]["Close"].pct_change().iloc[-self.corr_lookback:]
-            # Align indices
             common = new_returns.index.intersection(existing_returns.index)
             if len(common) < 20:
                 continue
@@ -231,6 +549,82 @@ class PortfolioRiskManager:
                 max_corr = max(max_corr, abs(corr))
 
         return float(max_corr)
+
+    def _check_correlations_regime(
+        self,
+        new_ticker: str,
+        existing_tickers: List[str],
+        price_data: Dict[str, pd.DataFrame],
+        regime: int,
+        regime_labels: pd.Series,
+    ) -> float:
+        """Compute max correlation using regime-conditional covariance.
+
+        Caches per-regime covariance matrices to avoid repeated computation.
+        Falls back to global covariance when the regime has insufficient
+        observations (< 30).
+        """
+        # Build returns matrix for all relevant tickers
+        all_tickers = [new_ticker] + [t for t in existing_tickers if t in price_data]
+        if len(all_tickers) < 2:
+            return 0.0
+
+        returns_dict = {}
+        for ticker in all_tickers:
+            if ticker not in price_data:
+                continue
+            series = price_data[ticker]["Close"].pct_change().iloc[-self.corr_lookback:]
+            series = series.replace([np.inf, -np.inf], np.nan)
+            returns_dict[ticker] = series
+
+        returns_df = pd.DataFrame(returns_dict).dropna(how="all")
+        if returns_df.shape[0] < 20 or returns_df.shape[1] < 2:
+            return 0.0
+
+        # Compute or retrieve cached regime covariance
+        cache_key = regime
+        if cache_key not in self._regime_cov_cache:
+            # Align regime_labels with returns
+            common_idx = returns_df.index.intersection(regime_labels.index)
+            if len(common_idx) < 20:
+                raise ValueError("Insufficient regime labels for correlation check")
+            aligned_returns = returns_df.loc[common_idx].dropna(how="any")
+            aligned_regimes = regime_labels.loc[aligned_returns.index]
+
+            regime_covs = compute_regime_covariance(
+                aligned_returns, aligned_regimes,
+            )
+            # Cache all computed regime covariances
+            self._regime_cov_cache.update(regime_covs)
+
+        cov_matrix = get_regime_covariance(self._regime_cov_cache, regime)
+
+        # Extract correlation matrix from covariance
+        available = [t for t in [new_ticker] + existing_tickers
+                     if t in cov_matrix.columns]
+        if new_ticker not in available or len(available) < 2:
+            raise ValueError("New ticker not in covariance matrix")
+
+        cov_sub = cov_matrix.loc[available, available]
+        vols = np.sqrt(np.maximum(np.diag(cov_sub.values), 1e-14))
+        vol_outer = np.outer(vols, vols)
+        corr_matrix = cov_sub.values / vol_outer
+
+        # Find max abs correlation between new_ticker and existing
+        new_idx = available.index(new_ticker)
+        max_corr = 0.0
+        for i, ticker in enumerate(available):
+            if ticker == new_ticker:
+                continue
+            c = corr_matrix[new_idx, i]
+            if np.isfinite(c):
+                max_corr = max(max_corr, abs(c))
+
+        return float(max_corr)
+
+    def invalidate_regime_cov_cache(self) -> None:
+        """Clear the cached regime-conditional covariance matrices."""
+        self._regime_cov_cache.clear()
 
     def _estimate_portfolio_beta(
         self,

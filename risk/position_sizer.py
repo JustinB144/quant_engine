@@ -1044,3 +1044,71 @@ class PositionSizer:
             })
 
         return pd.DataFrame(sizes)
+
+    # ── Sizing backoff (Spec 07 T5) ───────────────────────────────────────
+
+    def size_with_backoff(
+        self,
+        weights: np.ndarray,
+        constraint_utilization: Dict[str, float],
+        backoff_policy: Optional[Dict] = None,
+    ) -> np.ndarray:
+        """Scale weights down when constraint utilization is high.
+
+        Rather than binary gating (pass/fail), continuously reduce position
+        sizes as constraints approach binding.  Multiple constraint violations
+        are combined multiplicatively.
+
+        Parameters
+        ----------
+        weights : np.ndarray
+            Proposed portfolio weights (can be raw floats or fractions).
+        constraint_utilization : dict
+            {constraint_name: utilization_ratio} where ratio = current/limit.
+            Values > 1.0 indicate constraint violations.
+        backoff_policy : dict, optional
+            Policy with ``"thresholds"`` and ``"backoff_factors"`` lists.
+            If None, uses sensible defaults.
+
+        Returns
+        -------
+        np.ndarray
+            Scaled weights after applying backoff.
+        """
+        if backoff_policy is None:
+            backoff_policy = {
+                "thresholds": [0.70, 0.80, 0.90, 0.95],
+                "backoff_factors": [0.9, 0.7, 0.5, 0.25],
+            }
+
+        thresholds = backoff_policy.get("thresholds", [0.70, 0.80, 0.90, 0.95])
+        factors = backoff_policy.get("backoff_factors", [0.9, 0.7, 0.5, 0.25])
+
+        if not constraint_utilization:
+            return weights.copy()
+
+        # For each constraint, find the backoff factor
+        combined_backoff = 1.0
+        for constraint_name, util in constraint_utilization.items():
+            constraint_factor = 1.0
+            for threshold, factor in zip(thresholds, factors):
+                if util >= threshold:
+                    constraint_factor = factor
+                else:
+                    break
+            combined_backoff *= constraint_factor
+
+        # Clamp to prevent zero or negative
+        combined_backoff = max(combined_backoff, 0.01)
+
+        scaled = weights * combined_backoff
+
+        if combined_backoff < 1.0:
+            logger.info(
+                "Sizing backoff applied: combined_factor=%.3f, "
+                "utilization=%s",
+                combined_backoff,
+                {k: f"{v:.2f}" for k, v in constraint_utilization.items()},
+            )
+
+        return scaled

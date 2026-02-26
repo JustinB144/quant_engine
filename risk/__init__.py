@@ -3,7 +3,8 @@ Risk Management Module — Renaissance-grade portfolio risk controls.
 
 Components:
     - PositionSizer: Kelly criterion, volatility-scaled, ATR-based sizing
-    - PortfolioRiskManager: sector/correlation/exposure limits
+    - PortfolioRiskManager: sector/correlation/exposure limits (regime-conditioned)
+    - ConstraintMultiplier: regime-aware constraint scaling (Spec 07)
     - DrawdownController: circuit breakers and recovery protocols
     - RiskMetrics: VaR, CVaR, tail risk, MAE/MFE analysis
     - StopLossManager: ATR stops, trailing, time, regime-change stops
@@ -12,10 +13,16 @@ Components:
     - Attribution: performance decomposition (market, factor, alpha)
     - StressTest: scenario analysis and historical drawdown replay
     - FactorExposureMonitor: track unintended factor tilts
+    - FactorExposureManager: regime-conditioned factor bounds (Spec 07)
+    - UniverseConfig: centralized universe metadata from YAML (Spec 07)
+    - ConstraintReplay: stress-test portfolios under tightened constraints (Spec 07)
     - CostBudget: transaction cost budget optimization
 """
 from .position_sizer import PositionSizer
-from .portfolio_risk import PortfolioRiskManager
+from .portfolio_risk import PortfolioRiskManager, ConstraintMultiplier, RiskCheck
+from .universe_config import UniverseConfig, ConfigError
+from .factor_exposures import FactorExposureManager
+from .constraint_replay import replay_with_stress_constraints, compute_robustness_score
 from .drawdown import DrawdownController
 from .metrics import RiskMetrics
 from .stop_loss import StopLossManager
@@ -36,6 +43,13 @@ from .cost_budget import optimize_rebalance_cost
 __all__ = [
     "PositionSizer",
     "PortfolioRiskManager",
+    "ConstraintMultiplier",
+    "RiskCheck",
+    "UniverseConfig",
+    "ConfigError",
+    "FactorExposureManager",
+    "replay_with_stress_constraints",
+    "compute_robustness_score",
     "DrawdownController",
     "RiskMetrics",
     "StopLossManager",
