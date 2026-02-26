@@ -29,6 +29,7 @@ from ..config import (
     PROMOTION_REQUIRE_STATISTICAL_TESTS,
     PROMOTION_REQUIRE_CPCV,
     PROMOTION_REQUIRE_SPA,
+    FOLD_CONSISTENCY_PENALTY_WEIGHT,
 )
 from .strategy_discovery import StrategyCandidate
 
@@ -77,6 +78,7 @@ class PromotionGate:
         require_statistical_tests: bool = PROMOTION_REQUIRE_STATISTICAL_TESTS,
         require_cpcv: bool = PROMOTION_REQUIRE_CPCV,
         require_spa: bool = PROMOTION_REQUIRE_SPA,
+        weight_fold_consistency: float = FOLD_CONSISTENCY_PENALTY_WEIGHT,
     ):
         """Initialize PromotionGate."""
         self.min_trades = min_trades
@@ -100,6 +102,7 @@ class PromotionGate:
         self.require_statistical_tests = require_statistical_tests
         self.require_cpcv = require_cpcv
         self.require_spa = require_spa
+        self.weight_fold_consistency = weight_fold_consistency
 
     def evaluate(
         self,
@@ -248,6 +251,14 @@ class PromotionGate:
         if bool(metrics.get("spa_passes", False)):
             score += 0.40
 
+        # Fold consistency reward (Spec 04): strategies with stable
+        # performance across walk-forward folds receive a score bonus.
+        fold_metrics = metrics.get("fold_metrics")
+        if fold_metrics and len(fold_metrics) >= 3:
+            fold_consistency = self._compute_fold_consistency(fold_metrics)
+            score += self.weight_fold_consistency * fold_consistency
+            metrics["fold_consistency"] = fold_consistency
+
         return PromotionDecision(
             candidate=candidate,
             passed=len(reasons) == 0,
@@ -255,6 +266,41 @@ class PromotionGate:
             reasons=reasons,
             metrics=metrics,
         )
+
+    @staticmethod
+    def _compute_fold_consistency(fold_metrics: List[Dict]) -> float:
+        """Compute fold consistency score from per-fold Sharpe ratios.
+
+        Measures how stable a strategy's performance is across walk-forward
+        folds.  High consistency (close to 1.0) means the strategy works
+        across different time periods; low consistency (close to 0.0) means
+        the strategy's edge is regime-dependent or unreliable.
+
+        Formula: ``clip(1 - std(sharpes) / |mean(sharpes)|, 0, 1)``
+
+        Args:
+            fold_metrics: List of dicts, each containing at least a
+                ``sharpe_estimate`` (or ``sharpe``) key.
+
+        Returns:
+            Float in [0, 1].  Returns 0.0 if mean Sharpe <= 0.
+        """
+        sharpes = []
+        for fm in fold_metrics:
+            s = fm.get("sharpe_estimate", fm.get("sharpe", None))
+            if s is not None and np.isfinite(s):
+                sharpes.append(float(s))
+
+        if len(sharpes) < 2:
+            return 1.0  # insufficient data to penalize
+
+        mean_sharpe = float(np.mean(sharpes))
+        if mean_sharpe <= 0:
+            return 0.0
+
+        std_sharpe = float(np.std(sharpes))
+        consistency = 1.0 - (std_sharpe / abs(mean_sharpe))
+        return float(np.clip(consistency, 0.0, 1.0))
 
     def evaluate_event_strategy(
         self,

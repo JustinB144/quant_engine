@@ -41,6 +41,11 @@ from ..config import (
     REQUIRE_PERMNO,
     SURVIVORSHIP_UNIVERSE_NAME,
     WF_MAX_TRAIN_DATES,
+    SIGNAL_TOPK_QUANTILE,
+    META_LABELING_ENABLED,
+    META_LABELING_CONFIDENCE_THRESHOLD,
+    META_LABELING_RETRAIN_FREQ_DAYS,
+    META_LABELING_MIN_SAMPLES,
 )
 from ..data.loader import load_survivorship_universe, load_universe
 from ..data.survivorship import filter_panel_by_point_in_time_universe
@@ -50,6 +55,7 @@ from ..models.predictor import EnsemblePredictor
 from ..models.trainer import ModelTrainer
 from ..regime.detector import RegimeDetector
 from ..risk.portfolio_optimizer import optimize_portfolio
+from .meta_labeler import MetaLabelingModel
 from .paper_trader import PaperTrader
 from .promotion_gate import PromotionDecision, PromotionGate
 from .registry import StrategyRegistry
@@ -168,6 +174,11 @@ class AutopilotEngine:
         self.gate = PromotionGate()
         self.registry = StrategyRegistry()
         self.paper_trader = PaperTrader()
+
+        # Meta-labeling model (Spec 04) — load from disk if available
+        self.meta_labeler = MetaLabelingModel()
+        if META_LABELING_ENABLED:
+            self.meta_labeler.load()
 
     def _log(self, msg: str):
         """Emit a log message when verbose logging is enabled."""
@@ -591,6 +602,75 @@ class AutopilotEngine:
                 return 0.0
             return float(np.sum(xr * yr) / denom)
 
+        # ── Cross-sectional top-K quantile filtering (Spec 04 T1) ────
+        # Replace the fixed z-score threshold with adaptive quantile
+        # selection.  At each date, only signals in the top quantile
+        # (by cs_zscore) are kept; the rest are zeroed out so the
+        # backtester skips them.
+        n_before_topk = 0
+        n_after_topk = 0
+        topk_threshold = float("nan")
+        if (
+            "cs_zscore" in predictions.columns
+            and isinstance(predictions.index, pd.MultiIndex)
+        ):
+            predictions = predictions.copy()
+            quantile = SIGNAL_TOPK_QUANTILE
+            date_level = predictions.index.get_level_values(-1)
+
+            # Compute per-date threshold: keep top (1-quantile) fraction
+            grouped_threshold = (
+                predictions.groupby(date_level)["cs_zscore"]
+                .transform(
+                    lambda x: np.nanquantile(x.dropna(), 1 - quantile)
+                    if len(x.dropna()) >= 2
+                    else float("-inf")
+                )
+            )
+            below_mask = predictions["cs_zscore"] < grouped_threshold
+            n_before_topk = int((predictions["predicted_return"].abs() > 1e-8).sum())
+            predictions.loc[below_mask, "predicted_return"] = 0.0
+            n_after_topk = int((predictions["predicted_return"].abs() > 1e-8).sum())
+
+            # Representative threshold for logging (median across dates)
+            topk_threshold = float(grouped_threshold.median())
+            self._log(
+                f"    Top-K filter: quantile={quantile:.2f}, "
+                f"threshold={topk_threshold:.4f}, "
+                f"signals {n_before_topk} -> {n_after_topk}"
+            )
+
+        # ── Meta-labeling confidence filter (Spec 04 T3) ─────────────
+        # If a trained meta-labeling model is available, predict
+        # P(signal_correct) for each (permno, date) and zero-out
+        # low-confidence signals.
+        n_before_ml = 0
+        n_after_ml = 0
+        ml_confidence_stats: Optional[Dict[str, float]] = None
+        if (
+            META_LABELING_ENABLED
+            and self.meta_labeler.is_trained
+            and "predicted_return" in predictions.columns
+        ):
+            try:
+                ml_preds, ml_stats = self._apply_meta_labeling(
+                    predictions, price_data
+                )
+                n_before_ml = int((predictions["predicted_return"].abs() > 1e-8).sum())
+                predictions = ml_preds
+                n_after_ml = int((predictions["predicted_return"].abs() > 1e-8).sum())
+                ml_confidence_stats = ml_stats
+                self._log(
+                    f"    Meta-labeling filter: "
+                    f"signals {n_before_ml} -> {n_after_ml}, "
+                    f"median_conf={ml_stats.get('p50', 0):.3f}"
+                )
+            except Exception as exc:
+                # Fail-open: if meta-labeling errors, skip filtering
+                logger.warning(
+                    "Meta-labeling filtering failed (fail-open): %s", exc
+                )
+
         # Step 1: run backtests for all candidates.
         bt_results: List[Tuple[StrategyCandidate, object]] = []
         for i, c in enumerate(candidates):
@@ -670,6 +750,7 @@ class AutopilotEngine:
             wf_oos = 0.0
             wf_gap = np.inf
             wf_pos_frac = 0.0
+            wf_fold_metrics: List[Dict] = []
             if len(pred_series.dropna()) >= 150:
                 wf = walk_forward_validate(
                     predictions=pred_series,
@@ -684,6 +765,17 @@ class AutopilotEngine:
                 if wf.n_folds > 0:
                     pos = sum(1 for f in wf.folds if f.test_corr > 0)
                     wf_pos_frac = float(pos / wf.n_folds)
+
+                # Fold-level metrics for promotion gate (Spec 04 T4)
+                for fold in wf.folds:
+                    wf_fold_metrics.append({
+                        "fold_id": fold.fold,
+                        "ic": fold.test_corr,
+                        "sharpe_estimate": fold.sharpe_estimate,
+                        "win_rate": fold.win_rate,
+                        "profit_factor": fold.profit_factor,
+                        "sample_count": fold.sample_count,
+                    })
 
             # Regime stability: fraction of regimes with positive rank correlation.
             regime_positive_fraction = 0.0
@@ -787,6 +879,9 @@ class AutopilotEngine:
                 "spa_passes": spa_passes,
                 "spa_pvalue": spa_pvalue,
             }
+            # Fold-level metrics for fold consistency scoring (Spec 04 T4/T5)
+            if wf_fold_metrics:
+                contract_metrics["fold_metrics"] = wf_fold_metrics
             if stat_tests_result is not None:
                 contract_metrics["ic_mean"] = float(stat_tests_result.ic_mean)
                 contract_metrics["ic_ir"] = float(stat_tests_result.ic_ir)
@@ -795,6 +890,287 @@ class AutopilotEngine:
             decisions.append(self.gate.evaluate(c, result, contract_metrics=contract_metrics))
 
         return decisions
+
+    # ── Meta-labeling helpers (Spec 04 T2/T3/T6) ────────────────────
+
+    def _apply_meta_labeling(
+        self,
+        predictions: pd.DataFrame,
+        price_data: Dict[str, pd.DataFrame],
+    ) -> Tuple[pd.DataFrame, Dict[str, float]]:
+        """Apply meta-labeling confidence filter to predictions.
+
+        For each permno, builds meta-features from signals and market
+        returns, predicts P(signal_correct), and zeros out low-confidence
+        signals.
+
+        Args:
+            predictions: Prediction panel with MultiIndex (permno, date).
+            price_data: OHLCV data keyed by permno.
+
+        Returns:
+            Tuple of (filtered predictions DataFrame, confidence stats dict).
+        """
+        preds = predictions.copy()
+        all_confidences: List[float] = []
+        threshold = META_LABELING_CONFIDENCE_THRESHOLD
+
+        permnos = preds.index.get_level_values(0).unique()
+        for permno in permnos:
+            if permno not in preds.index.get_level_values(0):
+                continue
+
+            permno_preds = preds.loc[permno]
+            signals = permno_preds["predicted_return"]
+
+            # Build returns from price data
+            pdf = price_data.get(permno) if price_data else None
+            if pdf is not None and "Close" in pdf.columns:
+                close = pd.to_numeric(pdf["Close"], errors="coerce")
+                returns = close.pct_change().fillna(0.0)
+            elif pdf is not None and "total_ret" in pdf.columns:
+                returns = pd.to_numeric(
+                    pdf["total_ret"], errors="coerce"
+                ).fillna(0.0)
+            else:
+                # No price data — skip meta-labeling for this permno
+                continue
+
+            # Regime states
+            regimes = permno_preds.get("regime", pd.Series(0, index=permno_preds.index))
+
+            # Align returns to signals index
+            returns_aligned = returns.reindex(signals.index).fillna(0.0)
+
+            try:
+                meta_feats = MetaLabelingModel.build_meta_features(
+                    signals=signals,
+                    returns=returns_aligned,
+                    regime_states=regimes,
+                )
+                confidence = self.meta_labeler.predict_confidence(meta_feats)
+                all_confidences.extend(confidence.tolist())
+
+                # Zero out low-confidence signals
+                low_conf_mask = confidence < threshold
+                if low_conf_mask.any():
+                    # Map back to MultiIndex
+                    low_conf_dates = permno_preds.index[low_conf_mask.values]
+                    for dt in low_conf_dates:
+                        preds.loc[(permno, dt), "predicted_return"] = 0.0
+            except (ValueError, RuntimeError, KeyError):
+                continue
+
+        # Confidence distribution stats
+        stats: Dict[str, float] = {}
+        if all_confidences:
+            conf_arr = np.array(all_confidences, dtype=float)
+            stats = {
+                "min": float(np.min(conf_arr)),
+                "p10": float(np.percentile(conf_arr, 10)),
+                "p50": float(np.percentile(conf_arr, 50)),
+                "p90": float(np.percentile(conf_arr, 90)),
+                "max": float(np.max(conf_arr)),
+            }
+
+        return preds, stats
+
+    def _retrain_meta_labeler(
+        self,
+        predictions: pd.DataFrame,
+        price_data: Dict[str, pd.DataFrame],
+    ) -> bool:
+        """Retrain the meta-labeling model on recent walk-forward data.
+
+        Collects signals, actuals, and regime states from the predictions
+        panel, builds training data, and retrains the meta-labeling model.
+        Saves the updated model to disk.
+
+        Args:
+            predictions: Prediction panel with MultiIndex (permno, date).
+            price_data: OHLCV data keyed by permno.
+
+        Returns:
+            True if retraining succeeded, False otherwise.
+        """
+        self._log("  Retraining meta-labeling model...")
+
+        all_signals = []
+        all_returns = []
+        all_regimes = []
+        all_actuals = []
+
+        permnos = predictions.index.get_level_values(0).unique()
+        for permno in permnos:
+            if permno not in predictions.index.get_level_values(0):
+                continue
+
+            permno_preds = predictions.loc[permno]
+            signals = permno_preds["predicted_return"]
+
+            # Build returns
+            pdf = price_data.get(permno) if price_data else None
+            if pdf is not None and "Close" in pdf.columns:
+                close = pd.to_numeric(pdf["Close"], errors="coerce")
+                returns = close.pct_change().fillna(0.0)
+                fwd = close.shift(-self.horizon) / close - 1.0
+            elif pdf is not None and "total_ret" in pdf.columns:
+                returns = pd.to_numeric(
+                    pdf["total_ret"], errors="coerce"
+                ).fillna(0.0)
+                gross = (1 + returns).shift(-1)
+                fwd = (
+                    gross.rolling(window=self.horizon, min_periods=self.horizon)
+                    .apply(np.prod, raw=True)
+                    .shift(-(self.horizon - 1))
+                    - 1.0
+                )
+            else:
+                continue
+
+            regimes = permno_preds.get(
+                "regime", pd.Series(0, index=permno_preds.index)
+            )
+
+            # Align everything to the signals index
+            returns_aligned = returns.reindex(signals.index).fillna(0.0)
+            fwd_aligned = fwd.reindex(signals.index)
+
+            # Prefix permno to avoid index collisions
+            prefix = f"{permno}_"
+            all_signals.append(signals.rename(lambda x: f"{prefix}{x}"))
+            all_returns.append(returns_aligned.rename(lambda x: f"{prefix}{x}"))
+            all_regimes.append(regimes.rename(lambda x: f"{prefix}{x}"))
+            all_actuals.append(fwd_aligned.rename(lambda x: f"{prefix}{x}"))
+
+        if not all_signals:
+            self._log("  Meta-labeler retrain: no data available.")
+            return False
+
+        combined_signals = pd.concat(all_signals)
+        combined_returns = pd.concat(all_returns)
+        combined_regimes = pd.concat(all_regimes)
+        combined_actuals = pd.concat(all_actuals)
+
+        # Drop NaN actuals
+        valid = combined_actuals.notna()
+        combined_signals = combined_signals[valid]
+        combined_returns = combined_returns[valid]
+        combined_regimes = combined_regimes[valid]
+        combined_actuals = combined_actuals[valid]
+
+        if len(combined_signals) < META_LABELING_MIN_SAMPLES:
+            self._log(
+                f"  Meta-labeler retrain: insufficient samples "
+                f"({len(combined_signals)} < {META_LABELING_MIN_SAMPLES})."
+            )
+            return False
+
+        try:
+            meta_feats = MetaLabelingModel.build_meta_features(
+                signals=combined_signals,
+                returns=combined_returns,
+                regime_states=combined_regimes,
+            )
+            labels = MetaLabelingModel.build_labels(
+                signals=combined_signals,
+                actuals=combined_actuals,
+            )
+            metrics = self.meta_labeler.train(meta_feats, labels)
+            self.meta_labeler.save()
+            self._log(
+                f"  Meta-labeler retrained: "
+                f"n={metrics.get('n_samples', 0):.0f}, "
+                f"train_acc={metrics.get('train_accuracy', 0):.3f}, "
+                f"val_acc={metrics.get('val_accuracy', 0):.3f}"
+            )
+            return True
+        except (RuntimeError, ValueError, ImportError) as exc:
+            logger.warning("Meta-labeler retraining failed: %s", exc)
+            return False
+
+    def _compute_uncertainty_inputs(
+        self,
+        latest_predictions: pd.DataFrame,
+        data: Dict[str, pd.DataFrame],
+    ) -> pd.DataFrame:
+        """Compute signal_uncertainty, regime_entropy, and drift_score.
+
+        These inputs feed the risk governor's uncertainty-aware sizing
+        (Spec 05 T2/T8).  Each metric is in [0, 1]:
+
+        - signal_uncertainty: rolling std of predicted returns, normalized.
+          High uncertainty = model predictions are volatile.
+        - regime_entropy: normalized Shannon entropy of regime probabilities.
+          High entropy = regime is ambiguous.
+        - drift_score: absolute price momentum (20-bar), normalized to [0, 1].
+          High drift = strong trend = high confidence in direction.
+        """
+        df = latest_predictions.copy()
+
+        # --- signal_uncertainty: from prediction volatility ---
+        if "predicted_return" in df.columns:
+            preds = df["predicted_return"].astype(float)
+            pred_std = preds.std()
+            if pred_std > 0 and np.isfinite(pred_std):
+                # Normalize deviation from mean as uncertainty
+                deviation = (preds - preds.mean()).abs() / pred_std
+                # Map to [0, 1]: low deviation = low uncertainty
+                df["signal_uncertainty"] = (1.0 - deviation.clip(0, 3) / 3.0).clip(0, 1)
+                # Invert: high deviation from mean = high uncertainty about signal direction
+                df["signal_uncertainty"] = 1.0 - df["signal_uncertainty"]
+            else:
+                df["signal_uncertainty"] = 0.5
+        else:
+            df["signal_uncertainty"] = 0.5
+
+        # --- regime_entropy: from regime probability columns ---
+        regime_prob_cols = [c for c in df.columns if c.startswith("regime_prob_")]
+        if len(regime_prob_cols) >= 2:
+            probs = df[regime_prob_cols].astype(float).clip(lower=1e-10)
+            # Normalize rows to sum to 1
+            row_sums = probs.sum(axis=1)
+            probs = probs.div(row_sums, axis=0)
+            # Shannon entropy normalized by log(n_regimes)
+            entropy = -(probs * np.log(probs)).sum(axis=1) / np.log(len(regime_prob_cols))
+            df["regime_entropy"] = entropy.clip(0, 1).fillna(0.5)
+        elif "regime_confidence" in df.columns:
+            # If we have regime_confidence, map to entropy (inverse)
+            conf = df["regime_confidence"].astype(float).clip(0, 1).fillna(0.5)
+            df["regime_entropy"] = 1.0 - conf
+        else:
+            df["regime_entropy"] = 0.5
+
+        # --- drift_score: price momentum from market data ---
+        drift_scores = []
+        id_col = "permno" if "permno" in df.columns else "ticker"
+        for _, row in df.iterrows():
+            permno = str(row.get(id_col, ""))
+            price_df = data.get(permno)
+            if price_df is not None and "Close" in price_df.columns and len(price_df) >= 20:
+                close = price_df["Close"].astype(float)
+                ret_20d = close.pct_change(20).iloc[-1]
+                if np.isfinite(ret_20d):
+                    # Normalize absolute momentum to [0, 1] using a sigmoid-like mapping
+                    # abs(20-day return) of 10% -> drift_score ~ 0.73
+                    drift = float(1.0 - np.exp(-10.0 * abs(ret_20d)))
+                    drift_scores.append(max(0.0, min(1.0, drift)))
+                else:
+                    drift_scores.append(0.5)
+            else:
+                drift_scores.append(0.5)
+
+        df["drift_score"] = drift_scores
+
+        logger.debug(
+            "Uncertainty inputs: signal_unc=[%.2f, %.2f], regime_ent=[%.2f, %.2f], "
+            "drift=[%.2f, %.2f]",
+            df["signal_uncertainty"].min(), df["signal_uncertainty"].max(),
+            df["regime_entropy"].min(), df["regime_entropy"].max(),
+            df["drift_score"].min(), df["drift_score"].max(),
+        )
+
+        return df
 
     def _compute_optimizer_weights(
         self,
@@ -951,6 +1327,11 @@ class AutopilotEngine:
         else:
             latest_predictions["optimizer_weight"] = 0.0
 
+        # ── Uncertainty inputs for risk governor sizing (Spec 05 T8) ──
+        latest_predictions = self._compute_uncertainty_inputs(
+            latest_predictions, data,
+        )
+
         candidates = self.discovery.generate(horizon=self.horizon)
         if self.max_candidates is not None:
             candidates = candidates[: self.max_candidates]
@@ -960,6 +1341,26 @@ class AutopilotEngine:
         ranked = PromotionGate.rank(decisions)
         promoted = self.registry.apply_promotions(ranked)
         active = self.registry.get_active()
+
+        # ── Meta-labeling retraining schedule (Spec 04 T6) ───────────
+        # Retrain the meta-labeling model on recent walk-forward data
+        # when the configured interval has elapsed.
+        meta_retrained = False
+        if META_LABELING_ENABLED:
+            from datetime import datetime, timedelta
+
+            needs_retrain = False
+            if self.meta_labeler.last_train_time is None:
+                needs_retrain = True
+            else:
+                elapsed = datetime.now() - self.meta_labeler.last_train_time
+                if elapsed >= timedelta(days=META_LABELING_RETRAIN_FREQ_DAYS):
+                    needs_retrain = True
+
+            if needs_retrain:
+                meta_retrained = self._retrain_meta_labeler(
+                    predictions_hist, data
+                )
 
         paper_report = self.paper_trader.run_cycle(
             active_strategies=active,
@@ -979,6 +1380,9 @@ class AutopilotEngine:
             "n_active": len(active),
             "top_decisions": [d.to_dict() for d in ranked[:10]],
             "paper_report": paper_report,
+            "meta_labeling_enabled": META_LABELING_ENABLED,
+            "meta_labeling_retrained": meta_retrained,
+            "signal_topk_quantile": SIGNAL_TOPK_QUANTILE,
         }
 
         with open(self.report_path, "w") as f:

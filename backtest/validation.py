@@ -116,6 +116,11 @@ class WalkForwardFold:
     train_corr: float  # Spearman rank correlation
     test_corr: float   # Spearman rank correlation
     test_mean_return: float  # mean actual return of predicted-positive trades
+    # Fold-level metrics (Spec 04)
+    win_rate: float = 0.0
+    profit_factor: float = 0.0
+    sharpe_estimate: float = 0.0
+    sample_count: int = 0
 
 
 @dataclass
@@ -284,6 +289,29 @@ def walk_forward_validate(
         long_mask = test_preds > entry_threshold
         test_mean_ret = float(test_actual[long_mask].mean()) if long_mask.any() else 0
 
+        # Fold-level signal quality metrics (Spec 04)
+        fold_win_rate = 0.0
+        fold_profit_factor = 0.0
+        fold_sharpe = 0.0
+        if long_mask.any():
+            long_actual = test_actual[long_mask]
+            n_long = len(long_actual)
+            n_winners = int((long_actual > 0).sum())
+            fold_win_rate = float(n_winners / n_long) if n_long > 0 else 0.0
+
+            pos_sum = float(long_actual[long_actual > 0].sum())
+            neg_sum = float(abs(long_actual[long_actual < 0].sum()))
+            if neg_sum > 1e-12:
+                fold_profit_factor = pos_sum / neg_sum
+            elif pos_sum > 0:
+                fold_profit_factor = 10.0  # capped stand-in for inf
+            # else: 0.0
+
+            if n_long > 1:
+                std_ret = float(np.std(long_actual))
+                if std_ret > 1e-12:
+                    fold_sharpe = float(np.mean(long_actual) / std_ret)
+
         folds.append(WalkForwardFold(
             fold=i + 1,
             train_size=len(train_preds),
@@ -291,6 +319,10 @@ def walk_forward_validate(
             train_corr=train_corr,
             test_corr=test_corr,
             test_mean_return=test_mean_ret,
+            win_rate=fold_win_rate,
+            profit_factor=fold_profit_factor,
+            sharpe_estimate=fold_sharpe,
+            sample_count=len(test_preds),
         ))
 
     if not folds:

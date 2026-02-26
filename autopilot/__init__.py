@@ -7,6 +7,7 @@ from .promotion_gate import PromotionDecision, PromotionGate
 from .registry import StrategyRegistry
 from .paper_trader import PaperTrader
 from .engine import AutopilotEngine
+from .meta_labeler import MetaLabelingModel
 
 __all__ = [
     "StrategyCandidate",
@@ -16,5 +17,6 @@ __all__ = [
     "StrategyRegistry",
     "PaperTrader",
     "AutopilotEngine",
+    "MetaLabelingModel",
 ]
 
