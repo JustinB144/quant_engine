@@ -28,6 +28,11 @@ from quant_engine.data.loader import load_universe
 from quant_engine.features.pipeline import FeaturePipeline
 from quant_engine.regime.detector import RegimeDetector
 from quant_engine.models.predictor import EnsemblePredictor
+from quant_engine.reproducibility import (
+    build_run_manifest,
+    write_run_manifest,
+    verify_manifest,
+)
 
 
 def main():
@@ -47,11 +52,32 @@ def main():
     )
     parser.add_argument("--output", type=str, help="Save predictions to CSV")
     parser.add_argument("--top", type=int, default=20, help="Show top N signals")
+    parser.add_argument(
+        "--verify-manifest", type=str, default=None,
+        help="Path to a manifest file to verify environment matches before running",
+    )
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
 
     verbose = not args.quiet
     t0 = time.time()
+
+    # ── Verify manifest (if requested) ──
+    if args.verify_manifest:
+        verification = verify_manifest(Path(args.verify_manifest), config_snapshot=vars(args))
+        if verification["mismatches"]:
+            print("WARNING: Manifest verification found mismatches:")
+            for m in verification["mismatches"]:
+                print(f"  - {m}")
+            print("Continuing anyway — results may not be reproducible.\n")
+        elif verbose:
+            print("Manifest verification passed — environment matches.\n")
+
+    # ── Build reproducibility manifest ──
+    manifest = build_run_manifest(
+        run_type="predict",
+        config_snapshot=vars(args),
+    )
 
     if args.tickers:
         tickers = args.tickers
@@ -192,6 +218,15 @@ def main():
         latest.to_csv(out_path, index=False)
         if verbose:
             print(f"\n  Saved to {out_path}")
+
+    # ── Write reproducibility manifest ──
+    manifest["extra"] = {
+        "n_signals": len(signals),
+        "n_permnos": len(latest),
+    }
+    manifest_path = write_run_manifest(manifest, output_dir=RESULTS_DIR)
+    if verbose:
+        print(f"  Manifest: {manifest_path}")
 
     elapsed = time.time() - t0
     if verbose:

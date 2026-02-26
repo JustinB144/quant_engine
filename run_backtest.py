@@ -45,6 +45,11 @@ from quant_engine.backtest.validation import (
     strategy_signal_returns,
     superior_predictive_ability,
 )
+from quant_engine.reproducibility import (
+    build_run_manifest,
+    write_run_manifest,
+    verify_manifest,
+)
 
 
 def main():
@@ -75,11 +80,32 @@ def main():
     parser.add_argument("--min-predicted", type=float, default=None,
                         help="Minimum predicted return to enter (default: config ENTRY_THRESHOLD)")
     parser.add_argument("--output", type=str, help="Save trade log to CSV")
+    parser.add_argument(
+        "--verify-manifest", type=str, default=None,
+        help="Path to a manifest file to verify environment matches before running",
+    )
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
 
     verbose = not args.quiet
     t0 = time.time()
+
+    # ── Verify manifest (if requested) ──
+    if args.verify_manifest:
+        verification = verify_manifest(Path(args.verify_manifest), config_snapshot=vars(args))
+        if verification["mismatches"]:
+            print("WARNING: Manifest verification found mismatches:")
+            for m in verification["mismatches"]:
+                print(f"  - {m}")
+            print("Continuing anyway — results may not be reproducible.\n")
+        elif verbose:
+            print("Manifest verification passed — environment matches.\n")
+
+    # ── Build reproducibility manifest ──
+    manifest = build_run_manifest(
+        run_type="backtest",
+        config_snapshot=vars(args),
+    )
 
     if args.tickers:
         tickers = args.tickers
@@ -418,6 +444,16 @@ def main():
         if verbose:
             print(f"\n  Trade log: {out_path}")
             print(f"  Summary: {summary_path}")
+
+    # ── Write reproducibility manifest ──
+    manifest["extra"] = {
+        "total_trades": result.total_trades if result else 0,
+        "win_rate": result.win_rate if result else 0,
+        "sharpe_ratio": result.sharpe_ratio if result else 0,
+    }
+    manifest_path = write_run_manifest(manifest, output_dir=RESULTS_DIR)
+    if verbose:
+        print(f"  Manifest: {manifest_path}")
 
     elapsed = time.time() - t0
     if verbose:

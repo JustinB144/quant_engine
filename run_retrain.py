@@ -31,6 +31,11 @@ from quant_engine.models.governance import ModelGovernance
 from quant_engine.models.trainer import ModelTrainer
 from quant_engine.models.retrain_trigger import RetrainTrigger
 from quant_engine.models.versioning import ModelRegistry
+from quant_engine.reproducibility import (
+    build_run_manifest,
+    write_run_manifest,
+    verify_manifest,
+)
 
 
 def _check_regime_change_trigger(predictions_df, trained_regime, days_threshold):
@@ -85,10 +90,25 @@ def main():
         help="Feature profile: core (reduced complexity) or full",
     )
     parser.add_argument("--recency", action="store_true", help="Apply exponential recency weighting")
+    parser.add_argument(
+        "--verify-manifest", type=str, default=None,
+        help="Path to a manifest file to verify environment matches before running",
+    )
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
 
     verbose = not args.quiet
+
+    # ── Verify manifest (if requested) ──
+    if args.verify_manifest:
+        verification = verify_manifest(Path(args.verify_manifest), config_snapshot=vars(args))
+        if verification["mismatches"]:
+            print("WARNING: Manifest verification found mismatches:")
+            for m in verification["mismatches"]:
+                print(f"  - {m}")
+            print("Continuing anyway — results may not be reproducible.\n")
+        elif verbose:
+            print("Manifest verification passed — environment matches.\n")
 
     # ── Status check ──
     if args.status:
@@ -171,6 +191,12 @@ def main():
             print(f"\nRetraining triggered:")
             for r in reasons:
                 print(f"  - {r}")
+
+    # ── Build reproducibility manifest ──
+    manifest = build_run_manifest(
+        run_type="retrain",
+        config_snapshot=vars(args),
+    )
 
     # ── Load data ──
     t0 = time.time()
@@ -280,6 +306,12 @@ def main():
         if dominant_training_regime is not None:
             trigger.metadata["trained_regime"] = dominant_training_regime
             trigger._save_metadata()
+
+    # ── Write reproducibility manifest ──
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    manifest_path = write_run_manifest(manifest, output_dir=RESULTS_DIR)
+    if verbose:
+        print(f"  Manifest: {manifest_path}")
 
     elapsed = time.time() - t0
     if verbose:

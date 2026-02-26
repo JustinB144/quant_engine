@@ -17,7 +17,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from quant_engine.autopilot.engine import AutopilotEngine
-from quant_engine.config import UNIVERSE_FULL, UNIVERSE_QUICK, AUTOPILOT_FEATURE_MODE
+from quant_engine.config import (
+    UNIVERSE_FULL, UNIVERSE_QUICK, AUTOPILOT_FEATURE_MODE, AUTOPILOT_DIR,
+)
+from quant_engine.reproducibility import (
+    build_run_manifest,
+    write_run_manifest,
+    verify_manifest,
+)
 
 
 def main():
@@ -49,8 +56,31 @@ def main():
                         help="Use single-split training instead of rolling walk-forward")
     parser.add_argument("--allow-in-sample", action="store_true",
                         help="Disable strict out-of-sample filtering")
+    parser.add_argument(
+        "--verify-manifest", type=str, default=None,
+        help="Path to a manifest file to verify environment matches before running",
+    )
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
+
+    verbose = not args.quiet
+
+    # ── Verify manifest (if requested) ──
+    if args.verify_manifest:
+        verification = verify_manifest(Path(args.verify_manifest), config_snapshot=vars(args))
+        if verification["mismatches"]:
+            print("WARNING: Manifest verification found mismatches:")
+            for m in verification["mismatches"]:
+                print(f"  - {m}")
+            print("Continuing anyway — results may not be reproducible.\n")
+        elif verbose:
+            print("Manifest verification passed — environment matches.\n")
+
+    # ── Build reproducibility manifest ──
+    manifest = build_run_manifest(
+        run_type="autopilot",
+        config_snapshot=vars(args),
+    )
 
     if args.tickers:
         tickers = args.tickers
@@ -74,6 +104,15 @@ def main():
     )
     report = engine.run_cycle()
 
+    # ── Write reproducibility manifest ──
+    manifest["extra"] = {
+        "n_candidates": report.get("n_candidates", 0),
+        "n_passed": report.get("n_passed", 0),
+        "n_promoted": report.get("n_promoted", 0),
+        "n_active": report.get("n_active", 0),
+    }
+    manifest_path = write_run_manifest(manifest, output_dir=AUTOPILOT_DIR)
+
     if not args.quiet:
         elapsed = time.time() - t0
         print("\n=== AUTOPILOT SUMMARY ===")
@@ -82,6 +121,7 @@ def main():
         print(f"  Promoted this cycle: {report['n_promoted']}")
         print(f"  Active strategies: {report['n_active']}")
         print(f"  Paper equity: {report['paper_report']['equity']:.2f}")
+        print(f"  Manifest: {manifest_path}")
         print(f"  Completed in {elapsed:.1f}s")
 
 

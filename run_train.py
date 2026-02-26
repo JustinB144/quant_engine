@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from quant_engine.config import (
     UNIVERSE_FULL, UNIVERSE_QUICK, FORWARD_HORIZONS, LOOKBACK_YEARS,
-    FEATURE_MODE_DEFAULT,
+    FEATURE_MODE_DEFAULT, RESULTS_DIR,
 )
 from quant_engine.data.loader import load_universe, load_survivorship_universe
 from quant_engine.features.pipeline import FeaturePipeline
@@ -30,6 +30,11 @@ from quant_engine.regime.detector import RegimeDetector
 from quant_engine.models.governance import ModelGovernance
 from quant_engine.models.trainer import ModelTrainer
 from quant_engine.models.versioning import ModelRegistry
+from quant_engine.reproducibility import (
+    build_run_manifest,
+    write_run_manifest,
+    verify_manifest,
+)
 
 
 def main():
@@ -57,11 +62,32 @@ def main():
                         help="Apply exponential recency weighting")
     parser.add_argument("--no-version", action="store_true",
                         help="Skip model versioning (save flat)")
+    parser.add_argument(
+        "--verify-manifest", type=str, default=None,
+        help="Path to a manifest file to verify environment matches before running",
+    )
     parser.add_argument("--quiet", action="store_true", help="Minimal output")
     args = parser.parse_args()
 
     verbose = not args.quiet
     t0 = time.time()
+
+    # ── Verify manifest (if requested) ──
+    if args.verify_manifest:
+        verification = verify_manifest(Path(args.verify_manifest), config_snapshot=vars(args))
+        if verification["mismatches"]:
+            print("WARNING: Manifest verification found mismatches:")
+            for m in verification["mismatches"]:
+                print(f"  - {m}")
+            print("Continuing anyway — results may not be reproducible.\n")
+        elif verbose:
+            print("Manifest verification passed — environment matches.\n")
+
+    # ── Build reproducibility manifest ──
+    manifest = build_run_manifest(
+        run_type="train",
+        config_snapshot=vars(args),
+    )
 
     # ── Select universe ──
     if args.tickers:
@@ -183,6 +209,12 @@ def main():
                         f"  Governance: promoted={decision['promoted']} "
                         f"reason={decision['reason']} score={decision['score']:.4f}",
                     )
+
+    # ── Write reproducibility manifest ──
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    manifest_path = write_run_manifest(manifest, output_dir=RESULTS_DIR)
+    if verbose:
+        print(f"\n  Manifest: {manifest_path}")
 
     elapsed = time.time() - t0
     if verbose:
