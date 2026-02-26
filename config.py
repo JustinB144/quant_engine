@@ -166,6 +166,18 @@ INTRADAY_MIN_BARS = 100                           # STATUS: ACTIVE — features/
 MARKET_OPEN = "09:30"                             # STATUS: ACTIVE — features/intraday.py; US equity regular-session open (ET)
 MARKET_CLOSE = "16:00"                            # STATUS: ACTIVE — features/intraday.py; US equity regular-session close (ET)
 
+# ── Intraday Data Integrity (SPEC_11) ──────────────────────────────
+INTRADAY_VALIDATION_ENABLED = True                # STATUS: ACTIVE — scripts/alpaca_intraday_download.py; enable IBKR cross-validation
+INTRADAY_CLOSE_TOLERANCE_PCT = 0.15               # STATUS: ACTIVE — data/cross_source_validator.py; max close price diff vs IBKR (%)
+INTRADAY_OPEN_TOLERANCE_PCT = 0.20                # STATUS: ACTIVE — data/cross_source_validator.py; max open price diff vs IBKR (%)
+INTRADAY_HIGHLOW_TOLERANCE_PCT = 0.25             # STATUS: ACTIVE — data/cross_source_validator.py; max H/L price diff vs IBKR (%)
+INTRADAY_VOLUME_TOLERANCE_PCT = 5.0               # STATUS: ACTIVE — data/cross_source_validator.py; max volume diff vs IBKR (%)
+INTRADAY_MAX_REJECTED_BAR_PCT = 5.0               # STATUS: ACTIVE — data/intraday_quality.py; quarantine if >N% bars rejected
+INTRADAY_MAX_MISMATCH_RATE_PCT = 5.0              # STATUS: ACTIVE — data/cross_source_validator.py; quarantine if >N% bars mismatch
+INTRADAY_VALIDATION_SAMPLE_WINDOWS = 10           # STATUS: ACTIVE — data/cross_source_validator.py; stratified date sampling windows
+INTRADAY_VALIDATION_DAYS_PER_WINDOW = 2           # STATUS: ACTIVE — data/cross_source_validator.py; days sampled per window
+INTRADAY_QUARANTINE_DIR = DATA_CACHE_DIR / "quarantine"  # STATUS: ACTIVE — data/intraday_quality.py; quarantined data location
+
 # ── Targets ────────────────────────────────────────────────────────────
 FORWARD_HORIZONS = [5, 10, 20]                    # STATUS: ACTIVE — models/trainer.py, run_*.py; days ahead to predict
 

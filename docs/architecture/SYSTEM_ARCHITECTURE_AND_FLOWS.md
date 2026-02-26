@@ -25,7 +25,7 @@ flowchart TD
 
 ## Core Layers (Source-Verified)
 
-- `data/`: provider abstraction, cache IO, WRDS integration, quality checks, survivorship controls.
+- `data/`: provider abstraction, cache IO, WRDS/IBKR/Alpaca-adjacent ingestion helpers, quality checks, survivorship controls, intraday quality/quarantine, cross-source validation.
 - `features/`: feature/target computation pipeline plus macro/options/intraday/research factors.
 - `regime/`: rule/HMM/jump/correlation regime detection and regime feature outputs.
 - `models/`: training, prediction, versioning, governance, IV models, retrain triggers.
@@ -48,12 +48,13 @@ flowchart TD
 - Services (`api/services/*`) are synchronous adapters around engine packages and result files (`results/`, `trained_models/`, cache files).
 - Long-running compute endpoints (`/api/models/train`, `/api/models/predict`, `/api/backtests/run`, `/api/autopilot/run-cycle`) create job records and execute in background threads through `api/jobs/runner.py`.
 - `api/orchestrator.py` consolidates data->features->regimes->train/predict/backtest flows for API job executors.
+- Current mounted router set also includes `diagnostics`, `regime`, and `risk` routers in addition to the dashboard/data/model/compute pages.
 
 ### Caching
 
 - `api/cache/manager.py` is an in-memory per-process TTL cache.
 - `api/cache/invalidation.py` provides event-driven invalidation hooks for train/backtest/data-refresh/config changes.
-- Caches are used by read-heavy endpoints (dashboard, signals, health, benchmark, model health, feature importance, data status).
+- Caches are used by read-heavy endpoints (dashboard, signals, health, benchmark, model health, feature importance/correlations, data status, selected data explorer reads).
 
 ### Jobs & Streaming
 
@@ -69,6 +70,7 @@ flowchart TD
 - `frontend/src/api/queries/*` and `frontend/src/api/mutations/*`: all page data access lives in query/mutation hooks.
 - `frontend/src/hooks/useSSE.ts` + `useJobProgress.ts`: combines SSE and polling for background job progress.
 - `frontend/src/store/*`: Zustand stores for UI/filter state.
+- The frontend currently consumes a subset of mounted backend routes; some backend diagnostic/regime/risk endpoints are available for future UI expansion and automation.
 
 ## Primary End-to-End Flows
 
@@ -115,55 +117,23 @@ flowchart TD
 
 ## Mounted API Endpoint Inventory (Current)
 
-| Method | Path | Handler | Router |
-|---|---|---|---|
-| `GET` | `/api/autopilot/latest-cycle` | `latest_cycle` | `api/routers/autopilot.py` |
-| `GET` | `/api/autopilot/paper-state` | `paper_state` | `api/routers/autopilot.py` |
-| `POST` | `/api/autopilot/run-cycle` | `run_cycle` | `api/routers/autopilot.py` |
-| `GET` | `/api/autopilot/strategies` | `strategies` | `api/routers/autopilot.py` |
-| `GET` | `/api/backtests/latest` | `latest_backtest` | `api/routers/backtests.py` |
-| `GET` | `/api/backtests/latest/equity-curve` | `equity_curve` | `api/routers/backtests.py` |
-| `GET` | `/api/backtests/latest/trades` | `latest_trades` | `api/routers/backtests.py` |
-| `POST` | `/api/backtests/run` | `run_backtest` | `api/routers/backtests.py` |
-| `GET` | `/api/benchmark/comparison` | `benchmark_comparison` | `api/routers/benchmark.py` |
-| `GET` | `/api/benchmark/equity-curves` | `benchmark_equity_curves` | `api/routers/benchmark.py` |
-| `GET` | `/api/benchmark/rolling-metrics` | `benchmark_rolling_metrics` | `api/routers/benchmark.py` |
-| `GET` | `/api/config` | `get_config` | `api/routers/config_mgmt.py` |
-| `PATCH` | `/api/config` | `patch_config` | `api/routers/config_mgmt.py` |
-| `GET` | `/api/config/status` | `get_config_status` | `api/routers/config_mgmt.py` |
-| `GET` | `/api/config/validate` | `validate_config_endpoint` | `api/routers/config_mgmt.py` |
-| `GET` | `/api/dashboard/attribution` | `attribution` | `api/routers/dashboard.py` |
-| `GET` | `/api/dashboard/equity` | `equity_with_benchmark` | `api/routers/dashboard.py` |
-| `GET` | `/api/dashboard/regime` | `dashboard_regime` | `api/routers/dashboard.py` |
-| `GET` | `/api/dashboard/returns-distribution` | `returns_distribution` | `api/routers/dashboard.py` |
-| `GET` | `/api/dashboard/rolling-risk` | `rolling_risk` | `api/routers/dashboard.py` |
-| `GET` | `/api/dashboard/summary` | `dashboard_summary` | `api/routers/dashboard.py` |
-| `GET` | `/api/data/status` | `get_data_status` | `api/routers/data_explorer.py` |
-| `GET` | `/api/data/ticker/{ticker}` | `get_ticker` | `api/routers/data_explorer.py` |
-| `GET` | `/api/data/universe` | `get_universe` | `api/routers/data_explorer.py` |
-| `GET` | `/api/health` | `quick_health` | `api/routers/system_health.py` |
-| `GET` | `/api/health/detailed` | `detailed_health` | `api/routers/system_health.py` |
-| `GET` | `/api/iv-surface/arb-free-svi` | `arb_free_svi_surface` | `api/routers/iv_surface.py` |
-| `GET` | `/api/jobs` | `list_jobs` | `api/routers/jobs.py` |
-| `GET` | `/api/jobs/{job_id}` | `get_job` | `api/routers/jobs.py` |
-| `POST` | `/api/jobs/{job_id}/cancel` | `cancel_job` | `api/routers/jobs.py` |
-| `GET` | `/api/jobs/{job_id}/events` | `job_events` | `api/routers/jobs.py` |
-| `GET` | `/api/logs` | `get_logs` | `api/routers/logs.py` |
-| `GET` | `/api/models/features/correlations` | `feature_correlations` | `api/routers/model_lab.py` |
-| `GET` | `/api/models/features/importance` | `feature_importance` | `api/routers/model_lab.py` |
-| `GET` | `/api/models/health` | `model_health` | `api/routers/model_lab.py` |
-| `POST` | `/api/models/predict` | `predict_model` | `api/routers/model_lab.py` |
-| `POST` | `/api/models/train` | `train_model` | `api/routers/model_lab.py` |
-| `GET` | `/api/models/versions` | `list_versions` | `api/routers/model_lab.py` |
-| `GET` | `/api/signals/latest` | `latest_signals` | `api/routers/signals.py` |
-| `GET` | `/api/v1/system/data-mode` | `data_mode` | `api/routers/system_health.py` |
-| `GET` | `/api/v1/system/model-age` | `model_age` | `api/routers/system_health.py` |
+- Mounted router modules: 15 (`jobs`, `system_health`, `dashboard`, `data_explorer`, `model_lab`, `signals`, `backtests`, `benchmark`, `logs`, `autopilot`, `config_mgmt`, `iv_surface`, `regime`, `risk`, `diagnostics`)
+- Mounted endpoints: 48
+- Newly surfaced endpoint groups relative to earlier docs include:
+  - data explorer bars/indicators (`/api/data/ticker/{ticker}/bars`, `/indicators`, `/indicators/batch`)
+  - health history (`/api/health/history`)
+  - diagnostics (`/api/diagnostics`)
+  - regime metadata (`/api/regime/metadata`)
+  - risk factor exposures (`/api/risk/factor-exposures`)
+
+For the full source-derived endpoint table (method/path/handler/router), use `docs/reference/SOURCE_API_REFERENCE.md`.
 
 ## Artifact and State Boundaries
 
 - `trained_models/`: model artifacts, version metadata, registry/champion records.
 - `results/`: predictions, backtests, autopilot reports/state, health/support artifacts.
 - `data/cache/`: cached OHLCV files and metadata sidecars consumed by loaders and data status endpoints.
+- `data/cache/quarantine/`: quarantined intraday datasets flagged by the intraday quality / cross-source validation workflow.
 - `data/kalshi.duckdb`: event-time Kalshi/macroeconomic research store (DuckDB preferred, sqlite fallback supported by `EventTimeStore`).
 - `api_jobs.db` (default): async compute job lifecycle store for the web API.
 

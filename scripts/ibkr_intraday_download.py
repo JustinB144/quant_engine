@@ -51,6 +51,7 @@ _cfg = _ilu.module_from_spec(_cfg_spec)
 _cfg_spec.loader.exec_module(_cfg)
 DATA_CACHE_DIR = _cfg.DATA_CACHE_DIR
 UNIVERSE_FULL = _cfg.UNIVERSE_FULL
+UNIVERSE_INTRADAY = getattr(_cfg, "UNIVERSE_INTRADAY", UNIVERSE_FULL)
 
 _lc_spec = _ilu.spec_from_file_location("_lc", _QE_ROOT / "data" / "local_cache.py",
                                          submodule_search_locations=[])
@@ -111,7 +112,7 @@ TF_SUFFIX = {
 
 # Default years of history per timeframe
 DEFAULT_HISTORY_YEARS = {
-    "4h":  5,
+    "4h":  10,
     "1h":  5,
     "30m": 5,
     "15m": 5,
@@ -174,6 +175,7 @@ def download_intraday_chunked(
     ticker: str,
     timeframe: str,
     target_days: int,
+    pace: float = 2.0,
 ) -> Optional[pd.DataFrame]:
     """
     Download intraday data for a single ticker using IBKR chunked requests.
@@ -183,6 +185,7 @@ def download_intraday_chunked(
         ticker: Stock symbol
         timeframe: Canonical timeframe ("1m", "5m", "15m", etc.)
         target_days: Total calendar days of history to fetch
+        pace: Seconds to sleep between chunk requests (IBKR pacing)
 
     Returns:
         Combined DataFrame or None
@@ -249,7 +252,7 @@ def download_intraday_chunked(
 
         current_end = current_end - timedelta(days=days_this + 1)
         remaining_days -= days_this
-        time.sleep(0.1)  # IBKR pacing
+        time.sleep(pace)  # IBKR pacing — default 2s keeps under 60 req/10 min
 
     if not all_chunks:
         return None
@@ -332,8 +335,8 @@ def main():
         help="Override: only process these tickers (default: UNIVERSE_FULL)",
     )
     parser.add_argument(
-        "--years", type=float, default=5.0,
-        help="Years of history to download (default: 5)",
+        "--years", type=float, default=None,
+        help="Years of history (overrides per-TF defaults: 4h=10, rest=5)",
     )
     parser.add_argument(
         "--missing-only", action="store_true",
@@ -355,11 +358,17 @@ def main():
         "--client-id", type=int, default=21,
         help="IBKR client ID (default: 21)",
     )
+    parser.add_argument(
+        "--pace", type=float, default=2.0,
+        help="Seconds to sleep between IBKR chunk requests to avoid pacing "
+             "violations (default: 2.0). IBKR allows ~60 requests per 10 min; "
+             "2s keeps a single instance safely under that limit.",
+    )
     args = parser.parse_args()
 
     all_timeframes = ["1m", "5m", "15m", "30m", "1h", "4h"]
     timeframes = args.timeframes or all_timeframes
-    tickers = [t.upper() for t in (args.tickers or UNIVERSE_FULL)]
+    tickers = [t.upper() for t in (args.tickers or UNIVERSE_INTRADAY)]
 
     print("=" * 70)
     print("  IBKR INTRADAY DOWNLOADER — quant_engine cache")
@@ -368,9 +377,15 @@ def main():
 
     cache_dir = DATA_CACHE_DIR
     print(f"\n  Cache dir:   {cache_dir}")
+    # Resolve per-timeframe years
+    tf_years = {}
+    for tf in timeframes:
+        tf_years[tf] = args.years if args.years is not None else DEFAULT_HISTORY_YEARS.get(tf, 5)
+
     print(f"  Tickers:     {len(tickers)}")
     print(f"  Timeframes:  {', '.join(timeframes)}")
-    print(f"  History:     {args.years}y")
+    print(f"  History:     {', '.join(f'{tf}={tf_years[tf]:.0f}y' for tf in timeframes)}")
+    print(f"  Pacing:      {args.pace:.1f}s between chunks ({60 / max(args.pace, 0.1):.0f} req/min max)")
 
     # Survey
     survey = survey_intraday(cache_dir, tickers, timeframes)
@@ -382,11 +397,11 @@ def main():
         tf_data = survey[tf]
         present = sum(1 for v in tf_data.values() if v is not None)
         missing = sum(1 for v in tf_data.values() if v is None)
-        target_days = int(args.years * 365)
+        target_days = int(tf_years[tf] * 365)
         chunk_days = IBKR_CHUNK_DAYS.get(tf, 10)
         chunks_per = target_days // max(chunk_days, 1)
         tickers_to_dl = missing if args.missing_only else len(tickers)
-        est_seconds = chunks_per * tickers_to_dl * 0.12
+        est_seconds = chunks_per * tickers_to_dl * (args.pace + 0.5)  # pace + ~overhead
         est_min = est_seconds / 60
         print(f"  {tf:<10} {present:<10} {missing:<10} {chunks_per:<15} ~{est_min:.0f} min ({tickers_to_dl} tickers)")
 
@@ -413,7 +428,7 @@ def main():
 
     for tf in timeframes:
         tf_word = TF_SUFFIX[tf]
-        target_days = int(args.years * 365)
+        target_days = int(tf_years[tf] * 365)
         chunk_days = IBKR_CHUNK_DAYS.get(tf, 10)
         chunks_per = target_days // max(chunk_days, 1)
         tf_survey = survey[tf]
@@ -451,7 +466,7 @@ def main():
 
             print(f"{label} {ticker}...", end="", flush=True)
 
-            df = download_intraday_chunked(ib, ticker, tf, target_days)
+            df = download_intraday_chunked(ib, ticker, tf, target_days, pace=args.pace)
 
             if df is None or len(df) == 0:
                 print(f" NO DATA")

@@ -33,6 +33,16 @@ Operator runbook for root `run_*.py` entrypoints plus web app startup (FastAPI +
 | `run_train.py` | Train the regime-conditional ensemble model. | 10 |
 | `run_wrds_daily_refresh.py` | Re-download all daily OHLCV data from WRDS CRSP to replace old cache files | 6 |
 
+## Supplemental Data Maintenance Scripts (`scripts/*.py`)
+
+These are not root `run_*.py` entrypoints but are operationally important for cache quality and intraday refresh workflows:
+
+- `scripts/ibkr_intraday_download.py`: IBKR intraday downloader (now supports per-timeframe default lookbacks, `UNIVERSE_INTRADAY` fallback, and configurable `--pace` pacing control).
+- `scripts/alpaca_intraday_download.py`: Alpaca-first intraday downloader with optional IBKR cross-validation / gap-fill path.
+- `scripts/ibkr_daily_gapfill.py`: Daily OHLCV gap-fill for stale/missing names in cache.
+- `scripts/compare_regime_models.py`: Diagnostic comparison utility for regime model variants.
+- `scripts/generate_types.py`: Generate frontend TypeScript interfaces from backend Pydantic schemas.
+
 ## Standard Workflow Sequences
 
 ### A. Web Monitoring / Inspection Session
@@ -61,16 +71,25 @@ Operator runbook for root `run_*.py` entrypoints plus web app startup (FastAPI +
 2. Validate DuckDB/sqlite storage state and distribution/event feature outputs.
 3. Review walk-forward and promotion outputs in generated artifacts; consult `docs/reference/KALSHI_STORAGE_SCHEMA_REFERENCE.md` for schema details.
 
+### E. Intraday Data Integrity / Refresh Session
+
+1. Run `scripts/alpaca_intraday_download.py` (primary) or `scripts/ibkr_intraday_download.py` (IBKR-only) for target tickers/timeframes.
+2. If using Alpaca validation, review cross-source mismatch/quarantine outputs driven by `data/cross_source_validator.py` and `data/intraday_quality.py`.
+3. Confirm quarantined files under `data/cache/quarantine/` and re-run with adjusted pace/source if needed.
+4. Verify new bars through `/api/data/ticker/{ticker}/bars` and `/api/data/ticker/{ticker}/indicators`.
+
 ## Pre-Run Checklist
 
 - Confirm `config.py` values (or runtime-patched API config values) match the intended experiment/operation.
 - Confirm data cache freshness (`/api/data/status` or `Data Explorer`).
 - Confirm model artifact availability/version selection for predict/backtest/autopilot workflows.
 - Confirm WRDS/Kalshi credentials and feature flags if using live providers.
+- For intraday downloads, confirm pacing settings and intraday integrity thresholds in `config.py` (`INTRADAY_*` constants).
 
 ## Post-Run Checklist
 
 - Verify generated files in `results/` / `trained_models/` and timestamps.
+- For intraday data runs, inspect `data/cache/` plus `data/cache/quarantine/` and associated `.meta.json` sidecars.
 - Review drawdown, robustness, and quality metrics (not only total return or headline score).
 - For API/UI-triggered jobs, inspect `/api/jobs`, SSE progress, and logs (`/api/logs`) for hidden failures.
 

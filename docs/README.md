@@ -70,26 +70,26 @@ Use source-derived references and current architecture docs first when behavior 
 
 | Package | Modules | Classes | Top-level Functions | LOC |
 |---|---:|---:|---:|---:|
-| `(root)` | 13 | 13 | 23 | 2,998 |
-| `api` | 52 | 56 | 97 | 5,438 |
-| `autopilot` | 6 | 9 | 0 | 2,009 |
-| `backtest` | 6 | 15 | 16 | 3,677 |
-| `data` | 10 | 13 | 58 | 5,310 |
-| `features` | 10 | 5 | 47 | 3,747 |
-| `indicators` | 2 | 92 | 2 | 2,993 |
-| `kalshi` | 25 | 34 | 66 | 6,096 |
-| `models` | 14 | 28 | 9 | 5,130 |
-| `regime` | 5 | 7 | 5 | 1,624 |
-| `risk` | 11 | 14 | 14 | 3,057 |
-| `tests` | 37 | 67 | 94 | 6,186 |
-| `utils` | 2 | 3 | 1 | 444 |
+| `(root)` | 13 | 18 | 23 | 3,352 |
+| `api` | 59 | 65 | 125 | 9,267 |
+| `autopilot` | 8 | 12 | 0 | 3,685 |
+| `backtest` | 11 | 29 | 26 | 5,652 |
+| `data` | 12 | 17 | 80 | 7,099 |
+| `features` | 10 | 5 | 48 | 4,026 |
+| `indicators` | 7 | 97 | 4 | 4,550 |
+| `kalshi` | 16 | 26 | 66 | 5,224 |
+| `models` | 16 | 34 | 9 | 5,971 |
+| `regime` | 13 | 17 | 6 | 4,243 |
+| `risk` | 16 | 22 | 21 | 5,845 |
+| `tests` | 69 | 286 | 164 | 20,539 |
+| `utils` | 2 | 3 | 1 | 446 |
 
 ### Frontend (`frontend/src`) 
 
-- Files: 131
-- LOC: 7,935
+- Files: 135
+- LOC: 8,862
 - Pages: 51
-- Components: 37
+- Components: 39
 - API query hooks: 12
 - API mutation hooks: 6
 

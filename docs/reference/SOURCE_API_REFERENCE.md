@@ -1,2717 +1,1835 @@
-# Source API Reference (Python)
+# Source API Reference
 
-Source-derived Python module inventory for the current repository tree. This file is generated from Python AST parsing and filesystem scanning.
+Source-derived Python module inventory for the current repository working tree (including uncommitted changes).
+This file is a lookup reference, not a design spec. See architecture docs for runtime behavior and flows.
 
-## FastAPI App And Router Registration
+## Snapshot
 
-- App factory: `api/main.py` (`create_app`, `run_server`)
-- Lazy router loader: `api/routers/__init__.py` (`all_routers`)
-- Mounted router modules (from `api/routers/__init__.py`):
-  - `quant_engine.api.routers.jobs`
-  - `quant_engine.api.routers.system_health`
-  - `quant_engine.api.routers.dashboard`
-  - `quant_engine.api.routers.data_explorer`
-  - `quant_engine.api.routers.model_lab`
-  - `quant_engine.api.routers.signals`
-  - `quant_engine.api.routers.backtests`
-  - `quant_engine.api.routers.benchmark`
-  - `quant_engine.api.routers.logs`
-  - `quant_engine.api.routers.autopilot`
-  - `quant_engine.api.routers.config_mgmt`
-  - `quant_engine.api.routers.iv_surface`
+- Mounted FastAPI routers: 15
+- Mounted FastAPI endpoints: 48
+- Root CLI scripts (`run_*.py`): 9
+- Utility scripts (`scripts/*.py`): 5
 
-## Package `(root)`
+## FastAPI Endpoint Inventory
+
+| Method | Path | Handler | Router |
+|---|---|---|---|
+| `GET` | `/api/autopilot/latest-cycle` | `latest_cycle` | `api/routers/autopilot.py` |
+| `GET` | `/api/autopilot/paper-state` | `paper_state` | `api/routers/autopilot.py` |
+| `POST` | `/api/autopilot/run-cycle` | `run_cycle` | `api/routers/autopilot.py` |
+| `GET` | `/api/autopilot/strategies` | `strategies` | `api/routers/autopilot.py` |
+| `GET` | `/api/backtests/latest` | `latest_backtest` | `api/routers/backtests.py` |
+| `GET` | `/api/backtests/latest/equity-curve` | `equity_curve` | `api/routers/backtests.py` |
+| `GET` | `/api/backtests/latest/trades` | `latest_trades` | `api/routers/backtests.py` |
+| `POST` | `/api/backtests/run` | `run_backtest` | `api/routers/backtests.py` |
+| `GET` | `/api/benchmark/comparison` | `benchmark_comparison` | `api/routers/benchmark.py` |
+| `GET` | `/api/benchmark/equity-curves` | `benchmark_equity_curves` | `api/routers/benchmark.py` |
+| `GET` | `/api/benchmark/rolling-metrics` | `benchmark_rolling_metrics` | `api/routers/benchmark.py` |
+| `GET` | `/api/config/` | `get_config` | `api/routers/config_mgmt.py` |
+| `PATCH` | `/api/config/` | `patch_config` | `api/routers/config_mgmt.py` |
+| `GET` | `/api/config/status` | `get_config_status` | `api/routers/config_mgmt.py` |
+| `GET` | `/api/config/validate` | `validate_config_endpoint` | `api/routers/config_mgmt.py` |
+| `GET` | `/api/dashboard/attribution` | `attribution` | `api/routers/dashboard.py` |
+| `GET` | `/api/dashboard/equity` | `equity_with_benchmark` | `api/routers/dashboard.py` |
+| `GET` | `/api/dashboard/regime` | `dashboard_regime` | `api/routers/dashboard.py` |
+| `GET` | `/api/dashboard/returns-distribution` | `returns_distribution` | `api/routers/dashboard.py` |
+| `GET` | `/api/dashboard/rolling-risk` | `rolling_risk` | `api/routers/dashboard.py` |
+| `GET` | `/api/dashboard/summary` | `dashboard_summary` | `api/routers/dashboard.py` |
+| `GET` | `/api/data/status` | `get_data_status` | `api/routers/data_explorer.py` |
+| `GET` | `/api/data/ticker/{ticker}` | `get_ticker` | `api/routers/data_explorer.py` |
+| `GET` | `/api/data/ticker/{ticker}/bars` | `get_ticker_bars` | `api/routers/data_explorer.py` |
+| `GET` | `/api/data/ticker/{ticker}/indicators` | `get_ticker_indicators` | `api/routers/data_explorer.py` |
+| `POST` | `/api/data/ticker/{ticker}/indicators/batch` | `batch_indicators` | `api/routers/data_explorer.py` |
+| `GET` | `/api/data/universe` | `get_universe` | `api/routers/data_explorer.py` |
+| `GET` | `/api/diagnostics/` | `get_diagnostics` | `api/routers/diagnostics.py` |
+| `GET` | `/api/health` | `quick_health` | `api/routers/system_health.py` |
+| `GET` | `/api/health/detailed` | `detailed_health` | `api/routers/system_health.py` |
+| `GET` | `/api/health/history` | `health_history` | `api/routers/system_health.py` |
+| `GET` | `/api/iv-surface/arb-free-svi` | `arb_free_svi_surface` | `api/routers/iv_surface.py` |
+| `GET` | `/api/jobs/` | `list_jobs` | `api/routers/jobs.py` |
+| `GET` | `/api/jobs/{job_id}` | `get_job` | `api/routers/jobs.py` |
+| `POST` | `/api/jobs/{job_id}/cancel` | `cancel_job` | `api/routers/jobs.py` |
+| `GET` | `/api/jobs/{job_id}/events` | `job_events` | `api/routers/jobs.py` |
+| `GET` | `/api/logs/` | `get_logs` | `api/routers/logs.py` |
+| `GET` | `/api/models/features/correlations` | `feature_correlations` | `api/routers/model_lab.py` |
+| `GET` | `/api/models/features/importance` | `feature_importance` | `api/routers/model_lab.py` |
+| `GET` | `/api/models/health` | `model_health` | `api/routers/model_lab.py` |
+| `POST` | `/api/models/predict` | `predict_model` | `api/routers/model_lab.py` |
+| `POST` | `/api/models/train` | `train_model` | `api/routers/model_lab.py` |
+| `GET` | `/api/models/versions` | `list_versions` | `api/routers/model_lab.py` |
+| `GET` | `/api/regime/metadata` | `regime_metadata` | `api/routers/regime.py` |
+| `GET` | `/api/risk/factor-exposures` | `get_factor_exposures` | `api/routers/risk.py` |
+| `GET` | `/api/signals/latest` | `latest_signals` | `api/routers/signals.py` |
+| `GET` | `/api/v1/system/data-mode` | `data_mode` | `api/routers/system_health.py` |
+| `GET` | `/api/v1/system/model-age` | `model_age` | `api/routers/system_health.py` |
+
+## `(root)`
+
+| Module | Lines | Classes | Top-level Functions | Intent |
+|---|---|---|---|---|
+| `__init__.py` | 7 | 0 | 0 | Quant Engine - Continuous Feature ML Trading System |
+| `config.py` | 741 | 0 | 1 | Central configuration for the quant engine. |
+| `config_structured.py` | 301 | 18 | 0 | Structured configuration for the quant engine using typed dataclasses. |
+| `reproducibility.py` | 334 | 0 | 6 | Reproducibility locks for run manifests. |
+| `run_autopilot.py` | 90 | 0 | 1 | Run one full autopilot cycle: |
+| `run_backtest.py` | 429 | 0 | 1 | Backtest the trained model on historical data. |
+| `run_kalshi_event_pipeline.py` | 228 | 0 | 2 | Run the integrated Kalshi event-time pipeline inside quant_engine. |
+| `run_predict.py` | 203 | 0 | 1 | Generate predictions using trained ensemble model. |
+| `run_rehydrate_cache_metadata.py` | 102 | 0 | 2 | Backfill cache metadata sidecars for existing OHLCV cache files. |
+| `run_retrain.py` | 291 | 0 | 2 | Retrain the quant engine model — checks triggers and retrains if needed. |
+| `run_server.py` | 81 | 0 | 1 | Combined API + frontend static serving entry point. |
+| `run_train.py` | 196 | 0 | 1 | Train the regime-conditional ensemble model. |
+| `run_wrds_daily_refresh.py` | 349 | 0 | 5 | Re-download all daily OHLCV data from WRDS CRSP to replace old cache files |
 
 ### `__init__.py`
-
-- LOC: 6
-- Module intent: Quant Engine - Continuous Feature ML Trading System
-- Top-level functions: none
+- Intent: Quant Engine - Continuous Feature ML Trading System
+- LOC: 7
 - Classes: none
+- Top-level functions: none
 
 ### `config.py`
-
-- LOC: 464
-- Module intent: Central configuration for the quant engine.
-- Imports (2): `from pathlib import Path`, `from typing import Dict`
-- Top-level functions:
-  - `validate_config()` (line 387): Check config for common misconfigurations.
+- Intent: Central configuration for the quant engine.
+- LOC: 741
 - Classes: none
+- Top-level functions: `validate_config`
 
 ### `config_structured.py`
-
-- LOC: 235
-- Module intent: Structured configuration for the quant engine using typed dataclasses.
-- Imports (4): `from __future__ import annotations`, `from dataclasses import dataclass, field`, `from pathlib import Path`, `from typing import Any, Dict, List, Optional`
-- Top-level functions: none
+- Intent: Structured configuration for the quant engine using typed dataclasses.
+- LOC: 301
 - Classes:
-  - `DataConfig` (line 21): Data loading and caching configuration.
-  - `RegimeConfig` (line 41): Regime detection configuration.
-  - `ModelConfig` (line 68): Model training configuration.
-  - `BacktestConfig` (line 92): Backtesting configuration.
-  - `KellyConfig` (line 108): Kelly criterion position sizing configuration.
-  - `DrawdownConfig` (line 120): Drawdown management configuration.
-  - `StopLossConfig` (line 134): Stop-loss configuration.
-  - `ValidationConfig` (line 145): Statistical validation configuration.
-  - `PromotionConfig` (line 155): Strategy promotion gate thresholds.
-  - `HealthConfig` (line 178): Health monitoring thresholds.
-  - `PaperTradingConfig` (line 191): Paper trading configuration.
-  - `ExecutionConfig` (line 204): Trade execution cost modeling.
-  - `SystemConfig` (line 217): Top-level system configuration aggregating all subsystems.
+  - `ReturnType` (methods: none)
+  - `PriceType` (methods: none)
+  - `EntryType` (methods: none)
+  - `PreconditionsConfig` (methods: none)
+  - `CostStressConfig` (methods: none)
+  - `DataConfig` (methods: none)
+  - `RegimeConfig` (methods: none)
+  - `ModelConfig` (methods: none)
+  - `BacktestConfig` (methods: none)
+  - `KellyConfig` (methods: none)
+  - `DrawdownConfig` (methods: none)
+  - `StopLossConfig` (methods: none)
+  - `ValidationConfig` (methods: none)
+  - `PromotionConfig` (methods: none)
+  - `HealthConfig` (methods: none)
+  - `PaperTradingConfig` (methods: none)
+  - `ExecutionConfig` (methods: none)
+  - `SystemConfig` (methods: none)
+- Top-level functions: none
 
 ### `reproducibility.py`
-
-- LOC: 333
-- Module intent: Reproducibility locks for run manifests.
-- Imports (8): `from __future__ import annotations`, `import hashlib`, `import json`, `import subprocess`, `from datetime import datetime, timezone`, `from pathlib import Path`, `from typing import Any, Dict, List, Optional`, `import pandas as pd`
-- Top-level functions:
-  - `_get_git_commit()` (line 22): Return the current git commit hash, or 'unknown' if not in a repo.
-  - `_dataframe_checksum(df)` (line 36): Compute a lightweight checksum of a DataFrame's shape and sample.
-  - `build_run_manifest(run_type, config_snapshot, datasets, mapping_version, extra)` (line 47): Build a reproducibility manifest for a pipeline run.
-  - `write_run_manifest(manifest, output_dir, filename)` (line 99): Write manifest to JSON file. Returns the output path.
-  - `verify_manifest(manifest_path, config_snapshot)` (line 117): Verify current environment matches a stored manifest.
-  - `replay_manifest(manifest_path, output_dir)` (line 234): Re-run a historical cycle and compare to stored results.
+- Intent: Reproducibility locks for run manifests.
+- LOC: 334
 - Classes: none
+- Top-level functions: `_get_git_commit`, `_dataframe_checksum`, `build_run_manifest`, `write_run_manifest`, `verify_manifest`, `replay_manifest`
 
 ### `run_autopilot.py`
-
-- LOC: 89
-- Module intent: Run one full autopilot cycle:
-- Imports (6): `import argparse`, `import sys`, `import time`, `from pathlib import Path`, `from quant_engine.autopilot.engine import AutopilotEngine`, `from quant_engine.config import UNIVERSE_FULL, UNIVERSE_QUICK, AUTOPILOT_FEATURE_MODE`
-- Top-level functions:
-  - `main()` (line 23): Run the command-line entry point.
+- Intent: Run one full autopilot cycle:
+- LOC: 90
 - Classes: none
+- Top-level functions: `main`
 
 ### `run_backtest.py`
-
-- LOC: 428
-- Module intent: Backtest the trained model on historical data.
-- Imports (16): `import argparse`, `import json`, `import logging`, `import sys`, `import time`, `from pathlib import Path`, `import numpy as np`, `import pandas as pd`, `from quant_engine.config import UNIVERSE_FULL, UNIVERSE_QUICK, RESULTS_DIR, REGIME_NAMES, ENTRY_THRESHOLD, CPCV_PARTITIONS, CPCV_TEST_PARTITIONS, SPA_BOOTSTRAPS, SURVIVORSHIP_UNIVERSE_NAME, FEATURE_MODE_DEFAULT, WF_MAX_TRAIN_DATES`, `from quant_engine.data.loader import load_universe, load_survivorship_universe`, `from quant_engine.data.survivorship import filter_panel_by_point_in_time_universe`, `from quant_engine.features.pipeline import FeaturePipeline` (+4 more)
-- Top-level functions:
-  - `main()` (line 50): Run the command-line entry point.
+- Intent: Backtest the trained model on historical data.
+- LOC: 429
 - Classes: none
+- Top-level functions: `main`
 
 ### `run_kalshi_event_pipeline.py`
-
-- LOC: 227
-- Module intent: Run the integrated Kalshi event-time pipeline inside quant_engine.
-- Imports (10): `import argparse`, `import json`, `from pathlib import Path`, `import pandas as pd`, `from quant_engine.config import KALSHI_DB_PATH, KALSHI_DISTANCE_LAGS, KALSHI_DISTRIBUTION_FREQ, KALSHI_ENABLED, KALSHI_FAR_EVENT_MINUTES, KALSHI_FAR_EVENT_STALE_MINUTES, KALSHI_NEAR_EVENT_MINUTES, KALSHI_NEAR_EVENT_STALE_MINUTES, KALSHI_STALE_HIGH_LIQUIDITY_MULTIPLIER, KALSHI_STALE_LIQUIDITY_HIGH_THRESHOLD, KALSHI_STALE_LIQUIDITY_LOW_THRESHOLD, KALSHI_STALE_LOW_LIQUIDITY_MULTIPLIER, KALSHI_STALE_MARKET_TYPE_MULTIPLIERS, KALSHI_SNAPSHOT_HORIZONS, KALSHI_STALE_AFTER_MINUTES, KALSHI_TAIL_THRESHOLDS, RESULTS_DIR`, `from quant_engine.kalshi.distribution import DistributionConfig`, `from quant_engine.kalshi.events import EventFeatureConfig, build_event_labels`, `from quant_engine.kalshi.pipeline import KalshiPipeline`, `from quant_engine.kalshi.promotion import EventPromotionConfig`, `from quant_engine.kalshi.walkforward import EventWalkForwardConfig`
-- Top-level functions:
-  - `_read_df(path)` (line 37): Read a CSV or Parquet file into a DataFrame based on the file extension.
-  - `main()` (line 45): Run Kalshi ingestion, distribution building, event features, walk-forward evaluation, and reporting tasks.
+- Intent: Run the integrated Kalshi event-time pipeline inside quant_engine.
+- LOC: 228
 - Classes: none
+- Top-level functions: `_read_df`, `main`
 
 ### `run_predict.py`
-
-- LOC: 202
-- Module intent: Generate predictions using trained ensemble model.
-- Imports (12): `import argparse`, `import json`, `import sys`, `import time`, `from pathlib import Path`, `import numpy as np`, `import pandas as pd`, `from quant_engine.config import UNIVERSE_FULL, UNIVERSE_QUICK, ENTRY_THRESHOLD, CONFIDENCE_THRESHOLD, RESULTS_DIR, REGIME_NAMES, FEATURE_MODE_DEFAULT`, `from quant_engine.data.loader import load_universe`, `from quant_engine.features.pipeline import FeaturePipeline`, `from quant_engine.regime.detector import RegimeDetector`, `from quant_engine.models.predictor import EnsemblePredictor`
-- Top-level functions:
-  - `main()` (line 33): Load a trained model version and generate prediction outputs for the configured universe.
+- Intent: Generate predictions using trained ensemble model.
+- LOC: 203
 - Classes: none
+- Top-level functions: `main`
 
 ### `run_rehydrate_cache_metadata.py`
-
-- LOC: 101
-- Module intent: Backfill cache metadata sidecars for existing OHLCV cache files.
-- Imports (5): `import argparse`, `import sys`, `from pathlib import Path`, `from quant_engine.config import DATA_CACHE_DIR, FRAMEWORK_DIR`, `from quant_engine.data.local_cache import rehydrate_cache_metadata`
-- Top-level functions:
-  - `_parse_root_source(items)` (line 21): Parse repeated --root-source values of the form "<path>=<source>" into a mapping.
-  - `main()` (line 36): Backfill cache metadata sidecars for existing cached OHLCV files and print a summary report.
+- Intent: Backfill cache metadata sidecars for existing OHLCV cache files.
+- LOC: 102
 - Classes: none
+- Top-level functions: `_parse_root_source`, `main`
 
 ### `run_retrain.py`
-
-- LOC: 290
-- Module intent: Retrain the quant engine model — checks triggers and retrains if needed.
-- Imports (14): `import argparse`, `import sys`, `import time`, `from pathlib import Path`, `import numpy as np`, `import pandas as pd`, `from quant_engine.config import UNIVERSE_FULL, UNIVERSE_QUICK, FORWARD_HORIZONS, FEATURE_MODE_DEFAULT, RETRAIN_REGIME_CHANGE_DAYS, RESULTS_DIR`, `from quant_engine.data.loader import load_universe, load_survivorship_universe`, `from quant_engine.features.pipeline import FeaturePipeline`, `from quant_engine.regime.detector import RegimeDetector`, `from quant_engine.models.governance import ModelGovernance`, `from quant_engine.models.trainer import ModelTrainer` (+2 more)
-- Top-level functions:
-  - `_check_regime_change_trigger(predictions_df, trained_regime, days_threshold)` (line 36): Check whether the market regime has changed for a sustained period.
-  - `main()` (line 67): Evaluate retraining conditions and run controlled retraining/promotion updates when triggered.
+- Intent: Retrain the quant engine model — checks triggers and retrains if needed.
+- LOC: 291
 - Classes: none
+- Top-level functions: `_check_regime_change_trigger`, `main`
 
 ### `run_server.py`
-
-- LOC: 80
-- Module intent: Combined API + frontend static serving entry point.
-- Imports (5): `from __future__ import annotations`, `import argparse`, `import logging`, `import sys`, `from pathlib import Path`
-- Top-level functions:
-  - `main()` (line 25): No module docstring.
+- Intent: Combined API + frontend static serving entry point.
+- LOC: 81
 - Classes: none
+- Top-level functions: `main`
 
 ### `run_train.py`
-
-- LOC: 195
-- Module intent: Train the regime-conditional ensemble model.
-- Imports (13): `import argparse`, `import sys`, `import time`, `from pathlib import Path`, `import numpy as np`, `import pandas as pd`, `from quant_engine.config import UNIVERSE_FULL, UNIVERSE_QUICK, FORWARD_HORIZONS, LOOKBACK_YEARS, FEATURE_MODE_DEFAULT`, `from quant_engine.data.loader import load_universe, load_survivorship_universe`, `from quant_engine.features.pipeline import FeaturePipeline`, `from quant_engine.regime.detector import RegimeDetector`, `from quant_engine.models.governance import ModelGovernance`, `from quant_engine.models.trainer import ModelTrainer` (+1 more)
-- Top-level functions:
-  - `main()` (line 35): Train a model for the requested horizon/workflow settings and persist versioned artifacts.
+- Intent: Train the regime-conditional ensemble model.
+- LOC: 196
 - Classes: none
+- Top-level functions: `main`
 
 ### `run_wrds_daily_refresh.py`
-
-- LOC: 348
-- Module intent: Re-download all daily OHLCV data from WRDS CRSP to replace old cache files
-- Imports (8): `import argparse`, `import sys`, `import time`, `from datetime import datetime`, `from pathlib import Path`, `import pandas as pd`, `from quant_engine.config import DATA_CACHE_DIR, UNIVERSE_FULL, BENCHMARK`, `from quant_engine.data.local_cache import list_cached_tickers, save_ohlcv`
-- Top-level functions:
-  - `_build_ticker_list(tickers_arg)` (line 30): Build the full ticker list from cached + UNIVERSE_FULL + BENCHMARK.
-  - `_verify_file(path)` (line 41): Verify OHLCV quality for a single parquet file. Returns dict of results.
-  - `_verify_all(cache_dir)` (line 93): Run verification on all _1d.parquet files in cache.
-  - `_cleanup_old_daily(cache_dir, downloaded_tickers)` (line 148): Remove old {TICKER}_daily_{dates}.parquet and .meta.json files.
-  - `main()` (line 169): Run the WRDS daily refresh workflow and emit a summary of refreshed datasets and outputs.
+- Intent: Re-download all daily OHLCV data from WRDS CRSP to replace old cache files
+- LOC: 349
 - Classes: none
+- Top-level functions: `_build_ticker_list`, `_verify_file`, `_verify_all`, `_cleanup_old_daily`, `main`
 
-## Package `api`
+## `api`
+
+| Module | Lines | Classes | Top-level Functions | Intent |
+|---|---|---|---|---|
+| `api/__init__.py` | 2 | 0 | 0 | FastAPI backend for the quant engine. |
+| `api/ab_testing.py` | 795 | 3 | 0 | A/B testing framework for strategy evaluation. |
+| `api/cache/__init__.py` | 5 | 0 | 0 | TTL cache with event-driven invalidation. |
+| `api/cache/invalidation.py` | 33 | 0 | 4 | Event-driven cache invalidation helpers. |
+| `api/cache/manager.py` | 63 | 1 | 0 | In-memory TTL cache manager. |
+| `api/config.py` | 76 | 2 | 0 | Runtime-adjustable configuration for the API layer. |
+| `api/deps/__init__.py` | 17 | 0 | 0 | Dependency injection providers. |
+| `api/deps/providers.py` | 55 | 0 | 5 | Singleton dependency providers for FastAPI ``Depends()``. |
+| `api/errors.py` | 78 | 5 | 2 | Custom exceptions and FastAPI error handler registration. |
+| `api/jobs/__init__.py` | 7 | 0 | 0 | SQLite-backed job queue for long-running compute. |
+| `api/jobs/autopilot_job.py` | 32 | 0 | 1 | Autopilot job executor. |
+| `api/jobs/backtest_job.py` | 30 | 0 | 1 | Backtest job executor. |
+| `api/jobs/models.py` | 33 | 2 | 0 | Job data models. |
+| `api/jobs/predict_job.py` | 29 | 0 | 1 | Predict job executor. |
+| `api/jobs/runner.py` | 116 | 1 | 0 | Async job runner with concurrency control and SSE event streaming. |
+| `api/jobs/store.py` | 146 | 1 | 0 | SQLite-backed persistence for job records. |
+| `api/jobs/train_job.py` | 31 | 0 | 1 | Train job executor. |
+| `api/main.py` | 149 | 0 | 4 | FastAPI application factory and server entry point. |
+| `api/orchestrator.py` | 373 | 2 | 0 | Unified pipeline orchestrator — data -> features -> regimes -> compute. |
+| `api/routers/__init__.py` | 43 | 0 | 1 | Route modules — imported lazily by the app factory. |
+| `api/routers/autopilot.py` | 84 | 0 | 5 | Autopilot endpoints — cycle reports, strategies, paper state, run-cycle. |
+| `api/routers/backtests.py` | 90 | 0 | 5 | Backtest result + compute endpoints. |
+| `api/routers/benchmark.py` | 129 | 0 | 6 | Benchmark comparison endpoints. |
+| `api/routers/config_mgmt.py` | 147 | 0 | 6 | Runtime config management endpoints. |
+| `api/routers/dashboard.py` | 171 | 0 | 10 | Dashboard endpoints — KPIs, regime overview, time series analytics. |
+| `api/routers/data_explorer.py` | 491 | 0 | 21 | Data explorer endpoints — universe + per-ticker OHLCV + bars + indicators. |
+| `api/routers/diagnostics.py` | 66 | 0 | 1 | Diagnostics API router — system self-diagnosis and root-cause analysis. |
+| `api/routers/iv_surface.py` | 72 | 0 | 2 | IV Surface computation endpoints. |
+| `api/routers/jobs.py` | 73 | 0 | 5 | Job management endpoints. |
+| `api/routers/logs.py` | 39 | 1 | 1 | Log retrieval endpoint. |
+| `api/routers/model_lab.py` | 91 | 0 | 6 | Model lab endpoints — versions, health, feature importance, train, predict. |
+| `api/routers/regime.py` | 134 | 0 | 2 | Regime detection endpoints — metadata, current state, history. |
+| `api/routers/risk.py` | 54 | 0 | 1 | Risk API router — factor exposures, diagnostics, and monitoring endpoints. |
+| `api/routers/signals.py` | 52 | 0 | 2 | Signal / prediction endpoints. |
+| `api/routers/system_health.py` | 122 | 0 | 5 | System health endpoints. |
+| `api/schemas/__init__.py` | 5 | 0 | 0 | Pydantic schemas for API request/response models. |
+| `api/schemas/autopilot.py` | 31 | 3 | 0 | Autopilot schemas. |
+| `api/schemas/backtests.py` | 57 | 4 | 0 | Backtest schemas. |
+| `api/schemas/compute.py` | 57 | 5 | 0 | Request schemas for compute (POST) endpoints. |
+| `api/schemas/dashboard.py` | 39 | 3 | 0 | Dashboard-related schemas. |
+| `api/schemas/data_explorer.py` | 38 | 3 | 0 | Data explorer schemas. |
+| `api/schemas/envelope.py` | 55 | 2 | 0 | Standard API response envelope with provenance metadata. |
+| `api/schemas/model_lab.py` | 44 | 3 | 0 | Model lab schemas. |
+| `api/schemas/signals.py` | 27 | 2 | 0 | Signal schemas. |
+| `api/schemas/system_health.py` | 48 | 3 | 0 | System health schemas. |
+| `api/services/__init__.py` | 21 | 0 | 0 | Engine wrapper services — sync functions returning plain dicts. |
+| `api/services/autopilot_service.py` | 63 | 1 | 0 | Wraps autopilot engine and results for API consumption. |
+| `api/services/backtest_service.py` | 140 | 1 | 0 | Wraps backtest results for API consumption. |
+| `api/services/data_helpers.py` | 1059 | 2 | 22 | Data loading and computation functions extracted from dash_ui/data/loaders.py. |
+| `api/services/data_service.py` | 209 | 1 | 0 | Wraps data.loader for API consumption. |
+| `api/services/diagnostics.py` | 289 | 3 | 0 | System Diagnostics — explains WHY performance is degrading. |
+| `api/services/health_alerts.py` | 325 | 2 | 2 | Health alert and notification system — Spec 09. |
+| `api/services/health_confidence.py` | 315 | 2 | 0 | Health score confidence interval computation — Spec 09. |
+| `api/services/health_risk_feedback.py` | 276 | 1 | 2 | Health-to-risk feedback loop — Spec 09. |
+| `api/services/health_service.py` | 1954 | 2 | 1 | System health assessment for API consumption. |
+| `api/services/kalshi_service.py` | 51 | 1 | 0 | Wraps kalshi.storage for API consumption. |
+| `api/services/model_service.py` | 99 | 1 | 0 | Wraps models.* modules for API consumption. |
+| `api/services/regime_service.py` | 51 | 1 | 0 | Wraps regime.detector for API consumption. |
+| `api/services/results_service.py` | 86 | 1 | 0 | Reads/writes to the results/ directory. |
 
 ### `api/__init__.py`
-
-- LOC: 1
-- Module intent: FastAPI backend for the quant engine.
-- Top-level functions: none
+- Intent: FastAPI backend for the quant engine.
+- LOC: 2
 - Classes: none
+- Top-level functions: none
 
 ### `api/ab_testing.py`
-
-- LOC: 214
-- Module intent: A/B testing framework for strategy evaluation.
-- Imports (9): `from __future__ import annotations`, `import json`, `import logging`, `import uuid`, `from dataclasses import asdict, dataclass, field`, `from datetime import datetime, timezone`, `from pathlib import Path`, `from typing import Any, Dict, List, Optional`, `import numpy as np`
-- Top-level functions: none
+- Intent: A/B testing framework for strategy evaluation.
+- LOC: 795
 - Classes:
-  - `ABVariant` (line 24): One arm of an A/B test.
-    - Methods (3): `n_trades`, `mean_return`, `sharpe`
-  - `ABTest` (line 54): An A/B test comparing two strategy variants.
-    - Methods (5): `__post_init__`, `record_trade`, `assign_variant`, `get_results`, `to_dict`
-  - `ABTestRegistry` (line 156): Manages A/B tests with JSON persistence.
-    - Methods (6): `__init__`, `create_test`, `get_test`, `list_tests`, `complete_test`, `_save`
+  - `ABVariant` (methods: `n_trades`, `returns`, `mean_return`, `sharpe`, `sortino`, `max_drawdown`, `win_rate`, `profit_factor`, `turnover`, `total_transaction_costs`)
+  - `ABTest` (methods: `record_trade`, `assign_variant`, `get_variant_config`, `compute_required_samples`, `check_early_stopping`, `get_results`, `get_test_report`, `to_dict`)
+  - `ABTestRegistry` (methods: `create_test`, `get_test`, `get_active_test`, `list_tests`, `complete_test`, `cancel_test`)
+- Top-level functions: none
 
 ### `api/cache/__init__.py`
-
-- LOC: 4
-- Module intent: TTL cache with event-driven invalidation.
-- Imports (1): `from .manager import CacheManager`
-- Top-level functions: none
+- Intent: TTL cache with event-driven invalidation.
+- LOC: 5
 - Classes: none
+- Top-level functions: none
 
 ### `api/cache/invalidation.py`
-
-- LOC: 32
-- Module intent: Event-driven cache invalidation helpers.
-- Imports (2): `from __future__ import annotations`, `from .manager import CacheManager`
-- Top-level functions:
-  - `invalidate_on_train(cache)` (line 7): Clear caches affected by a new model training run.
-  - `invalidate_on_backtest(cache)` (line 15): Clear caches affected by a new backtest run.
-  - `invalidate_on_data_refresh(cache)` (line 21): Clear caches affected by fresh market data.
-  - `invalidate_on_config_change(cache)` (line 30): Clear all caches when runtime config is patched.
+- Intent: Event-driven cache invalidation helpers.
+- LOC: 33
 - Classes: none
+- Top-level functions: `invalidate_on_train`, `invalidate_on_backtest`, `invalidate_on_data_refresh`, `invalidate_on_config_change`
 
 ### `api/cache/manager.py`
-
-- LOC: 62
-- Module intent: In-memory TTL cache manager.
-- Imports (4): `from __future__ import annotations`, `import fnmatch`, `import time`, `from typing import Any, Dict, Optional`
-- Top-level functions: none
+- Intent: In-memory TTL cache manager.
+- LOC: 63
 - Classes:
-  - `CacheManager` (line 21): Simple in-memory dict cache with per-key TTL.
-    - Methods (6): `__init__`, `get`, `set`, `invalidate`, `invalidate_pattern`, `invalidate_all`
+  - `CacheManager` (methods: `get`, `set`, `invalidate`, `invalidate_pattern`, `invalidate_all`)
+- Top-level functions: none
 
 ### `api/config.py`
-
-- LOC: 75
-- Module intent: Runtime-adjustable configuration for the API layer.
-- Imports (4): `from __future__ import annotations`, `import logging`, `from typing import Any, Dict, Set`, `from pydantic_settings import BaseSettings`
-- Top-level functions: none
+- Intent: Runtime-adjustable configuration for the API layer.
+- LOC: 76
 - Classes:
-  - `ApiSettings` (line 27): Immutable settings loaded from environment / .env file.
-  - `RuntimeConfig` (line 39): Thin wrapper around engine ``config.py`` module-level variables.
-    - Methods (3): `__init__`, `get_adjustable`, `patch`
+  - `ApiSettings` (methods: none)
+  - `RuntimeConfig` (methods: `get_adjustable`, `patch`)
+- Top-level functions: none
 
 ### `api/deps/__init__.py`
-
-- LOC: 16
-- Module intent: Dependency injection providers.
-- Imports (1): `from .providers import get_cache, get_job_runner, get_job_store, get_runtime_config, get_settings`
-- Top-level functions: none
+- Intent: Dependency injection providers.
+- LOC: 17
 - Classes: none
+- Top-level functions: none
 
 ### `api/deps/providers.py`
-
-- LOC: 54
-- Module intent: Singleton dependency providers for FastAPI ``Depends()``.
-- Imports (3): `from __future__ import annotations`, `from functools import lru_cache`, `from ..config import ApiSettings, RuntimeConfig`
-- Top-level functions:
-  - `get_settings()` (line 10): No module docstring.
-  - `get_runtime_config()` (line 15): No module docstring.
-  - `get_job_store()` (line 27): Return the singleton ``JobStore``.
-  - `get_job_runner()` (line 37): Return the singleton ``JobRunner``.
-  - `get_cache()` (line 47): Return the singleton ``CacheManager``.
+- Intent: Singleton dependency providers for FastAPI ``Depends()``.
+- LOC: 55
 - Classes: none
+- Top-level functions: `get_settings`, `get_runtime_config`, `get_job_store`, `get_job_runner`, `get_cache`
 
 ### `api/errors.py`
-
-- LOC: 77
-- Module intent: Custom exceptions and FastAPI error handler registration.
-- Imports (6): `from __future__ import annotations`, `import logging`, `import traceback`, `from fastapi import FastAPI, Request`, `from fastapi.responses import JSONResponse`, `from .schemas.envelope import ApiResponse`
-- Top-level functions:
-  - `_make_handler(status_code)` (line 49): Create a handler that wraps an exception in ApiResponse.
-  - `register_error_handlers(app)` (line 59): Register custom exception handlers on the FastAPI app.
+- Intent: Custom exceptions and FastAPI error handler registration.
+- LOC: 78
 - Classes:
-  - `DataNotFoundError` (line 18): Requested data or ticker not available.
-  - `TrainingFailedError` (line 22): Model training could not complete.
-  - `JobNotFoundError` (line 26): Requested job ID does not exist.
-  - `ConfigValidationError` (line 30): Runtime config patch contains invalid keys or values.
-  - `ServiceUnavailableError` (line 34): An engine dependency is not ready (e.g. WRDS offline).
+  - `DataNotFoundError` (methods: none)
+  - `TrainingFailedError` (methods: none)
+  - `JobNotFoundError` (methods: none)
+  - `ConfigValidationError` (methods: none)
+  - `ServiceUnavailableError` (methods: none)
+- Top-level functions: `_make_handler`, `register_error_handlers`
 
 ### `api/jobs/__init__.py`
-
-- LOC: 6
-- Module intent: SQLite-backed job queue for long-running compute.
-- Imports (3): `from .models import JobRecord, JobStatus`, `from .store import JobStore`, `from .runner import JobRunner`
-- Top-level functions: none
+- Intent: SQLite-backed job queue for long-running compute.
+- LOC: 7
 - Classes: none
+- Top-level functions: none
 
 ### `api/jobs/autopilot_job.py`
-
-- LOC: 31
-- Module intent: Autopilot job executor.
-- Imports (2): `from __future__ import annotations`, `from typing import Any, Callable, Dict, Optional`
-- Top-level functions:
-  - `execute_autopilot_job(params, progress_callback)` (line 7): Run a single autopilot cycle and return results dict.
+- Intent: Autopilot job executor.
+- LOC: 32
 - Classes: none
+- Top-level functions: `execute_autopilot_job`
 
 ### `api/jobs/backtest_job.py`
-
-- LOC: 29
-- Module intent: Backtest job executor.
-- Imports (2): `from __future__ import annotations`, `from typing import Any, Callable, Dict, Optional`
-- Top-level functions:
-  - `execute_backtest_job(params, progress_callback)` (line 7): Run a full backtest pipeline and return results dict.
+- Intent: Backtest job executor.
+- LOC: 30
 - Classes: none
+- Top-level functions: `execute_backtest_job`
 
 ### `api/jobs/models.py`
-
-- LOC: 32
-- Module intent: Job data models.
-- Imports (5): `from __future__ import annotations`, `import enum`, `from datetime import datetime, timezone`, `from typing import Any, Dict, Optional`, `from pydantic import BaseModel, Field`
-- Top-level functions: none
+- Intent: Job data models.
+- LOC: 33
 - Classes:
-  - `JobStatus` (line 11): No module docstring.
-  - `JobRecord` (line 19): Persistent representation of a compute job.
+  - `JobStatus` (methods: none)
+  - `JobRecord` (methods: none)
+- Top-level functions: none
 
 ### `api/jobs/predict_job.py`
-
-- LOC: 28
-- Module intent: Predict job executor.
-- Imports (2): `from __future__ import annotations`, `from typing import Any, Callable, Dict, Optional`
-- Top-level functions:
-  - `execute_predict_job(params, progress_callback)` (line 7): Run prediction pipeline and return results dict.
+- Intent: Predict job executor.
+- LOC: 29
 - Classes: none
+- Top-level functions: `execute_predict_job`
 
 ### `api/jobs/runner.py`
-
-- LOC: 115
-- Module intent: Async job runner with concurrency control and SSE event streaming.
-- Imports (8): `from __future__ import annotations`, `import asyncio`, `import logging`, `import traceback`, `from datetime import datetime, timezone`, `from typing import Any, AsyncGenerator, Callable, Dict, Optional`, `from .models import JobStatus`, `from .store import JobStore`
-- Top-level functions: none
+- Intent: Async job runner with concurrency control and SSE event streaming.
+- LOC: 116
 - Classes:
-  - `JobRunner` (line 16): Executes job functions in background threads with bounded concurrency.
-    - Methods (7): `__init__`, `submit`, `_run`, `_on_progress`, `cancel`, `subscribe_events`, `_emit`
+  - `JobRunner` (methods: `submit`, `cancel`, `subscribe_events`)
+- Top-level functions: none
 
 ### `api/jobs/store.py`
-
-- LOC: 145
-- Module intent: SQLite-backed persistence for job records.
-- Imports (6): `from __future__ import annotations`, `import json`, `import uuid`, `from typing import Any, Dict, List, Optional`, `import aiosqlite`, `from .models import JobRecord, JobStatus`
-- Top-level functions: none
+- Intent: SQLite-backed persistence for job records.
+- LOC: 146
 - Classes:
-  - `JobStore` (line 13): Async SQLite store for job lifecycle tracking.
-    - Methods (10): `__init__`, `initialize`, `close`, `create_job`, `get_job`, `list_jobs`, `update_status`, `update_progress`, `cancel_job`, `_row_to_record`
+  - `JobStore` (methods: `initialize`, `close`, `create_job`, `get_job`, `list_jobs`, `update_status`, `update_progress`, `cancel_job`)
+- Top-level functions: none
 
 ### `api/jobs/train_job.py`
-
-- LOC: 30
-- Module intent: Train job executor.
-- Imports (2): `from __future__ import annotations`, `from typing import Any, Callable, Dict, Optional`
-- Top-level functions:
-  - `execute_train_job(params, progress_callback)` (line 7): Run a full train pipeline and return results dict.
+- Intent: Train job executor.
+- LOC: 31
 - Classes: none
+- Top-level functions: `execute_train_job`
 
 ### `api/main.py`
-
-- LOC: 148
-- Module intent: FastAPI application factory and server entry point.
-- Imports (9): `from __future__ import annotations`, `import asyncio`, `import logging`, `from contextlib import asynccontextmanager`, `from fastapi import FastAPI`, `from fastapi.middleware.cors import CORSMiddleware`, `from .config import ApiSettings`, `from .deps.providers import get_cache, get_job_store, get_settings`, `from .errors import register_error_handlers`
-- Top-level functions:
-  - `async _retrain_monitor_loop()` (line 21): Background task that periodically checks retrain triggers.
-  - `async _lifespan(app)` (line 46): Startup / shutdown lifecycle.
-  - `create_app(settings)` (line 101): Build and return the FastAPI application.
-  - `run_server()` (line 138): CLI entry point: ``python -m quant_engine.api.main``.
+- Intent: FastAPI application factory and server entry point.
+- LOC: 149
 - Classes: none
+- Top-level functions: `_retrain_monitor_loop`, `_lifespan`, `create_app`, `run_server`
 
 ### `api/orchestrator.py`
-
-- LOC: 372
-- Module intent: Unified pipeline orchestrator — data -> features -> regimes -> compute.
-- Imports (6): `from __future__ import annotations`, `import logging`, `from dataclasses import dataclass, field`, `from typing import Any, Dict, List, Optional`, `import numpy as np`, `import pandas as pd`
-- Top-level functions: none
+- Intent: Unified pipeline orchestrator — data -> features -> regimes -> compute.
+- LOC: 373
 - Classes:
-  - `PipelineState` (line 19): Intermediate state passed between orchestrator stages.
-  - `PipelineOrchestrator` (line 29): Chains engine modules into a reproducible pipeline.
-    - Methods (4): `load_and_prepare`, `train`, `predict`, `backtest`
+  - `PipelineState` (methods: none)
+  - `PipelineOrchestrator` (methods: `load_and_prepare`, `train`, `predict`, `backtest`)
+- Top-level functions: none
 
 ### `api/routers/__init__.py`
-
-- LOC: 39
-- Module intent: Route modules — imported lazily by the app factory.
-- Imports (4): `from __future__ import annotations`, `import logging`, `from typing import List`, `from fastapi import APIRouter`
-- Top-level functions:
-  - `all_routers()` (line 28): Import and return every available router, skipping broken ones.
+- Intent: Route modules — imported lazily by the app factory.
+- LOC: 43
 - Classes: none
+- Top-level functions: `all_routers`
 
 ### `api/routers/autopilot.py`
-
-- LOC: 83
-- Module intent: Autopilot endpoints — cycle reports, strategies, paper state, run-cycle.
-- Imports (10): `from __future__ import annotations`, `import asyncio`, `import time`, `from fastapi import APIRouter, Depends`, `from ..deps.providers import get_job_runner, get_job_store`, `from ..jobs.runner import JobRunner`, `from ..jobs.store import JobStore`, `from ..schemas.compute import AutopilotRequest`, `from ..schemas.envelope import ApiResponse`, `from ..services.autopilot_service import AutopilotService`
-- Route decorators detected:
-  - `GET` line 44: `"/latest-cycle"`
-  - `GET` line 54: `"/strategies"`
-  - `GET` line 63: `"/paper-state"`
-  - `POST` line 73: `"/run-cycle"`
-- Top-level functions:
-  - `_get_autopilot_meta()` (line 19): Collect transparency metadata for autopilot responses.
-  - `async latest_cycle()` (line 45): No module docstring.
-  - `async strategies()` (line 55): No module docstring.
-  - `async paper_state()` (line 64): No module docstring.
-  - `async run_cycle(req, store, runner)` (line 74): No module docstring.
+- Intent: Autopilot endpoints — cycle reports, strategies, paper state, run-cycle.
+- LOC: 84
 - Classes: none
+- Top-level functions: `_get_autopilot_meta`, `latest_cycle`, `strategies`, `paper_state`, `run_cycle`
 
 ### `api/routers/backtests.py`
-
-- LOC: 89
-- Module intent: Backtest result + compute endpoints.
-- Imports (12): `from __future__ import annotations`, `import asyncio`, `import time`, `from fastapi import APIRouter, Depends`, `from ..cache.invalidation import invalidate_on_backtest`, `from ..cache.manager import CacheManager`, `from ..deps.providers import get_cache, get_job_runner, get_job_store`, `from ..jobs.runner import JobRunner`, `from ..jobs.store import JobStore`, `from ..schemas.compute import BacktestRequest`, `from ..schemas.envelope import ApiResponse`, `from ..services.backtest_service import BacktestService`
-- Route decorators detected:
-  - `GET` line 33: `"/latest"`
-  - `GET` line 51: `"/latest/trades"`
-  - `GET` line 60: `"/latest/equity-curve"`
-  - `POST` line 77: `"/run"`
-- Top-level functions:
-  - `_extract_backtest_meta(data)` (line 21): Extract transparency fields from backtest data for ResponseMeta.
-  - `async latest_backtest(horizon, cache)` (line 34): No module docstring.
-  - `async latest_trades(horizon, limit, offset)` (line 52): No module docstring.
-  - `async equity_curve(horizon, cache)` (line 61): No module docstring.
-  - `async run_backtest(req, store, runner, cache)` (line 78): No module docstring.
+- Intent: Backtest result + compute endpoints.
+- LOC: 90
 - Classes: none
+- Top-level functions: `_extract_backtest_meta`, `latest_backtest`, `latest_trades`, `equity_curve`, `run_backtest`
 
 ### `api/routers/benchmark.py`
-
-- LOC: 128
-- Module intent: Benchmark comparison endpoints.
-- Imports (7): `from __future__ import annotations`, `import asyncio`, `import time`, `from fastapi import APIRouter, Depends`, `from ..cache.manager import CacheManager`, `from ..deps.providers import get_cache`, `from ..schemas.envelope import ApiResponse`
-- Route decorators detected:
-  - `GET` line 93: `"/comparison"`
-  - `GET` line 105: `"/equity-curves"`
-  - `GET` line 118: `"/rolling-metrics"`
-- Top-level functions:
-  - `_compute_comparison()` (line 16): Build benchmark vs. strategy comparison (sync).
-  - `_compute_equity_curves()` (line 47): Build cumulative equity curves for strategy and benchmark (sync).
-  - `_compute_rolling_metrics()` (line 70): Build rolling 60D correlation, alpha, beta, relative strength (sync).
-  - `async benchmark_comparison(cache)` (line 94): No module docstring.
-  - `async benchmark_equity_curves(cache)` (line 106): Strategy + SPY cumulative return time series for equity comparison chart.
-  - `async benchmark_rolling_metrics(cache)` (line 119): Rolling 60D correlation, alpha, beta, relative strength time series.
+- Intent: Benchmark comparison endpoints.
+- LOC: 129
 - Classes: none
+- Top-level functions: `_compute_comparison`, `_compute_equity_curves`, `_compute_rolling_metrics`, `benchmark_comparison`, `benchmark_equity_curves`, `benchmark_rolling_metrics`
 
 ### `api/routers/config_mgmt.py`
-
-- LOC: 146
-- Module intent: Runtime config management endpoints.
-- Imports (9): `from __future__ import annotations`, `from typing import Any, Dict`, `from fastapi import APIRouter, Body, Depends`, `from fastapi.responses import JSONResponse`, `from ..cache.invalidation import invalidate_on_config_change`, `from ..cache.manager import CacheManager`, `from ..config import RuntimeConfig`, `from ..deps.providers import get_cache, get_runtime_config`, `from ..schemas.envelope import ApiResponse`
-- Route decorators detected:
-  - `GET` line 102: `""`
-  - `GET` line 107: `"/validate"`
-  - `GET` line 124: `"/status"`
-  - `PATCH` line 134: `""`
-- Top-level functions:
-  - `_annotated(value, status, reason)` (line 18): Build a single config entry with status annotation.
-  - `_build_config_status()` (line 26): Build the full annotated config status response.
-  - `async get_config(rc)` (line 103): No module docstring.
-  - `async validate_config_endpoint()` (line 108): Run config validation and return any issues found.
-  - `async get_config_status()` (line 125): Return all config values with active/placeholder/inactive status annotations.
-  - `async patch_config(updates, rc, cache)` (line 135): No module docstring.
+- Intent: Runtime config management endpoints.
+- LOC: 147
 - Classes: none
+- Top-level functions: `_annotated`, `_build_config_status`, `get_config`, `validate_config_endpoint`, `get_config_status`, `patch_config`
 
 ### `api/routers/dashboard.py`
-
-- LOC: 170
-- Module intent: Dashboard endpoints — KPIs, regime overview, time series analytics.
-- Imports (9): `from __future__ import annotations`, `import asyncio`, `import time`, `from fastapi import APIRouter, Depends`, `from ..cache.manager import CacheManager`, `from ..deps.providers import get_cache`, `from ..schemas.envelope import ApiResponse`, `from ..services.backtest_service import BacktestService`, `from ..services.regime_service import RegimeService`
-- Route decorators detected:
-  - `GET` line 18: `"/summary"`
-  - `GET` line 39: `"/regime"`
-  - `GET` line 121: `"/returns-distribution"`
-  - `GET` line 134: `"/rolling-risk"`
-  - `GET` line 147: `"/equity"`
-  - `GET` line 160: `"/attribution"`
-- Top-level functions:
-  - `async dashboard_summary(cache)` (line 19): No module docstring.
-  - `async dashboard_regime(cache)` (line 40): No module docstring.
-  - `_compute_returns_distribution()` (line 52): Build return histogram data with VaR/CVaR lines (sync).
-  - `_compute_rolling_risk()` (line 67): Build rolling vol, Sharpe, drawdown time series (sync).
-  - `_compute_equity_with_benchmark()` (line 82): Build equity curve with benchmark overlay (sync).
-  - `_compute_attribution()` (line 104): Build factor attribution analysis (sync).
-  - `async returns_distribution(cache)` (line 122): Daily return histogram data with VaR/CVaR lines.
-  - `async rolling_risk(cache)` (line 135): Rolling volatility, Sharpe, and drawdown time series.
-  - `async equity_with_benchmark(cache)` (line 148): Equity curve with benchmark overlay time series.
-  - `async attribution(cache)` (line 161): Factor attribution: tech-minus-def and momentum-spread decomposition.
+- Intent: Dashboard endpoints — KPIs, regime overview, time series analytics.
+- LOC: 171
 - Classes: none
+- Top-level functions: `dashboard_summary`, `dashboard_regime`, `_compute_returns_distribution`, `_compute_rolling_risk`, `_compute_equity_with_benchmark`, `_compute_attribution`, `returns_distribution`, `rolling_risk`, `equity_with_benchmark`, `attribution`
 
 ### `api/routers/data_explorer.py`
-
-- LOC: 56
-- Module intent: Data explorer endpoints — universe + per-ticker OHLCV.
-- Imports (9): `from __future__ import annotations`, `import asyncio`, `import time`, `from fastapi import APIRouter, Depends`, `from ..cache.manager import CacheManager`, `from ..deps.providers import get_cache`, `from ..errors import DataNotFoundError`, `from ..schemas.envelope import ApiResponse`, `from ..services.data_service import DataService`
-- Route decorators detected:
-  - `GET` line 18: `"/universe"`
-  - `GET` line 31: `"/status"`
-  - `GET` line 48: `"/ticker/{ticker}"`
-- Top-level functions:
-  - `async get_universe(cache)` (line 19): No module docstring.
-  - `async get_data_status(cache)` (line 32): Per-ticker cache health: source, freshness, bar counts, timeframes.
-  - `async get_ticker(ticker, years)` (line 49): No module docstring.
+- Intent: Data explorer endpoints — universe + per-ticker OHLCV + bars + indicators.
+- LOC: 491
 - Classes: none
+- Top-level functions: `_find_cached_parquet`, `_available_timeframes`, `_load_bars`, `_compute_sma`, `_compute_ema`, `_compute_bollinger`, `_compute_rsi`, `_compute_macd`, `_compute_atr`, `_compute_stochastic`, `_compute_obv`, `_compute_vwap`, `_compute_adx`, `_parse_indicator_spec`, `_compute_indicators_for_ticker`, `get_universe`, `get_data_status`, `get_ticker`, `get_ticker_bars`, `get_ticker_indicators`, `batch_indicators`
+
+### `api/routers/diagnostics.py`
+- Intent: Diagnostics API router — system self-diagnosis and root-cause analysis.
+- LOC: 66
+- Classes: none
+- Top-level functions: `get_diagnostics`
 
 ### `api/routers/iv_surface.py`
-
-- LOC: 71
-- Module intent: IV Surface computation endpoints.
-- Imports (5): `from __future__ import annotations`, `import asyncio`, `import time`, `from fastapi import APIRouter`, `from ..schemas.envelope import ApiResponse`
-- Route decorators detected:
-  - `GET` line 65: `"/arb-free-svi"`
-- Top-level functions:
-  - `_compute_arb_free_svi()` (line 14): Build arb-free SVI surface from synthetic market data.
-  - `async arb_free_svi_surface()` (line 66): Compute arbitrage-free SVI surface from synthetic market data.
+- Intent: IV Surface computation endpoints.
+- LOC: 72
 - Classes: none
+- Top-level functions: `_compute_arb_free_svi`, `arb_free_svi_surface`
 
 ### `api/routers/jobs.py`
-
-- LOC: 72
-- Module intent: Job management endpoints.
-- Imports (11): `from __future__ import annotations`, `import json`, `from fastapi import APIRouter, Depends`, `from fastapi.responses import JSONResponse`, `from sse_starlette.sse import EventSourceResponse`, `from ..deps.providers import get_job_runner, get_job_store`, `from ..errors import JobNotFoundError`, `from ..jobs.models import JobRecord`, `from ..jobs.store import JobStore`, `from ..jobs.runner import JobRunner`, `from ..schemas.envelope import ApiResponse`
-- Route decorators detected:
-  - `GET` line 25: `""`
-  - `GET` line 34: `"/{job_id}"`
-  - `GET` line 45: `"/{job_id}/events"`
-  - `POST` line 62: `"/{job_id}/cancel"`
-- Top-level functions:
-  - `_not_found(job_id)` (line 20): No module docstring.
-  - `async list_jobs(limit, store)` (line 26): No module docstring.
-  - `async get_job(job_id, store)` (line 35): No module docstring.
-  - `async job_events(job_id, store, runner)` (line 46): No module docstring.
-  - `async cancel_job(job_id, store, runner)` (line 63): No module docstring.
+- Intent: Job management endpoints.
+- LOC: 73
 - Classes: none
+- Top-level functions: `_not_found`, `list_jobs`, `get_job`, `job_events`, `cancel_job`
 
 ### `api/routers/logs.py`
-
-- LOC: 38
-- Module intent: Log retrieval endpoint.
-- Imports (5): `from __future__ import annotations`, `import logging`, `from collections import deque`, `from fastapi import APIRouter`, `from ..schemas.envelope import ApiResponse`
-- Route decorators detected:
-  - `GET` line 35: `""`
-- Top-level functions:
-  - `async get_logs(last_n)` (line 36): No module docstring.
+- Intent: Log retrieval endpoint.
+- LOC: 39
 - Classes:
-  - `_BufferHandler` (line 17): Captures log records into the ring buffer.
-    - Methods (1): `emit`
+  - `_BufferHandler` (methods: `emit`)
+- Top-level functions: `get_logs`
 
 ### `api/routers/model_lab.py`
-
-- LOC: 90
-- Module intent: Model lab endpoints — versions, health, feature importance, train, predict.
-- Imports (12): `from __future__ import annotations`, `import asyncio`, `import time`, `from fastapi import APIRouter, Depends`, `from ..cache.invalidation import invalidate_on_train`, `from ..cache.manager import CacheManager`, `from ..deps.providers import get_cache, get_job_runner, get_job_store`, `from ..jobs.runner import JobRunner`, `from ..jobs.store import JobStore`, `from ..schemas.compute import PredictRequest, TrainRequest`, `from ..schemas.envelope import ApiResponse`, `from ..services.model_service import ModelService`
-- Route decorators detected:
-  - `GET` line 21: `"/versions"`
-  - `GET` line 30: `"/health"`
-  - `GET` line 43: `"/features/importance"`
-  - `GET` line 56: `"/features/correlations"`
-  - `POST` line 65: `"/train"`
-  - `POST` line 80: `"/predict"`
-- Top-level functions:
-  - `async list_versions()` (line 22): No module docstring.
-  - `async model_health(cache)` (line 31): No module docstring.
-  - `async feature_importance(cache)` (line 44): No module docstring.
-  - `async feature_correlations()` (line 57): No module docstring.
-  - `async train_model(req, store, runner, cache)` (line 66): No module docstring.
-  - `async predict_model(req, store, runner)` (line 81): No module docstring.
+- Intent: Model lab endpoints — versions, health, feature importance, train, predict.
+- LOC: 91
 - Classes: none
+- Top-level functions: `list_versions`, `model_health`, `feature_importance`, `feature_correlations`, `train_model`, `predict_model`
+
+### `api/routers/regime.py`
+- Intent: Regime detection endpoints — metadata, current state, history.
+- LOC: 134
+- Classes: none
+- Top-level functions: `_build_regime_metadata`, `regime_metadata`
+
+### `api/routers/risk.py`
+- Intent: Risk API router — factor exposures, diagnostics, and monitoring endpoints.
+- LOC: 54
+- Classes: none
+- Top-level functions: `get_factor_exposures`
 
 ### `api/routers/signals.py`
-
-- LOC: 51
-- Module intent: Signal / prediction endpoints.
-- Imports (8): `from __future__ import annotations`, `import asyncio`, `import time`, `from fastapi import APIRouter, Depends`, `from ..cache.manager import CacheManager`, `from ..deps.providers import get_cache`, `from ..schemas.envelope import ApiResponse`, `from ..services.results_service import ResultsService`
-- Route decorators detected:
-  - `GET` line 36: `"/latest"`
-- Top-level functions:
-  - `_get_signal_meta_fields()` (line 17): Collect transparency metadata for signal responses.
-  - `async latest_signals(horizon, cache)` (line 37): No module docstring.
+- Intent: Signal / prediction endpoints.
+- LOC: 52
 - Classes: none
+- Top-level functions: `_get_signal_meta_fields`, `latest_signals`
 
 ### `api/routers/system_health.py`
-
-- LOC: 111
-- Module intent: System health endpoints.
-- Imports (11): `from __future__ import annotations`, `import asyncio`, `import json`, `import time`, `from datetime import datetime, timezone`, `from pathlib import Path`, `from fastapi import APIRouter, Depends`, `from ..cache.manager import CacheManager`, `from ..deps.providers import get_cache`, `from ..schemas.envelope import ApiResponse`, `from ..services.health_service import HealthService`
-- Route decorators detected:
-  - `GET` line 20: `"/api/health"`
-  - `GET` line 33: `"/api/health/detailed"`
-  - `GET` line 46: `"/api/v1/system/model-age"`
-  - `GET` line 81: `"/api/v1/system/data-mode"`
-- Top-level functions:
-  - `async quick_health(cache)` (line 21): No module docstring.
-  - `async detailed_health(cache)` (line 34): No module docstring.
-  - `async model_age()` (line 47): Return age of the currently deployed model in days and the version ID.
-  - `async data_mode()` (line 82): Return current data source mode (wrds, cache, demo) and any active fallbacks.
+- Intent: System health endpoints.
+- LOC: 122
 - Classes: none
+- Top-level functions: `quick_health`, `detailed_health`, `health_history`, `model_age`, `data_mode`
 
 ### `api/schemas/__init__.py`
-
-- LOC: 4
-- Module intent: Pydantic schemas for API request/response models.
-- Imports (1): `from .envelope import ApiResponse, ResponseMeta`
-- Top-level functions: none
+- Intent: Pydantic schemas for API request/response models.
+- LOC: 5
 - Classes: none
+- Top-level functions: none
 
 ### `api/schemas/autopilot.py`
-
-- LOC: 30
-- Module intent: Autopilot schemas.
-- Imports (3): `from __future__ import annotations`, `from typing import Any, Dict, List, Optional`, `from pydantic import BaseModel`
-- Top-level functions: none
+- Intent: Autopilot schemas.
+- LOC: 31
 - Classes:
-  - `CycleReport` (line 9): Latest autopilot cycle results.
-  - `StrategyInfo` (line 16): Active strategy from registry.
-  - `PaperState` (line 27): Paper trading state.
+  - `CycleReport` (methods: none)
+  - `StrategyInfo` (methods: none)
+  - `PaperState` (methods: none)
+- Top-level functions: none
 
 ### `api/schemas/backtests.py`
-
-- LOC: 56
-- Module intent: Backtest schemas.
-- Imports (3): `from __future__ import annotations`, `from typing import Any, Dict, List, Optional`, `from pydantic import BaseModel`
-- Top-level functions: none
+- Intent: Backtest schemas.
+- LOC: 57
 - Classes:
-  - `BacktestSummary` (line 9): Backtest run summary.
-  - `TradeRecord` (line 26): Single trade from backtest.
-  - `EquityCurvePoint` (line 43): Single point on an equity curve.
-  - `RegimeBreakdown` (line 50): Per-regime performance stats.
+  - `BacktestSummary` (methods: none)
+  - `TradeRecord` (methods: none)
+  - `EquityCurvePoint` (methods: none)
+  - `RegimeBreakdown` (methods: none)
+- Top-level functions: none
 
 ### `api/schemas/compute.py`
-
-- LOC: 56
-- Module intent: Request schemas for compute (POST) endpoints.
-- Imports (3): `from __future__ import annotations`, `from typing import List, Optional`, `from pydantic import BaseModel, Field`
-- Top-level functions: none
+- Intent: Request schemas for compute (POST) endpoints.
+- LOC: 57
 - Classes:
-  - `TrainRequest` (line 9): Request body for POST /api/models/train.
-  - `BacktestRequest` (line 21): Request body for POST /api/backtests/run.
-  - `PredictRequest` (line 33): Request body for POST /api/models/predict.
-  - `AutopilotRequest` (line 44): Request body for POST /api/autopilot/run-cycle.
-  - `JobCreatedResponse` (line 51): Response for job submission endpoints.
+  - `TrainRequest` (methods: none)
+  - `BacktestRequest` (methods: none)
+  - `PredictRequest` (methods: none)
+  - `AutopilotRequest` (methods: none)
+  - `JobCreatedResponse` (methods: none)
+- Top-level functions: none
 
 ### `api/schemas/dashboard.py`
-
-- LOC: 38
-- Module intent: Dashboard-related schemas.
-- Imports (3): `from __future__ import annotations`, `from typing import Any, Dict, List, Optional`, `from pydantic import BaseModel`
-- Top-level functions: none
+- Intent: Dashboard-related schemas.
+- LOC: 39
 - Classes:
-  - `DashboardKPIs` (line 9): Key performance indicators for the dashboard summary.
-  - `RegimeInfo` (line 24): Current regime detection results.
-  - `EquityPoint` (line 34): Single point on an equity curve.
+  - `DashboardKPIs` (methods: none)
+  - `RegimeInfo` (methods: none)
+  - `EquityPoint` (methods: none)
+- Top-level functions: none
 
 ### `api/schemas/data_explorer.py`
-
-- LOC: 37
-- Module intent: Data explorer schemas.
-- Imports (3): `from __future__ import annotations`, `from typing import Any, Dict, List, Optional`, `from pydantic import BaseModel`
-- Top-level functions: none
+- Intent: Data explorer schemas.
+- LOC: 38
 - Classes:
-  - `UniverseInfo` (line 9): Universe configuration summary.
-  - `OHLCVBar` (line 19): Single OHLCV bar.
-  - `TickerDetail` (line 30): Detailed ticker response with OHLCV bars.
+  - `UniverseInfo` (methods: none)
+  - `OHLCVBar` (methods: none)
+  - `TickerDetail` (methods: none)
+- Top-level functions: none
 
 ### `api/schemas/envelope.py`
-
-- LOC: 54
-- Module intent: Standard API response envelope with provenance metadata.
-- Imports (4): `from __future__ import annotations`, `from datetime import datetime, timezone`, `from typing import Any, Generic, List, Optional, TypeVar`, `from pydantic import BaseModel, Field`
-- Top-level functions: none
+- Intent: Standard API response envelope with provenance metadata.
+- LOC: 55
 - Classes:
-  - `ResponseMeta` (line 12): Provenance metadata attached to every API response.
-  - `ApiResponse` (line 29): Generic API response wrapper.
-    - Methods (3): `success`, `fail`, `from_cached`
+  - `ResponseMeta` (methods: none)
+  - `ApiResponse` (methods: `success`, `fail`, `from_cached`)
+- Top-level functions: none
 
 ### `api/schemas/model_lab.py`
-
-- LOC: 43
-- Module intent: Model lab schemas.
-- Imports (3): `from __future__ import annotations`, `from typing import Any, Dict, List, Optional`, `from pydantic import BaseModel`
-- Top-level functions: none
+- Intent: Model lab schemas.
+- LOC: 44
 - Classes:
-  - `ModelVersionInfo` (line 9): Summary of a model version.
-  - `ModelHealth` (line 27): Model health assessment.
-  - `FeatureImportance` (line 39): Feature importance results.
+  - `ModelVersionInfo` (methods: none)
+  - `ModelHealth` (methods: none)
+  - `FeatureImportance` (methods: none)
+- Top-level functions: none
 
 ### `api/schemas/signals.py`
-
-- LOC: 26
-- Module intent: Signal schemas.
-- Imports (3): `from __future__ import annotations`, `from typing import Any, Dict, List, Optional`, `from pydantic import BaseModel`
-- Top-level functions: none
+- Intent: Signal schemas.
+- LOC: 27
 - Classes:
-  - `SignalRow` (line 9): Single prediction signal.
-  - `SignalsSummary` (line 20): Signals overview for a horizon.
+  - `SignalRow` (methods: none)
+  - `SignalsSummary` (methods: none)
+- Top-level functions: none
 
 ### `api/schemas/system_health.py`
-
-- LOC: 47
-- Module intent: System health schemas.
-- Imports (3): `from __future__ import annotations`, `from typing import Any, Dict, List, Optional`, `from pydantic import BaseModel`
-- Top-level functions: none
+- Intent: System health schemas.
+- LOC: 48
 - Classes:
-  - `QuickStatus` (line 9): Lightweight health check response.
-  - `AlertEvent` (line 17): A single health check item.
-  - `SystemHealthDetail` (line 27): Full system health assessment.
+  - `QuickStatus` (methods: none)
+  - `AlertEvent` (methods: none)
+  - `SystemHealthDetail` (methods: none)
+- Top-level functions: none
 
 ### `api/services/__init__.py`
-
-- LOC: 20
-- Module intent: Engine wrapper services — sync functions returning plain dicts.
-- Imports (8): `from .data_service import DataService`, `from .regime_service import RegimeService`, `from .model_service import ModelService`, `from .backtest_service import BacktestService`, `from .autopilot_service import AutopilotService`, `from .health_service import HealthService`, `from .kalshi_service import KalshiService`, `from .results_service import ResultsService`
-- Top-level functions: none
+- Intent: Engine wrapper services — sync functions returning plain dicts.
+- LOC: 21
 - Classes: none
+- Top-level functions: none
 
 ### `api/services/autopilot_service.py`
-
-- LOC: 62
-- Module intent: Wraps autopilot engine and results for API consumption.
-- Imports (4): `from __future__ import annotations`, `import json`, `import logging`, `from typing import Any, Dict, List`
-- Top-level functions: none
+- Intent: Wraps autopilot engine and results for API consumption.
+- LOC: 63
 - Classes:
-  - `AutopilotService` (line 11): Reads autopilot state and cycle reports.
-    - Methods (3): `get_latest_cycle`, `get_strategy_registry`, `get_paper_state`
+  - `AutopilotService` (methods: `get_latest_cycle`, `get_strategy_registry`, `get_paper_state`)
+- Top-level functions: none
 
 ### `api/services/backtest_service.py`
-
-- LOC: 139
-- Module intent: Wraps backtest results for API consumption.
-- Imports (6): `from __future__ import annotations`, `import json`, `import logging`, `from pathlib import Path`, `from typing import Any, Dict, List, Optional`, `import numpy as np`
-- Top-level functions: none
+- Intent: Wraps backtest results for API consumption.
+- LOC: 140
 - Classes:
-  - `BacktestService` (line 14): Reads backtest result files from the results/ directory.
-    - Methods (6): `get_latest_results`, `get_latest_trades`, `get_equity_curve`, `_compute_model_staleness`, `_get_sizing_method`, `_get_walk_forward_mode`
+  - `BacktestService` (methods: `get_latest_results`, `get_latest_trades`, `get_equity_curve`)
+- Top-level functions: none
 
 ### `api/services/data_helpers.py`
-
-- LOC: 1034
-- Module intent: Data loading and computation functions extracted from dash_ui/data/loaders.py.
-- Imports (9): `from __future__ import annotations`, `import json`, `import logging`, `from dataclasses import dataclass, field`, `from datetime import datetime, timedelta`, `from pathlib import Path`, `from typing import Any, Dict, List, Optional, Tuple`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `load_trades(path)` (line 26): Load and clean backtest trade CSV.
-  - `build_portfolio_returns(trades)` (line 43): Build daily portfolio returns from trade-level data.
-  - `_read_close_returns(path)` (line 60): Read close returns from a parquet file.
-  - `load_benchmark_returns(cache_dir, ref_index)` (line 69): Load benchmark (SPY) returns from parquet cache.
-  - `build_equity_curves(strategy_returns, benchmark_returns, max_points)` (line 125): Build aligned cumulative return series for strategy and benchmark.
-  - `compute_rolling_metrics(strategy_returns, benchmark_returns, window, max_points)` (line 165): Compute rolling correlation, alpha, beta, and relative strength.
-  - `compute_returns_distribution(returns, bins)` (line 251): Compute histogram data and risk lines for a returns series.
-  - `compute_rolling_risk(returns, vol_window, sharpe_window, max_points)` (line 284): Compute rolling volatility, Sharpe, and drawdown time series.
-  - `compute_attribution(strategy_returns, cache_dir)` (line 324): Compute factor attribution: tech-minus-def and momentum-spread.
-  - `_load_proxy_returns(cache_dir, symbols)` (line 400): Try to load daily close returns for any of the given symbol tickers.
-  - `compute_risk_metrics(returns)` (line 429): Compute portfolio risk metrics from daily returns.
-  - `compute_regime_payload(cache_dir)` (line 463): Run HMM regime detection and return structured results.
-  - `compute_model_health(model_dir, trades)` (line 536): Assess model health from registry and trade data.
-  - `load_feature_importance(model_dir)` (line 590): Load feature importance from latest model metadata.
-  - `score_to_status(score)` (line 656): Convert numeric score to PASS/WARN/FAIL status.
-  - `collect_health_data()` (line 665): Run full system health assessment.
-  - `_check_data_integrity()` (line 702): Check survivorship bias and data quality.
-  - `_check_promotion_contract()` (line 774): Verify promotion gate configuration.
-  - `_check_walkforward()` (line 855): Verify walk-forward validation setup.
-  - `_check_execution()` (line 901): Audit execution cost model.
-  - `_check_complexity()` (line 950): Audit feature and knob complexity.
-  - `_check_strengths()` (line 1004): Identify what's working well.
+- Intent: Data loading and computation functions extracted from dash_ui/data/loaders.py.
+- LOC: 1059
 - Classes:
-  - `HealthCheck` (line 622): Single health check result.
-  - `SystemHealthPayload` (line 632): Full system health assessment.
+  - `HealthCheck` (methods: none)
+  - `SystemHealthPayload` (methods: none)
+- Top-level functions: `load_trades`, `build_portfolio_returns`, `_read_close_returns`, `load_benchmark_returns`, `build_equity_curves`, `compute_rolling_metrics`, `compute_returns_distribution`, `compute_rolling_risk`, `compute_attribution`, `_load_proxy_returns`, `compute_risk_metrics`, `compute_regime_payload`, `compute_model_health`, `load_feature_importance`, `score_to_status`, `collect_health_data`, `_check_data_integrity`, `_check_promotion_contract`, `_check_walkforward`, `_check_execution`, `_check_complexity`, `_check_strengths`
 
 ### `api/services/data_service.py`
-
-- LOC: 208
-- Module intent: Wraps data.loader for API consumption.
-- Imports (6): `from __future__ import annotations`, `import json`, `import logging`, `from datetime import date, datetime, timezone`, `from pathlib import Path`, `from typing import Any, Dict, List, Optional`
-- Top-level functions: none
+- Intent: Wraps data.loader for API consumption.
+- LOC: 209
 - Classes:
-  - `DataService` (line 13): Thin wrapper around ``data.loader`` — all methods are synchronous.
-    - Methods (5): `load_universe`, `load_single_ticker`, `get_cached_tickers`, `get_universe_info`, `get_cache_status`
+  - `DataService` (methods: `load_universe`, `load_single_ticker`, `get_cached_tickers`, `get_universe_info`, `get_cache_status`)
+- Top-level functions: none
+
+### `api/services/diagnostics.py`
+- Intent: System Diagnostics — explains WHY performance is degrading.
+- LOC: 289
+- Classes:
+  - `DiagnosticFinding` (methods: none)
+  - `DiagnosticReport` (methods: none)
+  - `SystemDiagnostics` (methods: `diagnose_performance`)
+- Top-level functions: none
+
+### `api/services/health_alerts.py`
+- Intent: Health alert and notification system — Spec 09.
+- LOC: 325
+- Classes:
+  - `Alert` (methods: `dedup_key`, `to_dict`)
+  - `HealthAlertManager` (methods: `check_health_degradation`, `check_domain_failures`, `check_low_confidence`, `process_alerts`)
+- Top-level functions: `load_alert_config`, `create_alert_manager`
+
+### `api/services/health_confidence.py`
+- Intent: Health score confidence interval computation — Spec 09.
+- LOC: 315
+- Classes:
+  - `ConfidenceResult` (methods: `ci_width`, `is_low_confidence`, `to_dict`)
+  - `HealthConfidenceCalculator` (methods: `compute_ci`, `compute_ci_bootstrap`, `compute_ci_normal`, `compute_ci_t`, `compute_ci_binomial`, `propagate_weighted_ci`)
+- Top-level functions: none
+
+### `api/services/health_risk_feedback.py`
+- Intent: Health-to-risk feedback loop — Spec 09.
+- LOC: 276
+- Classes:
+  - `HealthRiskGate` (methods: `update_health`, `compute_size_multiplier`, `apply_health_gate`, `apply_health_gate_weights`, `should_halt_trading`, `get_status`)
+- Top-level functions: `load_health_risk_config`, `create_health_risk_gate`
 
 ### `api/services/health_service.py`
-
-- LOC: 686
-- Module intent: System health assessment for API consumption.
-- Imports (8): `from __future__ import annotations`, `import json`, `import logging`, `from datetime import datetime, timezone`, `from pathlib import Path`, `from typing import Any, Dict, List, Optional`, `import numpy as np`, `import pandas as pd`
-- Top-level functions: none
+- Intent: System health assessment for API consumption.
+- LOC: 1954
 - Classes:
-  - `HealthService` (line 24): Computes system health from model age, cache freshness, and runtime metrics.
-    - Methods (19): `get_quick_status`, `get_detailed_health`, `compute_comprehensive_health`, `_domain_score`, `_check_signal_decay`, `_check_feature_importance_drift`, `_check_regime_transition_health`, `_check_prediction_distribution`, `_check_survivorship_bias`, `_check_correlation_regime`, `_check_execution_quality`, `_check_tail_risk`, `_check_information_ratio`, `_check_cv_gap_trend`, `_check_data_quality_anomalies`, `_check_ensemble_disagreement`, `_check_market_microstructure`, `_check_retraining_effectiveness`, `_check_capital_utilization`
+  - `HealthCheckResult` (methods: `to_dict`)
+  - `HealthService` (methods: `get_quick_status`, `get_detailed_health`, `compute_comprehensive_health`, `save_health_snapshot`, `get_health_history`, `get_health_history_with_trends`)
+- Top-level functions: `_unavailable`
 
 ### `api/services/kalshi_service.py`
-
-- LOC: 50
-- Module intent: Wraps kalshi.storage for API consumption.
-- Imports (3): `from __future__ import annotations`, `import logging`, `from typing import Any, Dict, List`
-- Top-level functions: none
+- Intent: Wraps kalshi.storage for API consumption.
+- LOC: 51
 - Classes:
-  - `KalshiService` (line 10): Kalshi event market data — conditionally enabled.
-    - Methods (3): `__init__`, `get_events`, `get_distributions`
+  - `KalshiService` (methods: `get_events`, `get_distributions`)
+- Top-level functions: none
 
 ### `api/services/model_service.py`
-
-- LOC: 98
-- Module intent: Wraps models.* modules for API consumption.
-- Imports (5): `from __future__ import annotations`, `import json`, `import logging`, `from pathlib import Path`, `from typing import Any, Dict, List, Optional`
-- Top-level functions: none
+- Intent: Wraps models.* modules for API consumption.
+- LOC: 99
 - Classes:
-  - `ModelService` (line 12): Synchronous model metadata / health wrapper.
-    - Methods (5): `list_versions`, `get_model_health`, `get_feature_importance`, `get_feature_correlations`, `get_champion_info`
+  - `ModelService` (methods: `list_versions`, `get_model_health`, `get_feature_importance`, `get_feature_correlations`, `get_champion_info`)
+- Top-level functions: none
 
 ### `api/services/regime_service.py`
-
-- LOC: 50
-- Module intent: Wraps regime.detector for API consumption.
-- Imports (4): `from __future__ import annotations`, `import logging`, `from typing import Any, Dict`, `import numpy as np`
-- Top-level functions: none
+- Intent: Wraps regime.detector for API consumption.
+- LOC: 51
 - Classes:
-  - `RegimeService` (line 12): Synchronous regime detection wrapper.
-    - Methods (2): `detect_current_regime`, `get_regime_names`
+  - `RegimeService` (methods: `detect_current_regime`, `get_regime_names`)
+- Top-level functions: none
 
 ### `api/services/results_service.py`
-
-- LOC: 85
-- Module intent: Reads/writes to the results/ directory.
-- Imports (6): `from __future__ import annotations`, `import json`, `import logging`, `from pathlib import Path`, `from typing import Any, Dict, List`, `import numpy as np`
-- Top-level functions: none
+- Intent: Reads/writes to the results/ directory.
+- LOC: 86
 - Classes:
-  - `ResultsService` (line 14): Unified access to persisted result artefacts.
-    - Methods (3): `get_latest_backtest`, `get_latest_predictions`, `list_all_results`
+  - `ResultsService` (methods: `get_latest_backtest`, `get_latest_predictions`, `list_all_results`)
+- Top-level functions: none
 
-## Package `autopilot`
+## `autopilot`
+
+| Module | Lines | Classes | Top-level Functions | Intent |
+|---|---|---|---|---|
+| `autopilot/__init__.py` | 23 | 0 | 0 | Autopilot layer: discovery, promotion, and paper-trading orchestration. |
+| `autopilot/engine.py` | 1395 | 2 | 0 | End-to-end autopilot cycle: |
+| `autopilot/meta_labeler.py` | 457 | 1 | 0 | Meta-labeling model for signal confidence prediction (Spec 04). |
+| `autopilot/paper_trader.py` | 1094 | 1 | 0 | Stateful paper-trading engine for promoted strategies. |
+| `autopilot/promotion_gate.py` | 328 | 2 | 0 | Promotion gate for deciding whether a discovered strategy is deployable. |
+| `autopilot/registry.py` | 111 | 2 | 0 | Persistent strategy registry for promoted candidates. |
+| `autopilot/strategy_allocator.py` | 197 | 2 | 0 | Regime-Aware Strategy Allocation — automatically adjust strategy parameters |
+| `autopilot/strategy_discovery.py` | 80 | 2 | 0 | Strategy discovery for execution-layer parameter variants. |
 
 ### `autopilot/__init__.py`
-
-- LOC: 20
-- Module intent: Autopilot layer: discovery, promotion, and paper-trading orchestration.
-- Imports (5): `from .strategy_discovery import StrategyCandidate, StrategyDiscovery`, `from .promotion_gate import PromotionDecision, PromotionGate`, `from .registry import StrategyRegistry`, `from .paper_trader import PaperTrader`, `from .engine import AutopilotEngine`
-- Top-level functions: none
+- Intent: Autopilot layer: discovery, promotion, and paper-trading orchestration.
+- LOC: 23
 - Classes: none
+- Top-level functions: none
 
 ### `autopilot/engine.py`
-
-- LOC: 990
-- Module intent: End-to-end autopilot cycle:
-- Imports (24): `import json`, `import logging`, `from pathlib import Path`, `from typing import Dict, List, Optional, Tuple`, `import re`, `import numpy as np`, `import pandas as pd`, `from ..backtest.engine import Backtester`, `from ..backtest.advanced_validation import capacity_analysis, deflated_sharpe_ratio, probability_of_backtest_overfitting`, `from ..backtest.validation import walk_forward_validate, run_statistical_tests, combinatorial_purged_cv, superior_predictive_ability, strategy_signal_returns`, `from ..models.walk_forward import _expanding_walk_forward_folds`, `from ..config import AUTOPILOT_CYCLE_REPORT, AUTOPILOT_FEATURE_MODE, BACKTEST_ASSUMED_CAPITAL_USD, CPCV_PARTITIONS, CPCV_TEST_PARTITIONS, EXEC_MAX_PARTICIPATION, REQUIRE_PERMNO, SURVIVORSHIP_UNIVERSE_NAME, WF_MAX_TRAIN_DATES` (+12 more)
-- Top-level functions: none
+- Intent: End-to-end autopilot cycle:
+- LOC: 1395
 - Classes:
-  - `HeuristicPredictor` (line 61): Lightweight fallback predictor used when sklearn-backed model artifacts
-    - Methods (3): `__init__`, `_rolling_zscore`, `predict`
-  - `AutopilotEngine` (line 136): Coordinates discovery, promotion, and paper execution.
-    - Methods (15): `__init__`, `_log`, `_is_permno_key`, `_assert_permno_price_data`, `_assert_permno_prediction_panel`, `_assert_permno_latest_predictions`, `_load_data`, `_build_regimes`, `_train_baseline`, `_ensure_predictor`, `_predict_universe`, `_walk_forward_predictions`, `_evaluate_candidates`, `_compute_optimizer_weights`, `run_cycle`
+  - `HeuristicPredictor` (methods: `predict`)
+  - `AutopilotEngine` (methods: `run_cycle`)
+- Top-level functions: none
+
+### `autopilot/meta_labeler.py`
+- Intent: Meta-labeling model for signal confidence prediction (Spec 04).
+- LOC: 457
+- Classes:
+  - `MetaLabelingModel` (methods: `build_meta_features`, `build_labels`, `train`, `predict_confidence`, `save`, `load`, `is_trained`)
+- Top-level functions: none
 
 ### `autopilot/paper_trader.py`
-
-- LOC: 529
-- Module intent: Stateful paper-trading engine for promoted strategies.
-- Imports (9): `import json`, `from datetime import datetime, timezone`, `from pathlib import Path`, `from typing import Dict, List, Optional, Tuple`, `import numpy as np`, `import pandas as pd`, `from ..config import PAPER_STATE_PATH, PAPER_INITIAL_CAPITAL, PAPER_MAX_TOTAL_POSITIONS, TRANSACTION_COST_BPS, PAPER_USE_KELLY_SIZING, PAPER_KELLY_FRACTION, PAPER_KELLY_LOOKBACK_TRADES, PAPER_KELLY_MIN_SIZE_MULTIPLIER, PAPER_KELLY_MAX_SIZE_MULTIPLIER, REGIME_RISK_MULTIPLIER`, `from ..risk.position_sizer import PositionSizer`, `from .registry import ActiveStrategy`
-- Top-level functions: none
+- Intent: Stateful paper-trading engine for promoted strategies.
+- LOC: 1094
 - Classes:
-  - `PaperTrader` (line 28): Executes paper entries/exits from promoted strategy definitions.
-    - Methods (14): `__init__`, `_load_state`, `_save_state`, `_resolve_as_of`, `_latest_predictions_by_id`, `_latest_predictions_by_ticker`, `_current_price`, `_position_id`, `_mark_to_market`, `_trade_return`, `_historical_trade_stats`, `_market_risk_stats`, `_position_size_pct`, `run_cycle`
+  - `PaperTrader` (methods: `run_cycle`)
+- Top-level functions: none
 
 ### `autopilot/promotion_gate.py`
-
-- LOC: 281
-- Module intent: Promotion gate for deciding whether a discovered strategy is deployable.
-- Imports (6): `from dataclasses import dataclass, asdict`, `from typing import Dict, List, Optional`, `import numpy as np`, `from ..backtest.engine import BacktestResult`, `from ..config import PROMOTION_MIN_TRADES, PROMOTION_MIN_WIN_RATE, PROMOTION_MIN_SHARPE, PROMOTION_MIN_PROFIT_FACTOR, PROMOTION_MAX_DRAWDOWN, PROMOTION_MIN_ANNUAL_RETURN, PROMOTION_REQUIRE_ADVANCED_CONTRACT, PROMOTION_MAX_DSR_PVALUE, PROMOTION_MAX_PBO, PROMOTION_REQUIRE_CAPACITY_UNCONSTRAINED, PROMOTION_MAX_CAPACITY_UTILIZATION, PROMOTION_MIN_WF_OOS_CORR, PROMOTION_MIN_WF_POSITIVE_FOLD_FRACTION, PROMOTION_MAX_WF_IS_OOS_GAP, PROMOTION_MIN_REGIME_POSITIVE_FRACTION, PROMOTION_EVENT_MAX_WORST_EVENT_LOSS, PROMOTION_EVENT_MIN_SURPRISE_HIT_RATE, PROMOTION_EVENT_MIN_REGIME_STABILITY, PROMOTION_REQUIRE_STATISTICAL_TESTS, PROMOTION_REQUIRE_CPCV, PROMOTION_REQUIRE_SPA`, `from .strategy_discovery import StrategyCandidate`
-- Top-level functions: none
+- Intent: Promotion gate for deciding whether a discovered strategy is deployable.
+- LOC: 328
 - Classes:
-  - `PromotionDecision` (line 37): Serializable promotion-gate decision for a single strategy candidate evaluation.
-    - Methods (1): `to_dict`
-  - `PromotionGate` (line 52): Applies hard risk/quality constraints before a strategy can be paper-deployed.
-    - Methods (4): `__init__`, `evaluate`, `evaluate_event_strategy`, `rank`
+  - `PromotionDecision` (methods: `to_dict`)
+  - `PromotionGate` (methods: `evaluate`, `evaluate_event_strategy`, `rank`)
+- Top-level functions: none
 
 ### `autopilot/registry.py`
-
-- LOC: 110
-- Module intent: Persistent strategy registry for promoted candidates.
-- Imports (7): `import json`, `from dataclasses import dataclass, asdict`, `from datetime import datetime, timezone`, `from pathlib import Path`, `from typing import Dict, List`, `from ..config import STRATEGY_REGISTRY_PATH, PROMOTION_MAX_ACTIVE_STRATEGIES`, `from .promotion_gate import PromotionDecision`
-- Top-level functions: none
+- Intent: Persistent strategy registry for promoted candidates.
+- LOC: 111
 - Classes:
-  - `ActiveStrategy` (line 15): Persisted record for a currently active promoted strategy.
-    - Methods (1): `to_dict`
-  - `StrategyRegistry` (line 29): Maintains promoted strategy state and historical promotion decisions.
-    - Methods (5): `__init__`, `_load`, `_save`, `get_active`, `apply_promotions`
+  - `ActiveStrategy` (methods: `to_dict`)
+  - `StrategyRegistry` (methods: `get_active`, `apply_promotions`)
+- Top-level functions: none
+
+### `autopilot/strategy_allocator.py`
+- Intent: Regime-Aware Strategy Allocation — automatically adjust strategy parameters
+- LOC: 197
+- Classes:
+  - `StrategyProfile` (methods: none)
+  - `StrategyAllocator` (methods: `get_regime_profile`, `get_all_profiles`, `summarize`)
+- Top-level functions: none
 
 ### `autopilot/strategy_discovery.py`
-
-- LOC: 79
-- Module intent: Strategy discovery for execution-layer parameter variants.
-- Imports (3): `from dataclasses import dataclass, asdict`, `from typing import Dict, List`, `from ..config import ENTRY_THRESHOLD, CONFIDENCE_THRESHOLD, POSITION_SIZE_PCT, DISCOVERY_ENTRY_MULTIPLIERS, DISCOVERY_CONFIDENCE_OFFSETS, DISCOVERY_RISK_VARIANTS, DISCOVERY_MAX_POSITIONS_VARIANTS`
-- Top-level functions: none
+- Intent: Strategy discovery for execution-layer parameter variants.
+- LOC: 80
 - Classes:
-  - `StrategyCandidate` (line 22): Execution-parameter variant generated for backtest and promotion evaluation.
-    - Methods (1): `to_dict`
-  - `StrategyDiscovery` (line 37): Generates a deterministic candidate grid for backtest validation.
-    - Methods (2): `__init__`, `generate`
+  - `StrategyCandidate` (methods: `to_dict`)
+  - `StrategyDiscovery` (methods: `generate`)
+- Top-level functions: none
 
-## Package `backtest`
+## `backtest`
+
+| Module | Lines | Classes | Top-level Functions | Intent |
+|---|---|---|---|---|
+| `backtest/__init__.py` | 5 | 0 | 0 | Backtesting package exports and namespace initialization. |
+| `backtest/adv_tracker.py` | 192 | 1 | 0 | Average Daily Volume (ADV) tracker with EMA smoothing and volume trend analysis. |
+| `backtest/advanced_validation.py` | 582 | 5 | 6 | Advanced Validation — Deflated Sharpe, PBO, Monte Carlo, capacity analysis. |
+| `backtest/cost_calibrator.py` | 316 | 1 | 0 | Cost model calibrator for per-market-cap-segment impact coefficients. |
+| `backtest/cost_stress.py` | 223 | 3 | 0 | Cost stress testing — Truth Layer T5. |
+| `backtest/engine.py` | 1957 | 3 | 0 | Backtester — converts model predictions into simulated trades. |
+| `backtest/execution.py` | 637 | 2 | 1 | Execution simulator with spread, market impact, and participation limits. |
+| `backtest/null_models.py` | 298 | 5 | 2 | Null model baselines — Truth Layer T4. |
+| `backtest/optimal_execution.py` | 202 | 0 | 2 | Almgren-Chriss (2001) optimal execution model. |
+| `backtest/survivorship_comparison.py` | 165 | 2 | 3 | Survivorship Bias Comparison — quantify the impact of survivorship bias on backtests. |
+| `backtest/validation.py` | 1075 | 7 | 12 | Walk-forward validation and statistical tests. |
 
 ### `backtest/__init__.py`
-
-- LOC: 4
-- Module intent: Backtesting package exports and namespace initialization.
-- Top-level functions: none
+- Intent: Backtesting package exports and namespace initialization.
+- LOC: 5
 - Classes: none
+- Top-level functions: none
+
+### `backtest/adv_tracker.py`
+- Intent: Average Daily Volume (ADV) tracker with EMA smoothing and volume trend analysis.
+- LOC: 192
+- Classes:
+  - `ADVTracker` (methods: `update`, `update_from_series`, `get_adv`, `get_simple_adv`, `get_volume_trend`, `adjust_participation_limit`, `get_volume_cost_adjustment`, `get_stats`)
+- Top-level functions: none
 
 ### `backtest/advanced_validation.py`
-
-- LOC: 581
-- Module intent: Advanced Validation — Deflated Sharpe, PBO, Monte Carlo, capacity analysis.
-- Imports (5): `from dataclasses import dataclass, field`, `from math import erf`, `from typing import List, Optional, Dict`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `deflated_sharpe_ratio(observed_sharpe, n_trials, n_returns, skewness, kurtosis, annualization_factor)` (line 94): Deflated Sharpe Ratio (Bailey & Lopez de Prado, 2014).
-  - `probability_of_backtest_overfitting(returns_matrix, n_partitions)` (line 176): Probability of Backtest Overfitting (Bailey et al., 2017).
-  - `monte_carlo_validation(trade_returns, n_simulations, holding_days, method)` (line 291): Monte Carlo validation of strategy performance.
-  - `capacity_analysis(trades, price_data, capital_usd, max_participation_rate, impact_coefficient_bps)` (line 367): Estimate strategy capacity and market impact.
-  - `run_advanced_validation(trade_returns, trades, price_data, n_strategy_variants, holding_days, returns_matrix, verbose)` (line 460): Run all advanced validation tests.
-  - `_print_report(report)` (line 541): Pretty-print advanced validation report.
+- Intent: Advanced Validation — Deflated Sharpe, PBO, Monte Carlo, capacity analysis.
+- LOC: 582
 - Classes:
-  - `DeflatedSharpeResult` (line 38): Result of Deflated Sharpe Ratio test.
-  - `PBOResult` (line 49): Probability of Backtest Overfitting result.
-  - `MonteCarloResult` (line 59): Monte Carlo simulation result.
-  - `CapacityResult` (line 73): Strategy capacity analysis.
-  - `AdvancedValidationReport` (line 84): Complete advanced validation report.
+  - `DeflatedSharpeResult` (methods: none)
+  - `PBOResult` (methods: none)
+  - `MonteCarloResult` (methods: none)
+  - `CapacityResult` (methods: none)
+  - `AdvancedValidationReport` (methods: none)
+- Top-level functions: `deflated_sharpe_ratio`, `probability_of_backtest_overfitting`, `monte_carlo_validation`, `capacity_analysis`, `run_advanced_validation`, `_print_report`
+
+### `backtest/cost_calibrator.py`
+- Intent: Cost model calibrator for per-market-cap-segment impact coefficients.
+- LOC: 316
+- Classes:
+  - `CostCalibrator` (methods: `get_marketcap_segment`, `get_impact_coeff`, `get_impact_coeff_by_segment`, `coefficients`, `record_trade`, `calibrate`, `reset_history`)
+- Top-level functions: none
+
+### `backtest/cost_stress.py`
+- Intent: Cost stress testing — Truth Layer T5.
+- LOC: 223
+- Classes:
+  - `CostStressPoint` (methods: none)
+  - `CostStressResult` (methods: `to_dict`)
+  - `CostStressTester` (methods: `run_sweep`, `report`)
+- Top-level functions: none
 
 ### `backtest/engine.py`
-
-- LOC: 1869
-- Module intent: Backtester — converts model predictions into simulated trades.
-- Imports (9): `from dataclasses import dataclass, field`, `from datetime import datetime`, `from typing import Dict, List, Optional, Tuple`, `import re`, `import numpy as np`, `import pandas as pd`, `import logging`, `from ..config import TRANSACTION_COST_BPS, ENTRY_THRESHOLD, CONFIDENCE_THRESHOLD, MAX_POSITIONS, POSITION_SIZE_PCT, BACKTEST_ASSUMED_CAPITAL_USD, EXEC_SPREAD_BPS, EXEC_MAX_PARTICIPATION, EXEC_IMPACT_COEFF_BPS, EXEC_MIN_FILL_RATIO, REGIME_RISK_MULTIPLIER, EXEC_DYNAMIC_COSTS, EXEC_DOLLAR_VOLUME_REF_USD, EXEC_VOL_REF, EXEC_VOL_SPREAD_BETA, EXEC_GAP_SPREAD_BETA, EXEC_RANGE_SPREAD_BETA, EXEC_VOL_IMPACT_BETA, REQUIRE_PERMNO, ALMGREN_CHRISS_ENABLED, ALMGREN_CHRISS_ADV_THRESHOLD, ALMGREN_CHRISS_RISK_AVERSION, MAX_ANNUALIZED_TURNOVER, ALMGREN_CHRISS_FALLBACK_VOL, REGIME_2_TRADE_ENABLED, REGIME_2_SUPPRESSION_MIN_CONFIDENCE`, `from .execution import ExecutionModel`
-- Top-level functions: none
+- Intent: Backtester — converts model predictions into simulated trades.
+- LOC: 1957
 - Classes:
-  - `Trade` (line 48): Trade record produced by the backtester for one simulated position lifecycle.
-  - `BacktestResult` (line 71): Aggregate backtest outputs including metrics, curves, and trade history.
-  - `Backtester` (line 105): Simulates trading from model predictions.
-    - Methods (21): `__init__`, `_init_risk_components`, `_almgren_chriss_cost_bps`, `_simulate_entry`, `_simulate_exit`, `_execution_context`, `_effective_return_series`, `_delisting_adjustment_multiplier`, `_trade_realized_return`, `_is_permno_key`, `_assert_permno_inputs`, `run`, `_process_signals`, `_process_signals_risk_managed`, `_compute_metrics`, `_build_daily_equity`, `_compute_turnover`, `_compute_regime_performance`, `_compute_tca`, `_print_result` (+1 more)
+  - `Trade` (methods: none)
+  - `BacktestResult` (methods: `summarize_vs_null`)
+  - `Backtester` (methods: `run`)
+- Top-level functions: none
 
 ### `backtest/execution.py`
-
-- LOC: 273
-- Module intent: Execution simulator with spread, market impact, and participation limits.
-- Imports (5): `from __future__ import annotations`, `from dataclasses import dataclass`, `from typing import Dict, List`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `calibrate_cost_model(fills, actual_prices)` (line 153): Calibrate execution-cost model parameters from historical fills.
+- Intent: Execution simulator with spread, market impact, and participation limits.
+- LOC: 637
 - Classes:
-  - `ExecutionFill` (line 17): Simulated execution fill outcome returned by the execution model.
-  - `ExecutionModel` (line 27): Simple market-impact model for backtests.
-    - Methods (2): `__init__`, `simulate`
+  - `ExecutionFill` (methods: none)
+  - `ExecutionModel` (methods: `set_base_transaction_cost_bps`, `simulate`)
+- Top-level functions: `calibrate_cost_model`
+
+### `backtest/null_models.py`
+- Intent: Null model baselines — Truth Layer T4.
+- LOC: 298
+- Classes:
+  - `NullBaselineMetrics` (methods: none)
+  - `NullModelResults` (methods: `summary`)
+  - `RandomBaseline` (methods: `generate_signals`, `compute_returns`)
+  - `ZeroBaseline` (methods: `generate_signals`, `compute_returns`)
+  - `MomentumBaseline` (methods: `generate_signals`, `compute_returns`)
+- Top-level functions: `_compute_metrics`, `compute_null_baselines`
 
 ### `backtest/optimal_execution.py`
-
-- LOC: 201
-- Module intent: Almgren-Chriss (2001) optimal execution model.
-- Imports (3): `from __future__ import annotations`, `import numpy as np`, `from ..config import ALMGREN_CHRISS_RISK_AVERSION`
-- Top-level functions:
-  - `almgren_chriss_trajectory(total_shares, n_intervals, daily_volume, daily_volatility, risk_aversion, temporary_impact, permanent_impact)` (line 20): Compute the optimal execution trajectory using the Almgren-Chriss model.
-  - `estimate_execution_cost(trajectory, reference_price, daily_volume, daily_volatility, temporary_impact, permanent_impact)` (line 106): Estimate the total execution cost for a given trade trajectory.
+- Intent: Almgren-Chriss (2001) optimal execution model.
+- LOC: 202
 - Classes: none
+- Top-level functions: `almgren_chriss_trajectory`, `estimate_execution_cost`
+
+### `backtest/survivorship_comparison.py`
+- Intent: Survivorship Bias Comparison — quantify the impact of survivorship bias on backtests.
+- LOC: 165
+- Classes:
+  - `UniverseMetrics` (methods: none)
+  - `SurvivorshipComparisonResult` (methods: none)
+- Top-level functions: `_extract_metrics`, `compare_survivorship_impact`, `quick_survivorship_check`
 
 ### `backtest/validation.py`
-
-- LOC: 749
-- Module intent: Walk-forward validation and statistical tests.
-- Imports (7): `from dataclasses import dataclass, field`, `from itertools import combinations`, `from math import erf`, `from typing import List, Optional, Tuple`, `import numpy as np`, `import pandas as pd`, `from ..config import IC_ROLLING_WINDOW`
-- Top-level functions:
-  - `walk_forward_validate(predictions, actuals, n_folds, entry_threshold, max_overfit_ratio, purge_gap, embargo, max_train_samples)` (line 192): Walk-forward validation of prediction quality with purge gap.
-  - `_benjamini_hochberg(pvals, alpha)` (line 337): Benjamini-Hochberg procedure for multiple testing correction.
-  - `run_statistical_tests(predictions, actuals, trade_returns, entry_threshold, holding_days)` (line 361): Statistical tests for prediction quality.
-  - `_partition_bounds(n_obs, n_partitions)` (line 500): Return contiguous [start, end) bounds for temporal partitions.
-  - `combinatorial_purged_cv(predictions, actuals, entry_threshold, n_partitions, n_test_partitions, purge_gap, embargo, max_combinations)` (line 515): Combinatorial Purged Cross-Validation for signal robustness.
-  - `strategy_signal_returns(predictions, actuals, entry_threshold, confidence, min_confidence)` (line 658): Build per-sample strategy return series from prediction signals.
-  - `superior_predictive_ability(strategy_returns, benchmark_returns, n_bootstraps, block_size, random_state)` (line 684): Single-strategy SPA-style block-bootstrap test on differential returns.
+- Intent: Walk-forward validation and statistical tests.
+- LOC: 1075
 - Classes:
-  - `WalkForwardFold` (line 111): Per-fold walk-forward validation metrics for one temporal split.
-  - `WalkForwardResult` (line 122): Aggregate walk-forward validation summary and overfitting diagnostics.
-  - `StatisticalTests` (line 136): Bundle of statistical significance tests for prediction quality and signal returns.
-  - `CPCVResult` (line 163): Combinatorial purged cross-validation summary metrics and pass/fail status.
-  - `SPAResult` (line 180): Superior Predictive Ability (SPA) test result bundle.
+  - `WalkForwardFold` (methods: none)
+  - `WalkForwardResult` (methods: none)
+  - `StatisticalTests` (methods: none)
+  - `CPCVResult` (methods: none)
+  - `SPAResult` (methods: none)
+  - `WalkForwardEmbargoFold` (methods: none)
+  - `WalkForwardEmbargoResult` (methods: none)
+- Top-level functions: `walk_forward_validate`, `_benjamini_hochberg`, `run_statistical_tests`, `_partition_bounds`, `combinatorial_purged_cv`, `strategy_signal_returns`, `superior_predictive_ability`, `walk_forward_with_embargo`, `rolling_ic`, `detect_ic_decay`, `_sharpe`, `_spearman_ic`
 
-## Package `data`
+## `data`
+
+| Module | Lines | Classes | Top-level Functions | Intent |
+|---|---|---|---|---|
+| `data/__init__.py` | 33 | 0 | 0 | Data subpackage — self-contained data loading, caching, WRDS, and survivorship. |
+| `data/alternative.py` | 653 | 1 | 2 | Alternative data framework — WRDS-backed implementation. |
+| `data/cross_source_validator.py` | 680 | 2 | 0 | Cross-source validation system comparing Alpaca/Alpha Vantage against IBKR. |
+| `data/feature_store.py` | 313 | 1 | 0 | Point-in-time feature store for backtest acceleration. |
+| `data/intraday_quality.py` | 967 | 2 | 20 | Comprehensive quality gate for intraday OHLCV data. |
+| `data/loader.py` | 832 | 0 | 17 | Data loader — self-contained data loading with multiple sources. |
+| `data/local_cache.py` | 703 | 0 | 21 | Local data cache for daily OHLCV data. |
+| `data/provider_base.py` | 15 | 1 | 0 | Shared provider protocol for pluggable data connectors. |
+| `data/provider_registry.py` | 54 | 0 | 5 | Provider registry for unified data-provider access (WRDS, Kalshi, ...). |
+| `data/quality.py` | 297 | 1 | 4 | Data quality checks for OHLCV time series. |
+| `data/survivorship.py` | 936 | 8 | 5 | Survivorship Bias Controls (Tasks 112-117) |
+| `data/wrds_provider.py` | 1616 | 1 | 6 | wrds_provider.py |
 
 ### `data/__init__.py`
-
-- LOC: 32
-- Module intent: Data subpackage — self-contained data loading, caching, WRDS, and survivorship.
-- Imports (5): `from .loader import load_ohlcv, load_universe, load_survivorship_universe, load_with_delistings`, `from .local_cache import save_ohlcv, load_ibkr_data, list_cached_tickers, cache_universe`, `from .provider_registry import get_provider, list_providers, register_provider`, `from .quality import DataQualityReport, assess_ohlcv_quality, generate_quality_report, flag_degraded_stocks`, `from .feature_store import FeatureStore`
-- Top-level functions: none
+- Intent: Data subpackage — self-contained data loading, caching, WRDS, and survivorship.
+- LOC: 33
 - Classes: none
+- Top-level functions: none
 
 ### `data/alternative.py`
-
-- LOC: 652
-- Module intent: Alternative data framework — WRDS-backed implementation.
-- Imports (7): `from __future__ import annotations`, `import logging`, `from datetime import datetime, timedelta`, `from pathlib import Path`, `from typing import Optional`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `_get_wrds()` (line 31): Return the cached WRDSProvider singleton, or None.
-  - `compute_alternative_features(ticker, provider, cache_dir)` (line 521): Gather all available alternative data and return as a feature DataFrame.
+- Intent: Alternative data framework — WRDS-backed implementation.
+- LOC: 653
 - Classes:
-  - `AlternativeDataProvider` (line 51): WRDS-backed alternative data provider.
-    - Methods (7): `__init__`, `_resolve_permno`, `get_earnings_surprise`, `get_options_flow`, `get_short_interest`, `get_insider_transactions`, `get_institutional_ownership`
+  - `AlternativeDataProvider` (methods: `get_earnings_surprise`, `get_options_flow`, `get_short_interest`, `get_insider_transactions`, `get_institutional_ownership`)
+- Top-level functions: `_get_wrds`, `compute_alternative_features`
+
+### `data/cross_source_validator.py`
+- Intent: Cross-source validation system comparing Alpaca/Alpha Vantage against IBKR.
+- LOC: 680
+- Classes:
+  - `CrossValidationReport` (methods: none)
+  - `CrossSourceValidator` (methods: `validate_ticker`)
+- Top-level functions: none
 
 ### `data/feature_store.py`
-
-- LOC: 312
-- Module intent: Point-in-time feature store for backtest acceleration.
-- Imports (8): `from __future__ import annotations`, `import json`, `import logging`, `from datetime import datetime`, `from pathlib import Path`, `from typing import Dict, List, Optional`, `import pandas as pd`, `from ..config import ROOT_DIR`
-- Top-level functions: none
+- Intent: Point-in-time feature store for backtest acceleration.
+- LOC: 313
 - Classes:
-  - `FeatureStore` (line 38): Point-in-time feature store for backtest acceleration.
-    - Methods (9): `__init__`, `_version_dir`, `_ts_tag`, `_parquet_path`, `_meta_path`, `save_features`, `load_features`, `list_available`, `invalidate`
+  - `FeatureStore` (methods: `save_features`, `load_features`, `list_available`, `invalidate`)
+- Top-level functions: none
+
+### `data/intraday_quality.py`
+- Intent: Comprehensive quality gate for intraday OHLCV data.
+- LOC: 967
+- Classes:
+  - `CheckResult` (methods: none)
+  - `IntradayQualityReport` (methods: `add_check`, `compute_quality_score`)
+- Top-level functions: `_get_trading_days`, `_is_in_rth`, `_get_expected_bar_count`, `_check_ohlc_consistency`, `_check_non_negative_volume`, `_check_non_negative_prices`, `_check_timestamp_in_rth`, `_check_extreme_bar_return`, `_check_stale_price`, `_check_zero_volume_liquid`, `_check_missing_bar_ratio`, `_check_duplicate_timestamps`, `_check_monotonic_index`, `_check_overnight_gap`, `_check_volume_distribution`, `_check_split_detection`, `quarantine_ticker`, `write_quality_report`, `read_quality_report`, `validate_intraday_bars`
 
 ### `data/loader.py`
-
-- LOC: 732
-- Module intent: Data loader — self-contained data loading with multiple sources.
-- Imports (9): `import logging`, `from datetime import date, timedelta`, `from typing import Dict, List, Optional, Tuple`, `import numpy as np`, `import pandas as pd`, `from ..config import CACHE_MAX_STALENESS_DAYS, CACHE_TRUSTED_SOURCES, CACHE_WRDS_SPAN_ADVANTAGE_DAYS, DATA_QUALITY_ENABLED, LOOKBACK_YEARS, MIN_BARS, OPTIONMETRICS_ENABLED, REQUIRE_PERMNO, WRDS_ENABLED`, `from .local_cache import list_cached_tickers, load_ohlcv_with_meta as cache_load_with_meta, save_ohlcv as cache_save`, `from .provider_registry import get_provider`, `from .quality import assess_ohlcv_quality`
-- Top-level functions:
-  - `_permno_from_meta(meta)` (line 51): Internal helper for permno from meta.
-  - `_ticker_from_meta(meta)` (line 64): Internal helper for ticker from meta.
-  - `_attach_id_attrs(df, permno, ticker)` (line 72): Internal helper for attach id attrs.
-  - `_cache_source(meta)` (line 88): Internal helper for cache source.
-  - `_cache_is_usable(cached, meta, years, require_recent, require_trusted)` (line 94): Internal helper for cache is usable.
-  - `_cached_universe_subset(candidates)` (line 131): Prefer locally cached symbols to keep offline runs deterministic.
-  - `_normalize_ohlcv(df)` (line 154): Return a sorted, deterministic OHLCV frame or None if invalid.
-  - `_harmonize_return_columns(df)` (line 169): Standardize return columns so backtests can consume total-return streams.
-  - `_merge_option_surface_from_prefetch(df, permno, option_surface)` (line 205): Merge pre-fetched OptionMetrics surface rows into a single PERMNO panel.
-  - `load_ohlcv(ticker, years, use_cache, use_wrds)` (line 236): Load daily OHLCV data for a single ticker.
-  - `get_data_provenance()` (line 385): Return a summary of data source provenance and any fallbacks that occurred.
-  - `get_skip_reasons()` (line 394): Return per-ticker skip reasons from the most recent load_universe() call.
-  - `load_universe(tickers, years, verbose, use_cache, use_wrds)` (line 403): Load OHLCV data for multiple symbols. Returns {permno: DataFrame}.
-  - `load_survivorship_universe(as_of_date, years, verbose)` (line 463): Load a survivorship-bias-free universe using WRDS CRSP.
-  - `load_with_delistings(tickers, years, verbose)` (line 590): Load OHLCV data including delisting returns from CRSP.
+- Intent: Data loader — self-contained data loading with multiple sources.
+- LOC: 832
 - Classes: none
+- Top-level functions: `_permno_from_meta`, `_ticker_from_meta`, `_attach_id_attrs`, `_cache_source`, `_get_last_trading_day`, `_trading_days_between`, `_cache_is_usable`, `_cached_universe_subset`, `_normalize_ohlcv`, `_harmonize_return_columns`, `_merge_option_surface_from_prefetch`, `load_ohlcv`, `get_data_provenance`, `get_skip_reasons`, `load_universe`, `load_survivorship_universe`, `load_with_delistings`
 
 ### `data/local_cache.py`
-
-- LOC: 702
-- Module intent: Local data cache for daily OHLCV data.
-- Imports (7): `import json`, `import logging`, `from datetime import datetime, timezone`, `from pathlib import Path`, `from typing import Dict, List, Mapping, Optional, Tuple`, `import pandas as pd`, `from ..config import DATA_CACHE_DIR, FRAMEWORK_DIR`
-- Top-level functions:
-  - `_ensure_cache_dir()` (line 28): Create cache directory if it doesn't exist.
-  - `_normalize_ohlcv_columns(df)` (line 34): Normalize OHLCV column names to quant_engine's canonical schema.
-  - `_to_daily_ohlcv(df)` (line 71): Convert any candidate frame into validated daily OHLCV.
-  - `_read_csv_ohlcv(path)` (line 93): Internal helper to read csv ohlcv from storage.
-  - `_candidate_csv_paths(cache_root, ticker)` (line 111): Internal helper for candidate csv paths.
-  - `_cache_meta_path(data_path, ticker)` (line 128): Return the metadata sidecar path for a cache data file.
-  - `_read_cache_meta(data_path, ticker)` (line 149): Internal helper to read cache meta from storage.
-  - `_write_cache_meta(data_path, ticker, df, source, meta)` (line 168): Internal helper to write cache meta to storage.
-  - `save_ohlcv(ticker, df, cache_dir, source, meta)` (line 195): Save OHLCV DataFrame to local cache.
-  - `load_ohlcv_with_meta(ticker, cache_dir)` (line 231): Load OHLCV and sidecar metadata from cache roots.
-  - `load_ohlcv(ticker, cache_dir)` (line 305): Load OHLCV DataFrame from local cache.
-  - `load_intraday_ohlcv(ticker, timeframe, cache_dir)` (line 321): Load intraday OHLCV data from cache.
-  - `list_intraday_timeframes(ticker, cache_dir)` (line 390): Return list of available intraday timeframes for a ticker in the cache.
-  - `list_cached_tickers(cache_dir)` (line 404): List all tickers available in cache roots.
-  - `_daily_cache_files(root)` (line 423): Return de-duplicated daily-cache candidate files for one root.
-  - `_ticker_from_cache_path(path)` (line 446): Internal helper for ticker from cache path.
-  - `_timeframe_from_cache_path(path)` (line 461): Determine the canonical timeframe from a cache file path.
-  - `_all_cache_files(root)` (line 472): Return de-duplicated daily + intraday cache candidate files for one root.
-  - `rehydrate_cache_metadata(cache_roots, source_by_root, default_source, only_missing, overwrite_source, dry_run)` (line 494): Backfill metadata sidecars for existing cache files without rewriting price data.
-  - `load_ibkr_data(data_dir)` (line 640): Scan a directory of IBKR-downloaded files (CSV or parquet).
-  - `cache_universe(data, cache_dir, source)` (line 695): Save all tickers in a data dict to the local cache.
+- Intent: Local data cache for daily OHLCV data.
+- LOC: 703
 - Classes: none
+- Top-level functions: `_ensure_cache_dir`, `_normalize_ohlcv_columns`, `_to_daily_ohlcv`, `_read_csv_ohlcv`, `_candidate_csv_paths`, `_cache_meta_path`, `_read_cache_meta`, `_write_cache_meta`, `save_ohlcv`, `load_ohlcv_with_meta`, `load_ohlcv`, `load_intraday_ohlcv`, `list_intraday_timeframes`, `list_cached_tickers`, `_daily_cache_files`, `_ticker_from_cache_path`, `_timeframe_from_cache_path`, `_all_cache_files`, `rehydrate_cache_metadata`, `load_ibkr_data`, `cache_universe`
 
 ### `data/provider_base.py`
-
-- LOC: 14
-- Module intent: Shared provider protocol for pluggable data connectors.
-- Imports (2): `from __future__ import annotations`, `from typing import Protocol`
-- Top-level functions: none
+- Intent: Shared provider protocol for pluggable data connectors.
+- LOC: 15
 - Classes:
-  - `DataProvider` (line 9): Protocol defining the minimal interface expected from pluggable data providers.
-    - Methods (1): `available`
+  - `DataProvider` (methods: `available`)
+- Top-level functions: none
 
 ### `data/provider_registry.py`
-
-- LOC: 53
-- Module intent: Provider registry for unified data-provider access (WRDS, Kalshi, ...).
-- Imports (3): `from __future__ import annotations`, `from typing import Callable, Dict, List`, `from .provider_base import DataProvider`
-- Top-level functions:
-  - `_wrds_factory()` (line 14): Lazily import and construct the WRDS provider.
-  - `_kalshi_factory()` (line 21): Lazily import and construct the Kalshi provider.
-  - `get_provider(name)` (line 34): Construct a registered provider instance by name.
-  - `list_providers()` (line 43): Return the names of supported data providers available through the registry.
-  - `register_provider(name, factory)` (line 48): Register or override a provider factory under a normalized key.
+- Intent: Provider registry for unified data-provider access (WRDS, Kalshi, ...).
+- LOC: 54
 - Classes: none
+- Top-level functions: `_wrds_factory`, `_kalshi_factory`, `get_provider`, `list_providers`, `register_provider`
 
 ### `data/quality.py`
-
-- LOC: 263
-- Module intent: Data quality checks for OHLCV time series.
-- Imports (5): `from dataclasses import dataclass, asdict`, `from typing import Dict, List, Optional`, `import numpy as np`, `import pandas as pd`, `from ..config import MAX_MISSING_BAR_FRACTION, MAX_ZERO_VOLUME_FRACTION, MAX_ABS_DAILY_RETURN`
-- Top-level functions:
-  - `_expected_trading_days(start, end)` (line 32): Return expected trading days between *start* and *end* (inclusive).
-  - `assess_ohlcv_quality(df, max_missing_bar_fraction, max_zero_volume_fraction, max_abs_daily_return)` (line 56): assess ohlcv quality.
-  - `generate_quality_report(ohlcv_dict)` (line 122): Return a per-stock quality summary DataFrame.
-  - `flag_degraded_stocks(ohlcv_dict)` (line 230): Return a list of tickers whose data quality is below threshold.
+- Intent: Data quality checks for OHLCV time series.
+- LOC: 297
 - Classes:
-  - `DataQualityReport` (line 45): Structured result of OHLCV quality checks with metrics and warning tags.
-    - Methods (1): `to_dict`
+  - `DataQualityReport` (methods: `to_dict`)
+- Top-level functions: `_expected_trading_days`, `assess_ohlcv_quality`, `generate_quality_report`, `flag_degraded_stocks`
 
 ### `data/survivorship.py`
-
-- LOC: 935
-- Module intent: Survivorship Bias Controls (Tasks 112-117)
-- Imports (9): `import numpy as np`, `import pandas as pd`, `from dataclasses import dataclass, field`, `from typing import Dict, List, Optional, Tuple, Set`, `from datetime import datetime, date`, `from enum import Enum`, `import json`, `import sqlite3`, `import os`
-- Top-level functions:
-  - `hydrate_universe_history_from_snapshots(snapshots, universe_name, db_path, verbose)` (line 353): Build point-in-time universe intervals from snapshot rows.
-  - `hydrate_sp500_history_from_wrds(start_date, end_date, db_path, freq, verbose)` (line 450): Pull historical S&P 500 snapshots from WRDS and hydrate local PIT DB.
-  - `filter_panel_by_point_in_time_universe(panel, universe_name, db_path, verbose)` (line 482): Filter MultiIndex panel rows by point-in-time universe membership.
-  - `reconstruct_historical_universe(universe_name, as_of_date, tracker)` (line 908): Task 115: Quick function to reconstruct historical universe.
-  - `calculate_survivorship_bias_impact(prices, start_date, end_date, universe_name)` (line 920): Task 117: Quick function to calculate survivorship bias impact.
+- Intent: Survivorship Bias Controls (Tasks 112-117)
+- LOC: 936
 - Classes:
-  - `DelistingReason` (line 25): Reason for stock delisting.
-  - `UniverseMember` (line 38): Task 112: Track a symbol's membership in a universe.
-    - Methods (2): `is_active_on`, `to_dict`
-  - `UniverseChange` (line 72): Task 114: Track a change to universe membership.
-    - Methods (1): `to_dict`
-  - `DelistingEvent` (line 98): Task 113: Track delisting event with proper returns.
-    - Methods (1): `to_dict`
-  - `SurvivorshipReport` (line 128): Task 117: Report comparing returns with/without survivorship adjustment.
-    - Methods (1): `to_dict`
-  - `UniverseHistoryTracker` (line 171): Task 112, 114, 115: Track historical universe membership.
-    - Methods (8): `__init__`, `_init_db`, `add_member`, `record_change`, `get_universe_on_date`, `get_changes_in_period`, `bulk_load_universe`, `clear_universe`
-  - `DelistingHandler` (line 555): Task 113, 116: Handle delisting events properly.
-    - Methods (9): `__init__`, `_init_db`, `record_delisting`, `preserve_price_history`, `get_dead_company_prices`, `get_delisting_event`, `get_delisting_return`, `is_delisted`, `get_all_delisted_symbols`
-  - `SurvivorshipBiasController` (line 728): Task 117: Main controller for survivorship bias analysis.
-    - Methods (4): `__init__`, `get_survivorship_free_universe`, `calculate_bias_impact`, `format_report`
+  - `DelistingReason` (methods: none)
+  - `UniverseMember` (methods: `is_active_on`, `to_dict`)
+  - `UniverseChange` (methods: `to_dict`)
+  - `DelistingEvent` (methods: `to_dict`)
+  - `SurvivorshipReport` (methods: `to_dict`)
+  - `UniverseHistoryTracker` (methods: `add_member`, `record_change`, `get_universe_on_date`, `get_changes_in_period`, `bulk_load_universe`, `clear_universe`)
+  - `DelistingHandler` (methods: `record_delisting`, `preserve_price_history`, `get_dead_company_prices`, `get_delisting_event`, `get_delisting_return`, `is_delisted`, `get_all_delisted_symbols`)
+  - `SurvivorshipBiasController` (methods: `get_survivorship_free_universe`, `calculate_bias_impact`, `format_report`)
+- Top-level functions: `hydrate_universe_history_from_snapshots`, `hydrate_sp500_history_from_wrds`, `filter_panel_by_point_in_time_universe`, `reconstruct_historical_universe`, `calculate_survivorship_bias_impact`
 
 ### `data/wrds_provider.py`
-
-- LOC: 1615
-- Module intent: wrds_provider.py
-- Imports (9): `import logging`, `import os`, `import threading`, `import warnings`, `from datetime import datetime`, `from typing import Dict, List, Optional, Tuple`, `import numpy as np`, `import pandas as pd`, `import re as _re`
-- Top-level functions:
-  - `_sanitize_ticker_list(tickers)` (line 76): Build a SQL-safe IN-clause string from ticker symbols.
-  - `_sanitize_permno_list(permnos)` (line 92): Build a SQL-safe IN-clause string from PERMNO values.
-  - `_read_pgpass_password()` (line 107): Read the WRDS password from ~/.pgpass so the wrds library doesn't
-  - `_get_connection()` (line 141): Get or create a cached WRDS connection. Returns None if unavailable.
-  - `get_wrds_provider()` (line 1602): Get or create the default WRDSProvider singleton.
-  - `wrds_available()` (line 1610): Quick check: is WRDS accessible?
+- Intent: wrds_provider.py
+- LOC: 1616
 - Classes:
-  - `WRDSProvider` (line 216): WRDS data provider for the auto-discovery pipeline.
-    - Methods (21): `__init__`, `available`, `_query`, `_query_silent`, `get_sp500_universe`, `get_sp500_history`, `resolve_permno`, `get_crsp_prices`, `get_crsp_prices_with_delistings`, `get_optionmetrics_link`, `_nearest_iv`, `get_option_surface_features`, `get_fundamentals`, `get_earnings_surprises`, `get_institutional_ownership`, `get_taqmsec_ohlcv`, `query_options_volume`, `query_short_interest`, `query_insider_transactions`, `_permno_to_ticker` (+1 more)
+  - `WRDSProvider` (methods: `available`, `get_sp500_universe`, `get_sp500_history`, `resolve_permno`, `get_crsp_prices`, `get_crsp_prices_with_delistings`, `get_optionmetrics_link`, `get_option_surface_features`, `get_fundamentals`, `get_earnings_surprises`, `get_institutional_ownership`, `get_taqmsec_ohlcv` (+4 more))
+- Top-level functions: `_sanitize_ticker_list`, `_sanitize_permno_list`, `_read_pgpass_password`, `_get_connection`, `get_wrds_provider`, `wrds_available`
 
-## Package `features`
+## `features`
+
+| Module | Lines | Classes | Top-level Functions | Intent |
+|---|---|---|---|---|
+| `features/__init__.py` | 5 | 0 | 0 | Feature engineering package namespace. |
+| `features/harx_spillovers.py` | 243 | 0 | 3 | HARX Volatility Spillover features (Tier 6.1). |
+| `features/intraday.py` | 244 | 0 | 2 | Intraday microstructure features from WRDS TAQmsec tick data. |
+| `features/lob_features.py` | 312 | 0 | 5 | Markov LOB (Limit Order Book) features from intraday bar data (Tier 6.2). |
+| `features/macro.py` | 245 | 1 | 1 | FRED macro indicator features for quant_engine. |
+| `features/options_factors.py` | 135 | 0 | 4 | Option surface factor construction from OptionMetrics-enriched daily panels. |
+| `features/pipeline.py` | 1542 | 1 | 13 | Feature Pipeline — computes model features from OHLCV data. |
+| `features/research_factors.py` | 986 | 1 | 19 | Research-derived factor construction for quant_engine. |
+| `features/version.py` | 169 | 2 | 0 | Feature versioning system. |
+| `features/wave_flow.py` | 145 | 0 | 1 | Wave-Flow Decomposition for quant_engine. |
 
 ### `features/__init__.py`
-
-- LOC: 4
-- Module intent: Feature engineering package namespace.
-- Imports (1): `from .pipeline import FEATURE_METADATA, get_feature_type`
-- Top-level functions: none
+- Intent: Feature engineering package namespace.
+- LOC: 5
 - Classes: none
+- Top-level functions: none
 
 ### `features/harx_spillovers.py`
-
-- LOC: 242
-- Module intent: HARX Volatility Spillover features (Tier 6.1).
-- Imports (4): `from __future__ import annotations`, `from typing import Dict, Optional`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `_realized_volatility(returns, window, min_periods)` (line 38): Rolling realized volatility (annualised std of returns).
-  - `_ols_lstsq(X, y)` (line 48): OLS via numpy lstsq.  Returns coefficient vector.
-  - `compute_harx_spillovers(returns_by_asset, rv_daily_window, rv_weekly_window, rv_monthly_window, regression_window, min_regression_obs)` (line 54): Compute HARX cross-market volatility spillover features.
+- Intent: HARX Volatility Spillover features (Tier 6.1).
+- LOC: 243
 - Classes: none
+- Top-level functions: `_realized_volatility`, `_ols_lstsq`, `compute_harx_spillovers`
 
 ### `features/intraday.py`
-
-- LOC: 243
-- Module intent: Intraday microstructure features from WRDS TAQmsec tick data.
-- Imports (5): `from __future__ import annotations`, `from typing import Any, Dict, Optional`, `import numpy as np`, `import pandas as pd`, `from ..config import MARKET_OPEN, MARKET_CLOSE`
-- Top-level functions:
-  - `compute_intraday_features(ticker, date, wrds_provider)` (line 24): Compute intraday microstructure features for a single ticker on a date.
-  - `compute_rolling_vwap(df, window)` (line 203): Compute causal rolling VWAP and deviation features.
+- Intent: Intraday microstructure features from WRDS TAQmsec tick data.
+- LOC: 244
 - Classes: none
+- Top-level functions: `compute_intraday_features`, `compute_rolling_vwap`
 
 ### `features/lob_features.py`
-
-- LOC: 311
-- Module intent: Markov LOB (Limit Order Book) features from intraday bar data (Tier 6.2).
-- Imports (4): `from __future__ import annotations`, `from typing import Dict, Optional, Tuple`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `_inter_bar_durations(index)` (line 34): Compute inter-bar durations in seconds from a DatetimeIndex.
-  - `_estimate_poisson_lambda(durations)` (line 51): Estimate trade arrival rate (lambda) from inter-arrival durations.
-  - `_signed_volume(bars)` (line 72): Approximate trade direction using candle body (close - open).
-  - `compute_lob_features(intraday_bars, freq)` (line 88): Compute Markov LOB proxy features for a single stock-day.
-  - `compute_lob_features_batch(intraday_data, freq)` (line 239): Compute LOB features for multiple stock-days in batch.
+- Intent: Markov LOB (Limit Order Book) features from intraday bar data (Tier 6.2).
+- LOC: 312
 - Classes: none
+- Top-level functions: `_inter_bar_durations`, `_estimate_poisson_lambda`, `_signed_volume`, `compute_lob_features`, `compute_lob_features_batch`
 
 ### `features/macro.py`
-
-- LOC: 244
-- Module intent: FRED macro indicator features for quant_engine.
-- Imports (7): `from __future__ import annotations`, `import hashlib`, `import logging`, `from pathlib import Path`, `from typing import Dict, Optional`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `_cache_key(series_id, start, end)` (line 43): Generate a deterministic cache filename.
+- Intent: FRED macro indicator features for quant_engine.
+- LOC: 245
 - Classes:
-  - `MacroFeatureProvider` (line 50): FRED API integration for macro indicator features.
-    - Methods (5): `__init__`, `_fetch_series_fredapi`, `_fetch_series_requests`, `_fetch_series`, `get_macro_features`
+  - `MacroFeatureProvider` (methods: `get_macro_features`)
+- Top-level functions: `_cache_key`
 
 ### `features/options_factors.py`
-
-- LOC: 134
-- Module intent: Option surface factor construction from OptionMetrics-enriched daily panels.
-- Imports (4): `from __future__ import annotations`, `from typing import Optional`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `_pick_numeric(df, candidates)` (line 12): Internal helper for pick numeric.
-  - `_rolling_percentile_rank(series, window, min_periods)` (line 20): Internal helper for rolling percentile rank.
-  - `compute_option_surface_factors(df)` (line 38): Compute minimal high-signal option surface features.
-  - `compute_iv_shock_features(df, window)` (line 92): Causal IV change features (G3).
+- Intent: Option surface factor construction from OptionMetrics-enriched daily panels.
+- LOC: 135
 - Classes: none
+- Top-level functions: `_pick_numeric`, `_rolling_percentile_rank`, `compute_option_surface_factors`, `compute_iv_shock_features`
 
 ### `features/pipeline.py`
-
-- LOC: 1272
-- Module intent: Feature Pipeline — computes model features from OHLCV data.
-- Imports (7): `from typing import Dict, List, Optional`, `import numpy as np`, `import pandas as pd`, `from ..indicators import ATR, NATR, BollingerBandWidth, HistoricalVolatility, BBWidthPercentile, NATRPercentile, VolatilitySqueeze, RSI, MACD, MACDSignal, MACDHistogram, ROC, Stochastic, StochasticD, WilliamsR, CCI, SMA, EMA, PriceVsSMA, SMASlope, ADX, Aroon, EMAAlignment, TrendStrength, PriceVsEMAStack, MarketRegime, VolatilityRegime, VolumeRatio, OBV, OBVSlope, MFI, RVOL, NetVolumeTrend, VolumeForce, AccumulationDistribution, HigherHighs, LowerLows, CandleBody, CandleDirection, GapPercent, DistanceFromHigh, DistanceFromLow, PricePercentile, PivotHigh, PivotLow, NBarHighBreak, NBarLowBreak, RangeBreakout, ATRTrailingStop, ATRChannel, RiskPerATR, VWAP, PriceVsVWAP, VWAPBands, ValueAreaHigh, ValueAreaLow, POC, PriceVsPOC, ValueAreaPosition, AboveValueArea, BelowValueArea, ParkinsonVolatility, GarmanKlassVolatility, YangZhangVolatility, VolatilityCone, VolOfVol, GARCHVolatility, VolTermStructure, HurstExponent, MeanReversionHalfLife, ZScore, VarianceRatio, Autocorrelation, KalmanTrend, ShannonEntropy, ApproximateEntropy, AmihudIlliquidity, KyleLambda, RollSpread, FractalDimension, DFA, DominantCycle, ReturnSkewness, ReturnKurtosis, CUSUMDetector, RegimePersistence`, `from .research_factors import ResearchFactorConfig, compute_cross_asset_research_factors, compute_single_asset_research_factors`, `from .options_factors import compute_option_surface_factors`, `from .wave_flow import compute_wave_flow_decomposition`
-- Top-level functions:
-  - `get_feature_type(feature_name)` (line 384): Return the causality type for a feature.
-  - `_filter_causal_features(features)` (line 400): Keep only features with type CAUSAL or END_OF_DAY (drop RESEARCH_ONLY).
-  - `_build_indicator_set()` (line 406): Instantiate all indicators with default parameters.
-  - `_build_minimal_indicator_set()` (line 487): Lean indicator set for the 'minimal' feature mode.
-  - `_get_indicators(minimal)` (line 535): Return the indicator set (cached at module level).
-  - `compute_indicator_features(df, verbose, minimal)` (line 548): Compute indicator-based features as continuous columns.
-  - `compute_raw_features(df)` (line 579): Compute raw OHLCV-derived features (returns, volume, gaps, etc.).
-  - `compute_har_volatility_features(df)` (line 621): Compute HAR (Heterogeneous Autoregressive) realized volatility features.
-  - `compute_multiscale_features(df)` (line 664): Compute momentum, RSI, and volatility features at multiple time scales.
-  - `compute_interaction_features(features, pairs)` (line 700): Generate interaction features from pairs of continuous indicators.
-  - `compute_targets(df, horizons, benchmark_close)` (line 753): Compute forward return targets for supervised learning.
-  - `_winsorize_expanding(df, lower_q, upper_q)` (line 802): Winsorize features using expanding-window quantiles (no look-ahead).
+- Intent: Feature Pipeline — computes model features from OHLCV data.
+- LOC: 1542
 - Classes:
-  - `FeaturePipeline` (line 827): End-to-end feature computation pipeline.
-    - Methods (4): `__init__`, `compute`, `compute_universe`, `_load_benchmark_close`
+  - `FeaturePipeline` (methods: `compute`, `compute_universe`)
+- Top-level functions: `get_feature_type`, `_filter_causal_features`, `_build_indicator_set`, `_build_minimal_indicator_set`, `_get_indicators`, `compute_indicator_features`, `compute_raw_features`, `compute_har_volatility_features`, `compute_multiscale_features`, `compute_structural_features`, `compute_interaction_features`, `compute_targets`, `_winsorize_expanding`
 
 ### `features/research_factors.py`
-
-- LOC: 985
-- Module intent: Research-derived factor construction for quant_engine.
-- Imports (5): `from __future__ import annotations`, `from dataclasses import dataclass`, `from typing import Dict, List, Mapping, Optional`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `_rolling_zscore(series, window, min_periods)` (line 43): Causal rolling z-score.
-  - `_safe_pct_change(series, periods)` (line 50): Internal helper for safe pct change.
-  - `_required_ohlcv(df)` (line 56): Internal helper for required ohlcv.
-  - `compute_order_flow_impact_factors(df, config)` (line 66): Order-flow imbalance and price-impact proxies (Cont et al. inspired).
-  - `compute_markov_queue_features(df, config)` (line 134): Markov-style queue imbalance features (de Larrard style state framing).
-  - `compute_time_series_momentum_factors(df, config)` (line 204): Vol-scaled time-series momentum factors (Moskowitz/Ooi/Pedersen style).
-  - `compute_vol_scaled_momentum(df, horizons, vol_window)` (line 252): Volatility-scaled time-series momentum enhancements.
-  - `_rolling_levy_area(dx, dy, window, min_periods)` (line 344): Rolling Levy area for a 2D path of increments.
-  - `compute_signature_path_features(df, config)` (line 370): Signature-inspired path features for returns-volume trajectory.
-  - `compute_vol_surface_factors(df, config)` (line 405): Volatility term-structure factors inspired by implied-vol surface dynamics.
-  - `compute_single_asset_research_factors(df, config)` (line 474): Compute all single-asset research factors.
-  - `_standardize_block(block)` (line 492): Column-wise z-score with NaN-safe handling.
-  - `_lagged_weight_matrix(values, t, window, min_obs)` (line 501): Build positive lagged correlation weights:
-  - `compute_cross_asset_research_factors(price_data, config)` (line 540): Compute cross-asset network momentum and volatility spillover factors.
-  - `_dtw_distance_numpy(x, y)` (line 652): Pure numpy DTW distance computation using dynamic programming.
-  - `_dtw_avg_lag_from_path(path)` (line 692): Extract average lag from DTW alignment path.
-  - `compute_dtw_lead_lag(returns, window, max_lag)` (line 703): DTW-based lead-lag detection across a universe of assets.
-  - `_numpy_order2_signature(price_inc, volume_inc)` (line 858): Pure numpy computation of truncated order-2 path signature for a 2D path
-  - `compute_path_signatures(df, windows, order)` (line 901): Compute truncated path signatures of (price, volume) paths.
+- Intent: Research-derived factor construction for quant_engine.
+- LOC: 986
 - Classes:
-  - `ResearchFactorConfig` (line 28): Configuration for research-derived factor generation.
+  - `ResearchFactorConfig` (methods: none)
+- Top-level functions: `_rolling_zscore`, `_safe_pct_change`, `_required_ohlcv`, `compute_order_flow_impact_factors`, `compute_markov_queue_features`, `compute_time_series_momentum_factors`, `compute_vol_scaled_momentum`, `_rolling_levy_area`, `compute_signature_path_features`, `compute_vol_surface_factors`, `compute_single_asset_research_factors`, `_standardize_block`, `_lagged_weight_matrix`, `compute_cross_asset_research_factors`, `_dtw_distance_numpy`, `_dtw_avg_lag_from_path`, `compute_dtw_lead_lag`, `_numpy_order2_signature`, `compute_path_signatures`
 
 ### `features/version.py`
-
-- LOC: 168
-- Module intent: Feature versioning system.
-- Imports (8): `from __future__ import annotations`, `import hashlib`, `import json`, `import logging`, `from dataclasses import dataclass, field`, `from datetime import datetime, timezone`, `from pathlib import Path`, `from typing import Any, Dict, List, Optional`
-- Top-level functions: none
+- Intent: Feature versioning system.
+- LOC: 169
 - Classes:
-  - `FeatureVersion` (line 23): Immutable snapshot of a feature pipeline configuration.
-    - Methods (6): `__post_init__`, `n_features`, `compute_hash`, `to_dict`, `diff`, `is_compatible`
-  - `FeatureRegistry` (line 77): Registry tracking feature versions over time with JSON persistence.
-    - Methods (8): `__init__`, `register`, `get_version`, `get_latest`, `list_versions`, `check_compatibility`, `_load`, `_save`
+  - `FeatureVersion` (methods: `n_features`, `compute_hash`, `to_dict`, `diff`, `is_compatible`)
+  - `FeatureRegistry` (methods: `register`, `get_version`, `get_latest`, `list_versions`, `check_compatibility`)
+- Top-level functions: none
 
 ### `features/wave_flow.py`
-
-- LOC: 144
-- Module intent: Wave-Flow Decomposition for quant_engine.
-- Imports (4): `from __future__ import annotations`, `from typing import List`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `compute_wave_flow_decomposition(df, short_window, long_window, regime_threshold)` (line 26): Decompose the return series into flow (secular trend) and wave (oscillatory)
+- Intent: Wave-Flow Decomposition for quant_engine.
+- LOC: 145
 - Classes: none
+- Top-level functions: `compute_wave_flow_decomposition`
 
-## Package `indicators`
+## `indicators`
+
+| Module | Lines | Classes | Top-level Functions | Intent |
+|---|---|---|---|---|
+| `indicators/__init__.py` | 90 | 0 | 0 | Quant Engine Indicators — self-contained copy of the technical indicator library. |
+| `indicators/eigenvalue.py` | 400 | 1 | 0 | Eigenvalue Spectrum Indicators — portfolio-level systemic risk analysis. |
+| `indicators/indicators.py` | 2905 | 92 | 2 | Technical Indicator Library |
+| `indicators/ot_divergence.py` | 263 | 1 | 2 | Optimal Transport Indicators — distribution drift detection. |
+| `indicators/spectral.py` | 329 | 1 | 0 | Spectral Analysis Indicators — FFT-based frequency decomposition of price series. |
+| `indicators/ssa.py` | 322 | 1 | 0 | Singular Spectrum Analysis (SSA) Indicators — non-stationary signal decomposition. |
+| `indicators/tail_risk.py` | 241 | 1 | 0 | Tail Risk & Jump Detection Indicators — extreme event analysis. |
 
 ### `indicators/__init__.py`
-
-- LOC: 89
-- Module intent: Quant Engine Indicators — self-contained copy of the technical indicator library.
-- Imports (1): `from .indicators import Indicator, ATR, NATR, BollingerBandWidth, HistoricalVolatility, BBWidthPercentile, NATRPercentile, VolatilitySqueeze, RSI, MACD, MACDSignal, MACDHistogram, ROC, Stochastic, StochasticD, WilliamsR, CCI, SMA, EMA, PriceVsSMA, SMASlope, ADX, Aroon, EMAAlignment, TrendStrength, PriceVsEMAStack, MarketRegime, VolatilityRegime, VolumeRatio, OBV, OBVSlope, MFI, RVOL, NetVolumeTrend, VolumeForce, AccumulationDistribution, HigherHighs, LowerLows, CandleBody, CandleDirection, GapPercent, DistanceFromHigh, DistanceFromLow, PricePercentile, PivotHigh, PivotLow, NBarHighBreak, NBarLowBreak, RangeBreakout, ATRTrailingStop, ATRChannel, RiskPerATR, VWAP, PriceVsVWAP, VWAPBands, AnchoredVWAP, PriceVsAnchoredVWAP, MultiVWAPPosition, ValueAreaHigh, ValueAreaLow, POC, PriceVsPOC, ValueAreaPosition, AboveValueArea, BelowValueArea, Beast666Proximity, Beast666Distance, ParkinsonVolatility, GarmanKlassVolatility, YangZhangVolatility, VolatilityCone, VolOfVol, GARCHVolatility, VolTermStructure, HurstExponent, MeanReversionHalfLife, ZScore, VarianceRatio, Autocorrelation, KalmanTrend, ShannonEntropy, ApproximateEntropy, AmihudIlliquidity, KyleLambda, RollSpread, FractalDimension, DFA, DominantCycle, ReturnSkewness, ReturnKurtosis, CUSUMDetector, RegimePersistence, get_all_indicators`
-- Top-level functions: none
+- Intent: Quant Engine Indicators — self-contained copy of the technical indicator library.
+- LOC: 90
 - Classes: none
+- Top-level functions: none
+
+### `indicators/eigenvalue.py`
+- Intent: Eigenvalue Spectrum Indicators — portfolio-level systemic risk analysis.
+- LOC: 400
+- Classes:
+  - `EigenvalueAnalyzer` (methods: `compute_eigenvalue_concentration`, `compute_effective_rank`, `compute_avg_correlation_stress`, `compute_spectral_condition_number`, `compute_all`)
+- Top-level functions: none
 
 ### `indicators/indicators.py`
-
-- LOC: 2904
-- Module intent: Technical Indicator Library
-- Imports (4): `import numpy as np`, `import pandas as pd`, `from typing import Optional, Tuple`, `from abc import ABC, abstractmethod`
-- Top-level functions:
-  - `get_all_indicators()` (line 2744): Return dictionary of all indicator classes.
-  - `create_indicator(name)` (line 2899): Create an indicator by name with given parameters.
+- Intent: Technical Indicator Library
+- LOC: 2905
 - Classes:
-  - `Indicator` (line 14): Base class for all indicators.
-    - Methods (2): `name`, `calculate`
-  - `ATR` (line 33): Average True Range - measures volatility.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `NATR` (line 60): Normalized ATR - ATR as percentage of close price.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `BollingerBandWidth` (line 80): Bollinger Band Width - measures volatility squeeze.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `HistoricalVolatility` (line 106): Historical volatility (standard deviation of returns).
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `RSI` (line 129): Relative Strength Index.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `MACD` (line 156): MACD Line (difference between fast and slow EMA).
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `MACDSignal` (line 177): MACD Signal Line.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `MACDHistogram` (line 199): MACD Histogram (MACD - Signal).
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `ROC` (line 222): Rate of Change.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `Stochastic` (line 241): Stochastic %K.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `StochasticD` (line 262): Stochastic %D (smoothed %K).
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `WilliamsR` (line 283): Williams %R.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `CCI` (line 304): Commodity Channel Index.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `SMA` (line 331): Simple Moving Average.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `EMA` (line 348): Exponential Moving Average.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `PriceVsSMA` (line 365): Price distance from SMA (as percentage).
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `SMASlope` (line 384): Slope of SMA (rate of change).
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `ADX` (line 405): Average Directional Index - trend strength.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `Aroon` (line 443): Aroon Oscillator.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `VolumeRatio` (line 475): Current volume vs average volume.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `OBV` (line 493): On-Balance Volume.
-    - Methods (2): `name`, `calculate`
-  - `OBVSlope` (line 513): OBV rate of change.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `MFI` (line 534): Money Flow Index.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `HigherHighs` (line 565): Count of higher highs in lookback period.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `LowerLows` (line 584): Count of lower lows in lookback period.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `CandleBody` (line 603): Candle body size as percentage of range.
-    - Methods (2): `name`, `calculate`
-  - `CandleDirection` (line 618): Candle direction streak (positive = up candles, negative = down).
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `GapPercent` (line 636): Gap from previous close as percentage.
-    - Methods (2): `name`, `calculate`
-  - `DistanceFromHigh` (line 653): Distance from N-period high as percentage.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `DistanceFromLow` (line 671): Distance from N-period low as percentage.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `PricePercentile` (line 689): Current price percentile within N-period range.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `BBWidthPercentile` (line 713): Bollinger Band Width Percentile - identifies squeeze conditions.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `NATRPercentile` (line 740): NATR Percentile - where current volatility sits vs history.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `VolatilitySqueeze` (line 767): Volatility Squeeze indicator - BB inside Keltner Channel.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `RVOL` (line 808): Relative Volume - current volume vs same time period average.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `NetVolumeTrend` (line 830): Net Volume Trend - accumulation/distribution pressure.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `VolumeForce` (line 861): Volume Force Index - measures buying/selling pressure.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `AccumulationDistribution` (line 883): Accumulation/Distribution Line slope.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `EMAAlignment` (line 911): EMA Alignment - checks if EMAs are properly stacked.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `TrendStrength` (line 944): Combined trend strength using multiple factors.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `PriceVsEMAStack` (line 980): Price position relative to EMA stack.
-    - Methods (2): `name`, `calculate`
-  - `PivotHigh` (line 1008): Pivot High breakout - price breaks above N-bar high.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `PivotLow` (line 1044): Pivot Low breakdown - price breaks below N-bar low.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `NBarHighBreak` (line 1080): Simple N-bar high breakout.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `NBarLowBreak` (line 1102): Simple N-bar low breakdown.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `RangeBreakout` (line 1124): Range Breakout - price breaks out of N-day range.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `ATRTrailingStop` (line 1154): Distance from ATR trailing stop.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `ATRChannel` (line 1186): Position within ATR channel.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `RiskPerATR` (line 1216): Recent price range in ATR units.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `MarketRegime` (line 1248): Market regime based on price action.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `VolatilityRegime` (line 1279): Volatility regime classification.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `VWAP` (line 1314): Volume Weighted Average Price - rolling calculation.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `PriceVsVWAP` (line 1337): Price distance from VWAP as percentage.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `VWAPBands` (line 1359): VWAP Standard Deviation Bands.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `AnchoredVWAP` (line 1394): Anchored VWAP - VWAP calculated from N days ago.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `PriceVsAnchoredVWAP` (line 1423): Price distance from Anchored VWAP.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `MultiVWAPPosition` (line 1445): Position relative to multiple VWAP anchors.
-    - Methods (2): `name`, `calculate`
-  - `ValueAreaHigh` (line 1474): Value Area High approximation.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `ValueAreaLow` (line 1518): Value Area Low approximation.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `POC` (line 1561): Point of Control approximation.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `PriceVsPOC` (line 1613): Price distance from Point of Control.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `ValueAreaPosition` (line 1635): Position within Value Area.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `AboveValueArea` (line 1666): Binary: 1 if price above VAH, 0 otherwise.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `BelowValueArea` (line 1688): Binary: 1 if price below VAL, 0 otherwise.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `Beast666Proximity` (line 1714): Beast 666 Proximity Score (0-100).
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `Beast666Distance` (line 1811): Signed percent distance from the nearest 666 level.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `ParkinsonVolatility` (line 1864): Parkinson range-based volatility estimator. More efficient than close-to-close.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `GarmanKlassVolatility` (line 1884): Garman-Klass OHLC volatility estimator. ~8x more efficient than close-to-close.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `YangZhangVolatility` (line 1905): Yang-Zhang volatility combining overnight and Rogers-Satchell intraday components.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `VolatilityCone` (line 1939): Percentile rank of current realized vol vs its historical distribution.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `VolOfVol` (line 1963): Volatility of volatility - rolling std of rolling volatility.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `GARCHVolatility` (line 1983): Simplified GARCH(1,1) volatility with fixed parameters.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `VolTermStructure` (line 2021): Ratio of short-term to long-term realized vol. >1 = backwardation (fear).
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `HurstExponent` (line 2046): Hurst exponent via R/S analysis. H>0.5 trending, H<0.5 mean-reverting.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `MeanReversionHalfLife` (line 2106): Ornstein-Uhlenbeck half-life via OLS. Lower = faster mean reversion.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `ZScore` (line 2144): Z-Score: standardized deviation from rolling mean.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `VarianceRatio` (line 2164): Lo-MacKinlay variance ratio. VR>1 = trending, VR<1 = mean-reverting.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `Autocorrelation` (line 2186): Serial correlation of returns at lag k. Positive = momentum, negative = mean-reversion.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `KalmanTrend` (line 2218): 1D Kalman filter for price trend extraction.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `ShannonEntropy` (line 2266): Shannon entropy of return distribution. High = uncertain, low = predictable.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `ApproximateEntropy` (line 2296): Approximate Entropy (ApEn). Low = regular/predictable, high = complex/random.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `AmihudIlliquidity` (line 2347): Amihud illiquidity ratio: |return| / dollar_volume. Higher = less liquid.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `KyleLambda` (line 2367): Kyle's lambda price impact coefficient via rolling regression.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `RollSpread` (line 2404): Roll's implied bid-ask spread in basis points.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `FractalDimension` (line 2430): Higuchi fractal dimension. D~1 = smooth/trending, D~2 = rough/noisy.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `DFA` (line 2486): Detrended Fluctuation Analysis. alpha>0.5 = persistent, alpha<0.5 = anti-persistent.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `DominantCycle` (line 2562): FFT-based dominant cycle period in bars.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `ReturnSkewness` (line 2616): Rolling skewness of returns. Negative = left tail risk.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `ReturnKurtosis` (line 2633): Rolling excess kurtosis. High = fat tails (tail risk).
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `CUSUMDetector` (line 2654): CUSUM change-point detection. Output = bars since last regime change / period.
-    - Methods (3): `__init__`, `name`, `calculate`
-  - `RegimePersistence` (line 2703): Consecutive bars in the same trend regime (price vs SMA).
-    - Methods (3): `__init__`, `name`, `calculate`
+  - `Indicator` (methods: `name`, `calculate`)
+  - `ATR` (methods: `name`, `calculate`)
+  - `NATR` (methods: `name`, `calculate`)
+  - `BollingerBandWidth` (methods: `name`, `calculate`)
+  - `HistoricalVolatility` (methods: `name`, `calculate`)
+  - `RSI` (methods: `name`, `calculate`)
+  - `MACD` (methods: `name`, `calculate`)
+  - `MACDSignal` (methods: `name`, `calculate`)
+  - `MACDHistogram` (methods: `name`, `calculate`)
+  - `ROC` (methods: `name`, `calculate`)
+  - `Stochastic` (methods: `name`, `calculate`)
+  - `StochasticD` (methods: `name`, `calculate`)
+  - `WilliamsR` (methods: `name`, `calculate`)
+  - `CCI` (methods: `name`, `calculate`)
+  - `SMA` (methods: `name`, `calculate`)
+  - `EMA` (methods: `name`, `calculate`)
+  - `PriceVsSMA` (methods: `name`, `calculate`)
+  - `SMASlope` (methods: `name`, `calculate`)
+  - `ADX` (methods: `name`, `calculate`)
+  - `Aroon` (methods: `name`, `calculate`)
+  - `VolumeRatio` (methods: `name`, `calculate`)
+  - `OBV` (methods: `name`, `calculate`)
+  - `OBVSlope` (methods: `name`, `calculate`)
+  - `MFI` (methods: `name`, `calculate`)
+  - `HigherHighs` (methods: `name`, `calculate`)
+  - `LowerLows` (methods: `name`, `calculate`)
+  - `CandleBody` (methods: `name`, `calculate`)
+  - `CandleDirection` (methods: `name`, `calculate`)
+  - `GapPercent` (methods: `name`, `calculate`)
+  - `DistanceFromHigh` (methods: `name`, `calculate`)
+  - `DistanceFromLow` (methods: `name`, `calculate`)
+  - `PricePercentile` (methods: `name`, `calculate`)
+  - `BBWidthPercentile` (methods: `name`, `calculate`)
+  - `NATRPercentile` (methods: `name`, `calculate`)
+  - `VolatilitySqueeze` (methods: `name`, `calculate`)
+  - `RVOL` (methods: `name`, `calculate`)
+  - `NetVolumeTrend` (methods: `name`, `calculate`)
+  - `VolumeForce` (methods: `name`, `calculate`)
+  - `AccumulationDistribution` (methods: `name`, `calculate`)
+  - `EMAAlignment` (methods: `name`, `calculate`)
+  - `TrendStrength` (methods: `name`, `calculate`)
+  - `PriceVsEMAStack` (methods: `name`, `calculate`)
+  - `PivotHigh` (methods: `name`, `calculate`)
+  - `PivotLow` (methods: `name`, `calculate`)
+  - `NBarHighBreak` (methods: `name`, `calculate`)
+  - `NBarLowBreak` (methods: `name`, `calculate`)
+  - `RangeBreakout` (methods: `name`, `calculate`)
+  - `ATRTrailingStop` (methods: `name`, `calculate`)
+  - `ATRChannel` (methods: `name`, `calculate`)
+  - `RiskPerATR` (methods: `name`, `calculate`)
+  - `MarketRegime` (methods: `name`, `calculate`)
+  - `VolatilityRegime` (methods: `name`, `calculate`)
+  - `VWAP` (methods: `name`, `calculate`)
+  - `PriceVsVWAP` (methods: `name`, `calculate`)
+  - `VWAPBands` (methods: `name`, `calculate`)
+  - `AnchoredVWAP` (methods: `name`, `calculate`)
+  - `PriceVsAnchoredVWAP` (methods: `name`, `calculate`)
+  - `MultiVWAPPosition` (methods: `name`, `calculate`)
+  - `ValueAreaHigh` (methods: `name`, `calculate`)
+  - `ValueAreaLow` (methods: `name`, `calculate`)
+  - `POC` (methods: `name`, `calculate`)
+  - `PriceVsPOC` (methods: `name`, `calculate`)
+  - `ValueAreaPosition` (methods: `name`, `calculate`)
+  - `AboveValueArea` (methods: `name`, `calculate`)
+  - `BelowValueArea` (methods: `name`, `calculate`)
+  - `Beast666Proximity` (methods: `name`, `calculate`)
+  - `Beast666Distance` (methods: `name`, `calculate`)
+  - `ParkinsonVolatility` (methods: `name`, `calculate`)
+  - `GarmanKlassVolatility` (methods: `name`, `calculate`)
+  - `YangZhangVolatility` (methods: `name`, `calculate`)
+  - `VolatilityCone` (methods: `name`, `calculate`)
+  - `VolOfVol` (methods: `name`, `calculate`)
+  - `GARCHVolatility` (methods: `name`, `calculate`)
+  - `VolTermStructure` (methods: `name`, `calculate`)
+  - `HurstExponent` (methods: `name`, `calculate`)
+  - `MeanReversionHalfLife` (methods: `name`, `calculate`)
+  - `ZScore` (methods: `name`, `calculate`)
+  - `VarianceRatio` (methods: `name`, `calculate`)
+  - `Autocorrelation` (methods: `name`, `calculate`)
+  - `KalmanTrend` (methods: `name`, `calculate`)
+  - `ShannonEntropy` (methods: `name`, `calculate`)
+  - `ApproximateEntropy` (methods: `name`, `calculate`)
+  - `AmihudIlliquidity` (methods: `name`, `calculate`)
+  - `KyleLambda` (methods: `name`, `calculate`)
+  - `RollSpread` (methods: `name`, `calculate`)
+  - `FractalDimension` (methods: `name`, `calculate`)
+  - `DFA` (methods: `name`, `calculate`)
+  - `DominantCycle` (methods: `name`, `calculate`)
+  - `ReturnSkewness` (methods: `name`, `calculate`)
+  - `ReturnKurtosis` (methods: `name`, `calculate`)
+  - `CUSUMDetector` (methods: `name`, `calculate`)
+  - `RegimePersistence` (methods: `name`, `calculate`)
+- Top-level functions: `get_all_indicators`, `create_indicator`
 
-## Package `kalshi`
+### `indicators/ot_divergence.py`
+- Intent: Optimal Transport Indicators — distribution drift detection.
+- LOC: 263
+- Classes:
+  - `OptimalTransportAnalyzer` (methods: `compute_wasserstein_distance`, `compute_sinkhorn_divergence`, `compute_all`)
+- Top-level functions: `_logsumexp_rows`, `_logsumexp_cols`
+
+### `indicators/spectral.py`
+- Intent: Spectral Analysis Indicators — FFT-based frequency decomposition of price series.
+- LOC: 329
+- Classes:
+  - `SpectralAnalyzer` (methods: `compute_hf_lf_energy`, `compute_spectral_entropy`, `compute_dominant_frequency`, `compute_spectral_bandwidth`, `compute_all`)
+- Top-level functions: none
+
+### `indicators/ssa.py`
+- Intent: Singular Spectrum Analysis (SSA) Indicators — non-stationary signal decomposition.
+- LOC: 322
+- Classes:
+  - `SSADecomposer` (methods: `compute_trend_strength`, `compute_singular_entropy`, `compute_noise_ratio`, `compute_oscillatory_strength`, `compute_all`)
+- Top-level functions: none
+
+### `indicators/tail_risk.py`
+- Intent: Tail Risk & Jump Detection Indicators — extreme event analysis.
+- LOC: 241
+- Classes:
+  - `TailRiskAnalyzer` (methods: `compute_jump_intensity`, `compute_expected_shortfall`, `compute_vol_of_vol`, `compute_semi_relative_modulus`, `compute_extreme_return_pct`, `compute_all`)
+- Top-level functions: none
+
+## `kalshi`
+
+| Module | Lines | Classes | Top-level Functions | Intent |
+|---|---|---|---|---|
+| `kalshi/__init__.py` | 59 | 0 | 0 | Kalshi vertical for intraday event-market research. |
+| `kalshi/client.py` | 656 | 5 | 1 | Kalshi API client with signed authentication, rate limiting, and endpoint routing. |
+| `kalshi/disagreement.py` | 114 | 1 | 2 | Cross-market disagreement engine for Kalshi event features. |
+| `kalshi/distribution.py` | 936 | 3 | 23 | Contract -> probability distribution builder for Kalshi markets. |
+| `kalshi/events.py` | 518 | 2 | 11 | Event-time joins and as-of feature/label builders for Kalshi-driven research. |
+| `kalshi/mapping_store.py` | 76 | 2 | 0 | Versioned event-to-market mapping persistence. |
+| `kalshi/microstructure.py` | 128 | 1 | 2 | Market microstructure diagnostics for Kalshi event markets. |
+| `kalshi/options.py` | 146 | 0 | 3 | OptionMetrics-style options reference features for Kalshi event disagreement. |
+| `kalshi/pipeline.py` | 168 | 1 | 0 | Orchestration helpers for the Kalshi event-market vertical. |
+| `kalshi/promotion.py` | 179 | 1 | 2 | Event-strategy promotion helpers for Kalshi walk-forward outputs. |
+| `kalshi/provider.py` | 648 | 1 | 3 | Kalshi provider: ingestion + storage + feature-ready retrieval. |
+| `kalshi/quality.py` | 207 | 2 | 5 | Quality scoring helpers for Kalshi event-distribution snapshots. |
+| `kalshi/regimes.py` | 143 | 1 | 6 | Regime tagging for Kalshi event strategies. |
+| `kalshi/router.py` | 103 | 2 | 0 | Routing helpers for live vs historical Kalshi endpoints. |
+| `kalshi/storage.py` | 650 | 1 | 0 | Event-time storage layer for Kalshi + macro event research. |
+| `kalshi/walkforward.py` | 493 | 3 | 8 | Walk-forward evaluation for event-centric Kalshi feature panels. |
 
 ### `kalshi/__init__.py`
-
-- LOC: 58
-- Module intent: Kalshi vertical for intraday event-market research.
-- Imports (12): `from .client import KalshiClient`, `from .storage import EventTimeStore`, `from .provider import KalshiProvider`, `from .pipeline import KalshiPipeline`, `from .router import KalshiDataRouter`, `from .quality import QualityDimensions, StalePolicy`, `from .mapping_store import EventMarketMappingStore, EventMarketMappingRecord`, `from .distribution import DistributionConfig, build_distribution_panel`, `from .options import add_options_disagreement_features, build_options_reference_panel`, `from .promotion import EventPromotionConfig, evaluate_event_promotion`, `from .events import EventFeatureConfig, add_reference_disagreement_features, asof_join, build_asset_response_labels, build_event_feature_panel, build_event_labels`, `from .walkforward import EventWalkForwardConfig, EventWalkForwardResult, evaluate_event_contract_metrics, run_event_walkforward`
-- Top-level functions: none
+- Intent: Kalshi vertical for intraday event-market research.
+- LOC: 59
 - Classes: none
+- Top-level functions: none
 
 ### `kalshi/client.py`
-
-- LOC: 655
-- Module intent: Kalshi API client with signed authentication, rate limiting, and endpoint routing.
-- Imports (14): `from __future__ import annotations`, `import base64`, `import logging`, `import os`, `import subprocess`, `import tempfile`, `import threading`, `import time`, `from dataclasses import dataclass`, `from datetime import datetime, timezone`, `from typing import Callable, Dict, Iterable, List, Optional`, `from urllib.parse import urlparse` (+2 more)
-- Top-level functions:
-  - `_normalize_env(value)` (line 23): Internal helper for normalize env.
+- Intent: Kalshi API client with signed authentication, rate limiting, and endpoint routing.
+- LOC: 656
 - Classes:
-  - `RetryPolicy` (line 32): HTTP retry settings for Kalshi API requests.
-  - `RateLimitPolicy` (line 40): Token-bucket rate-limit settings for Kalshi API access.
-  - `RequestLimiter` (line 46): Lightweight token-bucket limiter with runtime limit updates.
-    - Methods (5): `__init__`, `_refill`, `acquire`, `update_rate`, `update_from_account_limits`
-  - `KalshiSigner` (line 126): Signs Kalshi requests using RSA-PSS SHA256.
-    - Methods (7): `__init__`, `available`, `_canonical_path`, `_load_private_key`, `_sign_with_cryptography`, `_sign_with_openssl`, `sign`
-  - `KalshiClient` (line 292): Kalshi HTTP wrapper with:
-    - Methods (16): `__init__`, `available`, `_join_url`, `_auth_headers`, `_request_with_retries`, `_request`, `get`, `paginate`, `get_account_limits`, `fetch_historical_cutoff`, `server_time_utc`, `clock_skew_seconds`, `list_markets`, `list_contracts`, `list_trades`, `list_quotes`
+  - `RetryPolicy` (methods: none)
+  - `RateLimitPolicy` (methods: none)
+  - `RequestLimiter` (methods: `acquire`, `update_rate`, `update_from_account_limits`)
+  - `KalshiSigner` (methods: `available`, `sign`)
+  - `KalshiClient` (methods: `available`, `get`, `paginate`, `get_account_limits`, `fetch_historical_cutoff`, `server_time_utc`, `clock_skew_seconds`, `list_markets`, `list_contracts`, `list_trades`, `list_quotes`)
+- Top-level functions: `_normalize_env`
 
 ### `kalshi/disagreement.py`
-
-- LOC: 113
-- Module intent: Cross-market disagreement engine for Kalshi event features.
-- Imports (5): `from __future__ import annotations`, `from dataclasses import dataclass`, `from typing import Optional`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `compute_disagreement(kalshi_entropy, kalshi_tail_mass, kalshi_variance, options_iv, options_skew, entropy_history, tail_history)` (line 32): Compute cross-market disagreement signals.
-  - `disagreement_as_feature_dict(signals)` (line 104): Convert disagreement signals to a flat dict for feature panel merging.
+- Intent: Cross-market disagreement engine for Kalshi event features.
+- LOC: 114
 - Classes:
-  - `DisagreementSignals` (line 22): Container for cross-market disagreement features derived from Kalshi and options references.
+  - `DisagreementSignals` (methods: none)
+- Top-level functions: `compute_disagreement`, `disagreement_as_feature_dict`
 
 ### `kalshi/distribution.py`
-
-- LOC: 935
-- Module intent: Contract -> probability distribution builder for Kalshi markets.
-- Imports (6): `from __future__ import annotations`, `from dataclasses import dataclass, field`, `from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple`, `import numpy as np`, `import pandas as pd`, `from .quality import QualityDimensions, StalePolicy, compute_quality_dimensions, dynamic_stale_cutoff_minutes`
-- Top-level functions:
-  - `_is_tz_aware_datetime(series)` (line 22): Return whether tz aware datetime satisfies the expected condition.
-  - `_to_utc_timestamp(value)` (line 63): Internal helper for to utc timestamp.
-  - `_prob_from_mid(mid, price_scale)` (line 71): Internal helper for prob from mid.
-  - `_entropy(p)` (line 85): Internal helper for entropy.
-  - `_isotonic_nonincreasing(y)` (line 94): Pool-adjacent-violators for nonincreasing constraints.
-  - `_isotonic_nondecreasing(y)` (line 118): Internal helper for isotonic nondecreasing.
-  - `_resolve_threshold_direction(row)` (line 131): Resolve threshold contract semantics:
-  - `_resolve_threshold_direction_with_confidence(row)` (line 141): Resolve threshold contract semantics with confidence scoring.
-  - `_validate_bins(contracts)` (line 196): Validate bin structure for non-overlapping, ordered coverage.
-  - `_tail_thresholds(event_type, config, support)` (line 257): Internal helper for tail thresholds.
-  - `_latest_quotes_asof(quotes, asof_ts, stale_minutes)` (line 273): Internal helper for latest quotes asof.
-  - `_normalize_mass(mass)` (line 293): Internal helper for normalize mass.
-  - `_moments(support, mass)` (line 303): Internal helper for moments.
-  - `_cdf_from_pmf(support, mass)` (line 320): Internal helper for cdf from pmf.
-  - `_pmf_on_grid(support, mass, grid)` (line 331): Internal helper for pmf on grid.
-  - `_distribution_distances(support_a, mass_a, support_b, mass_b)` (line 339): Internal helper for distribution distances.
-  - `_tail_probs_from_mass(support, mass, thresholds)` (line 379): Internal helper for tail probs from mass.
-  - `_tail_probs_from_threshold_curve(thresholds_x, prob_curve, direction, fixed_thresholds)` (line 398): Internal helper for tail probs from threshold curve.
-  - `_estimate_liquidity_proxy(quotes, asof_ts)` (line 425): Estimate a stable liquidity proxy from recent quote stream.
-  - `build_distribution_snapshot(contracts, quotes, asof_ts, config, event_ts, event_type)` (line 462): Build distribution snapshot.
-  - `_lag_slug(lag)` (line 819): Internal helper for lag slug.
-  - `_add_distance_features(panel, lags)` (line 824): Internal helper for add distance features.
-  - `build_distribution_panel(markets, contracts, quotes, snapshot_times, config)` (line 868): Build market-level distribution snapshots across times.
+- Intent: Contract -> probability distribution builder for Kalshi markets.
+- LOC: 936
 - Classes:
-  - `DistributionConfig` (line 29): Configuration for Kalshi contract-to-distribution reconstruction and snapshot feature extraction.
-  - `DirectionResult` (line 124): Result of threshold direction resolution with confidence metadata.
-  - `BinValidationResult` (line 188): Result of bin overlap/gap/ordering validation.
+  - `DistributionConfig` (methods: none)
+  - `DirectionResult` (methods: none)
+  - `BinValidationResult` (methods: none)
+- Top-level functions: `_is_tz_aware_datetime`, `_to_utc_timestamp`, `_prob_from_mid`, `_entropy`, `_isotonic_nonincreasing`, `_isotonic_nondecreasing`, `_resolve_threshold_direction`, `_resolve_threshold_direction_with_confidence`, `_validate_bins`, `_tail_thresholds`, `_latest_quotes_asof`, `_normalize_mass`, `_moments`, `_cdf_from_pmf`, `_pmf_on_grid`, `_distribution_distances`, `_tail_probs_from_mass`, `_tail_probs_from_threshold_curve`, `_estimate_liquidity_proxy`, `build_distribution_snapshot`, `_lag_slug`, `_add_distance_features`, `build_distribution_panel`
 
 ### `kalshi/events.py`
-
-- LOC: 517
-- Module intent: Event-time joins and as-of feature/label builders for Kalshi-driven research.
-- Imports (5): `from __future__ import annotations`, `from dataclasses import dataclass, field`, `from typing import Dict, Iterable, List, Optional`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `_to_utc_ts(series)` (line 30): Internal helper for to utc ts.
-  - `_ensure_asof_before_release(df)` (line 35): Internal helper for ensure asof before release.
-  - `asof_join(left, right, by, left_ts_col, right_ts_col)` (line 44): Strict backward as-of join (no forward-peeking).
-  - `build_event_snapshot_grid(macro_events, horizons)` (line 79): Build event snapshot grid.
-  - `_merge_event_market_map(grid, event_market_map)` (line 112): Internal helper for merge event market map.
-  - `_add_revision_speed_features(joined, feature_cols)` (line 148): Internal helper for add revision speed features.
-  - `add_reference_disagreement_features(event_panel, reference_features, ts_col)` (line 186): Optional cross-market disagreement block via strict backward as-of join.
-  - `build_event_feature_panel(macro_events, event_market_map, kalshi_distributions, config)` (line 228): Build event-centric panel indexed by (event_id, asof_ts).
-  - `build_asset_time_feature_panel(asset_frame, kalshi_distributions, market_id, asof_col)` (line 325): Optional continuous panel keyed by (asset_id, ts) with strict as-of joins.
-  - `build_event_labels(macro_events, event_outcomes_first_print, event_outcomes_revised, label_mode)` (line 359): Build event outcome labels with explicit as-of awareness.
-  - `build_asset_response_labels(macro_events, asset_prices, ts_col, price_col, window_start, window_end, entry_delay, exit_horizon, price_source)` (line 444): Event-to-asset response labels with realistic execution windows.
+- Intent: Event-time joins and as-of feature/label builders for Kalshi-driven research.
+- LOC: 518
 - Classes:
-  - `EventTimestampMeta` (line 14): Authoritative event timestamp metadata (D2).
-  - `EventFeatureConfig` (line 22): Configuration for event snapshot horizons and event-panel quality filtering.
+  - `EventTimestampMeta` (methods: none)
+  - `EventFeatureConfig` (methods: none)
+- Top-level functions: `_to_utc_ts`, `_ensure_asof_before_release`, `asof_join`, `build_event_snapshot_grid`, `_merge_event_market_map`, `_add_revision_speed_features`, `add_reference_disagreement_features`, `build_event_feature_panel`, `build_asset_time_feature_panel`, `build_event_labels`, `build_asset_response_labels`
 
 ### `kalshi/mapping_store.py`
-
-- LOC: 75
-- Module intent: Versioned event-to-market mapping persistence.
-- Imports (5): `from __future__ import annotations`, `from dataclasses import dataclass`, `from typing import Iterable, Optional`, `import pandas as pd`, `from .storage import EventTimeStore`
-- Top-level functions: none
+- Intent: Versioned event-to-market mapping persistence.
+- LOC: 76
 - Classes:
-  - `EventMarketMappingRecord` (line 15): Versioned mapping row linking a macro event to a Kalshi market over an effective time window.
-  - `EventMarketMappingStore` (line 26): Persistence helper for versioned event-to-market mappings stored in EventTimeStore.
-    - Methods (5): `__init__`, `upsert`, `asof`, `current_version`, `assert_consistent_mapping_version`
+  - `EventMarketMappingRecord` (methods: none)
+  - `EventMarketMappingStore` (methods: `upsert`, `asof`, `current_version`, `assert_consistent_mapping_version`)
+- Top-level functions: none
 
 ### `kalshi/microstructure.py`
-
-- LOC: 127
-- Module intent: Market microstructure diagnostics for Kalshi event markets.
-- Imports (5): `from __future__ import annotations`, `from dataclasses import dataclass`, `from typing import Optional`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `compute_microstructure(quotes, window_hours, asof_ts)` (line 31): Compute microstructure diagnostics from a quote panel.
-  - `microstructure_as_feature_dict(diag)` (line 117): Convert diagnostics to a flat dict for feature panel merging.
+- Intent: Market microstructure diagnostics for Kalshi event markets.
+- LOC: 128
 - Classes:
-  - `MicrostructureDiagnostics` (line 20): Microstructure summary metrics computed from a quote panel window.
+  - `MicrostructureDiagnostics` (methods: none)
+- Top-level functions: `compute_microstructure`, `microstructure_as_feature_dict`
 
 ### `kalshi/options.py`
-
-- LOC: 145
-- Module intent: OptionMetrics-style options reference features for Kalshi event disagreement.
-- Imports (5): `from __future__ import annotations`, `from typing import Optional`, `import numpy as np`, `import pandas as pd`, `from ..features.options_factors import compute_option_surface_factors`
-- Top-level functions:
-  - `_to_utc_ts(series)` (line 17): Internal helper for to utc ts.
-  - `build_options_reference_panel(options_frame, ts_col)` (line 22): Build a normalized options reference panel with:
-  - `add_options_disagreement_features(event_panel, options_reference, options_ts_col)` (line 72): Strict backward as-of join of options reference features into event panel.
+- Intent: OptionMetrics-style options reference features for Kalshi event disagreement.
+- LOC: 146
 - Classes: none
+- Top-level functions: `_to_utc_ts`, `build_options_reference_panel`, `add_options_disagreement_features`
 
 ### `kalshi/pipeline.py`
-
-- LOC: 167
-- Module intent: Orchestration helpers for the Kalshi event-market vertical.
-- Imports (14): `from __future__ import annotations`, `from dataclasses import dataclass`, `from datetime import datetime, timezone`, `from pathlib import Path`, `from typing import Optional`, `import pandas as pd`, `from .distribution import DistributionConfig`, `from .events import EventFeatureConfig, build_event_feature_panel`, `from .options import add_options_disagreement_features, build_options_reference_panel`, `from .promotion import EventPromotionConfig, evaluate_event_promotion`, `from .provider import KalshiProvider`, `from .storage import EventTimeStore` (+2 more)
-- Top-level functions: none
+- Intent: Orchestration helpers for the Kalshi event-market vertical.
+- LOC: 168
 - Classes:
-  - `KalshiPipeline` (line 29): High-level orchestration wrapper for Kalshi sync, feature, walk-forward, and promotion workflows.
-    - Methods (8): `from_store`, `sync_reference`, `sync_intraday_quotes`, `build_distributions`, `build_event_features`, `run_walkforward`, `evaluate_walkforward_contract`, `evaluate_event_promotion`
+  - `KalshiPipeline` (methods: `from_store`, `sync_reference`, `sync_intraday_quotes`, `build_distributions`, `build_event_features`, `run_walkforward`, `evaluate_walkforward_contract`, `evaluate_event_promotion`)
+- Top-level functions: none
 
 ### `kalshi/promotion.py`
-
-- LOC: 178
-- Module intent: Event-strategy promotion helpers for Kalshi walk-forward outputs.
-- Imports (9): `from __future__ import annotations`, `from dataclasses import dataclass`, `from typing import Dict, Iterable, Optional`, `import numpy as np`, `import pandas as pd`, `from ..autopilot.promotion_gate import PromotionDecision, PromotionGate`, `from ..autopilot.strategy_discovery import StrategyCandidate`, `from ..backtest.engine import BacktestResult`, `from .walkforward import EventWalkForwardResult, evaluate_event_contract_metrics`
-- Top-level functions:
-  - `_to_backtest_result(event_returns, horizon_days)` (line 33): Internal helper for to backtest result.
-  - `evaluate_event_promotion(walkforward_result, config, gate, extra_contract_metrics)` (line 127): Evaluate Kalshi event strategy promotion from walk-forward outputs.
+- Intent: Event-strategy promotion helpers for Kalshi walk-forward outputs.
+- LOC: 179
 - Classes:
-  - `EventPromotionConfig` (line 22): Strategy metadata used to evaluate an event strategy through the shared promotion gate.
+  - `EventPromotionConfig` (methods: none)
+- Top-level functions: `_to_backtest_result`, `evaluate_event_promotion`
 
 ### `kalshi/provider.py`
-
-- LOC: 647
-- Module intent: Kalshi provider: ingestion + storage + feature-ready retrieval.
-- Imports (12): `from __future__ import annotations`, `import hashlib`, `import json`, `from datetime import datetime, timezone`, `from typing import Dict, Iterable, List, Optional`, `import numpy as np`, `import pandas as pd`, `from ..config import KALSHI_API_BASE_URL, KALSHI_DISTANCE_LAGS, KALSHI_ENV, KALSHI_FAR_EVENT_MINUTES, KALSHI_FAR_EVENT_STALE_MINUTES, KALSHI_HISTORICAL_API_BASE_URL, KALSHI_HISTORICAL_CUTOFF_TS, KALSHI_NEAR_EVENT_MINUTES, KALSHI_NEAR_EVENT_STALE_MINUTES, KALSHI_RATE_LIMIT_BURST, KALSHI_RATE_LIMIT_RPS, KALSHI_STALE_HIGH_LIQUIDITY_MULTIPLIER, KALSHI_STALE_AFTER_MINUTES, KALSHI_STALE_LIQUIDITY_HIGH_THRESHOLD, KALSHI_STALE_LIQUIDITY_LOW_THRESHOLD, KALSHI_STALE_LOW_LIQUIDITY_MULTIPLIER, KALSHI_STALE_MARKET_TYPE_MULTIPLIERS, KALSHI_TAIL_THRESHOLDS`, `from .client import KalshiClient, RateLimitPolicy`, `from .distribution import DistributionConfig, build_distribution_panel`, `from .mapping_store import EventMarketMappingStore`, `from .storage import EventTimeStore`
-- Top-level functions:
-  - `_to_iso_utc(value)` (line 40): Normalize a timestamp-like value to an ISO-8601 UTC string, returning None on failure.
-  - `_safe_hash_text(text)` (line 55): Return a stable SHA-256 hash for text fields used in spec/provenance snapshots.
-  - `_asof_date(value)` (line 60): Convert a timestamp-like value to a UTC calendar date string for daily rollups.
+- Intent: Kalshi provider: ingestion + storage + feature-ready retrieval.
+- LOC: 648
 - Classes:
-  - `KalshiProvider` (line 70): Provider interface similar to WRDSProvider, but for event-market data.
-    - Methods (17): `__init__`, `available`, `sync_account_limits`, `refresh_historical_cutoff`, `sync_market_catalog`, `sync_contracts`, `sync_quotes`, `get_markets`, `get_contracts`, `get_quotes`, `get_event_market_map_asof`, `get_macro_events`, `get_event_outcomes`, `compute_and_store_distributions`, `materialize_daily_health_report`, `get_daily_health_report`, `store_clock_check`
+  - `KalshiProvider` (methods: `available`, `sync_account_limits`, `refresh_historical_cutoff`, `sync_market_catalog`, `sync_contracts`, `sync_quotes`, `get_markets`, `get_contracts`, `get_quotes`, `get_event_market_map_asof`, `get_macro_events`, `get_event_outcomes` (+4 more))
+- Top-level functions: `_to_iso_utc`, `_safe_hash_text`, `_asof_date`
 
 ### `kalshi/quality.py`
-
-- LOC: 206
-- Module intent: Quality scoring helpers for Kalshi event-distribution snapshots.
-- Imports (4): `from __future__ import annotations`, `from dataclasses import dataclass, field`, `from typing import Dict, Iterable, Optional`, `import numpy as np`
-- Top-level functions:
-  - `_finite(values)` (line 50): Return only finite numeric values from an iterable as a NumPy array.
-  - `dynamic_stale_cutoff_minutes(time_to_event_minutes, policy, market_type, liquidity_proxy)` (line 56): Dynamic stale-cutoff schedule:
-  - `compute_quality_dimensions(expected_contracts, observed_contracts, spreads, quote_ages_seconds, volumes, open_interests, violation_magnitude)` (line 104): Multi-dimensional quality model for distribution snapshots.
-  - `passes_hard_gates(quality, stale_cutoff_seconds, min_coverage, max_median_spread)` (line 164): Hard validity gates (C1).  Must-pass criteria — failing any gate means
-  - `quality_as_feature_dict(quality)` (line 193): Expose soft quality dimensions as separate learnable feature columns (C2).
+- Intent: Quality scoring helpers for Kalshi event-distribution snapshots.
+- LOC: 207
 - Classes:
-  - `QualityDimensions` (line 16): Component-level quality metrics for a Kalshi distribution snapshot.
-  - `StalePolicy` (line 27): Parameters controlling dynamic stale-quote cutoff schedules for Kalshi snapshots.
+  - `QualityDimensions` (methods: none)
+  - `StalePolicy` (methods: none)
+- Top-level functions: `_finite`, `dynamic_stale_cutoff_minutes`, `compute_quality_dimensions`, `passes_hard_gates`, `quality_as_feature_dict`
 
 ### `kalshi/regimes.py`
-
-- LOC: 142
-- Module intent: Regime tagging for Kalshi event strategies.
-- Imports (5): `from __future__ import annotations`, `from dataclasses import dataclass`, `from typing import Dict, Optional, Sequence`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `classify_inflation_regime(cpi_yoy, high_threshold, low_threshold)` (line 28): Classify inflation regime from CPI year-over-year.
-  - `classify_policy_regime(fed_funds_change_bps, tightening_threshold_bps, easing_threshold_bps)` (line 43): Classify monetary policy regime from Fed funds rate changes.
-  - `classify_vol_regime(vix_level, high_threshold, low_threshold)` (line 58): Classify volatility regime from VIX level.
-  - `tag_event_regime(cpi_yoy, fed_funds_change_bps, vix_level)` (line 73): Tag an event with macro regime classifications.
-  - `evaluate_strategy_by_regime(event_returns, regime_tags)` (line 86): Evaluate strategy performance breakdown by regime.
-  - `regime_stability_score(breakdown)` (line 120): Score strategy stability across regimes (0-1).
+- Intent: Regime tagging for Kalshi event strategies.
+- LOC: 143
 - Classes:
-  - `EventRegimeTag` (line 21): Macro regime labels attached to an event for regime-stability analysis.
+  - `EventRegimeTag` (methods: none)
+- Top-level functions: `classify_inflation_regime`, `classify_policy_regime`, `classify_vol_regime`, `tag_event_regime`, `evaluate_strategy_by_regime`, `regime_stability_score`
 
 ### `kalshi/router.py`
-
-- LOC: 102
-- Module intent: Routing helpers for live vs historical Kalshi endpoints.
-- Imports (5): `from __future__ import annotations`, `from dataclasses import dataclass`, `from typing import Dict, Optional`, `from urllib.parse import urlparse`, `import pandas as pd`
-- Top-level functions: none
+- Intent: Routing helpers for live vs historical Kalshi endpoints.
+- LOC: 103
 - Classes:
-  - `RouteDecision` (line 14): Resolved endpoint route decision (base URL, path, and historical/live choice).
-  - `KalshiDataRouter` (line 21): Chooses live vs historical endpoint roots by cutoff timestamp.
-    - Methods (6): `__init__`, `_to_utc_ts`, `update_cutoff`, `_extract_end_ts`, `_clean_path`, `resolve`
+  - `RouteDecision` (methods: none)
+  - `KalshiDataRouter` (methods: `update_cutoff`, `resolve`)
+- Top-level functions: none
 
 ### `kalshi/storage.py`
-
-- LOC: 649
-- Module intent: Event-time storage layer for Kalshi + macro event research.
-- Imports (7): `from __future__ import annotations`, `import json`, `import sqlite3`, `from datetime import datetime, timezone`, `from pathlib import Path`, `from typing import Iterable, List, Mapping, Optional, Sequence`, `import pandas as pd`
-- Top-level functions: none
+- Intent: Event-time storage layer for Kalshi + macro event research.
+- LOC: 650
 - Classes:
-  - `EventTimeStore` (line 35): Intraday/event-time storage with a stable schema.
-    - Methods (27): `__init__`, `_execute`, `_executemany`, `_table_columns`, `_norm_ts`, `_clean_value`, `_insert_or_replace`, `init_schema`, `upsert_markets`, `upsert_contracts`, `append_quotes`, `upsert_macro_events`, `upsert_event_outcomes`, `upsert_event_outcomes_first_print`, `upsert_event_outcomes_revised`, `upsert_distributions`, `upsert_event_market_map_versions`, `append_market_specs`, `append_contract_specs`, `upsert_data_provenance` (+7 more)
-
-### `kalshi/tests/__init__.py`
-
-- LOC: 1
-- Module intent: Kalshi package-local tests.
+  - `EventTimeStore` (methods: `init_schema`, `upsert_markets`, `upsert_contracts`, `append_quotes`, `upsert_macro_events`, `upsert_event_outcomes`, `upsert_event_outcomes_first_print`, `upsert_event_outcomes_revised`, `upsert_distributions`, `upsert_event_market_map_versions`, `append_market_specs`, `append_contract_specs` (+8 more))
 - Top-level functions: none
-- Classes: none
-
-### `kalshi/tests/test_bin_validity.py`
-
-- LOC: 105
-- Module intent: Bin overlap/gap detection test (Instructions I.3).
-- Imports (3): `import unittest`, `import pandas as pd`, `from quant_engine.kalshi.distribution import _validate_bins`
-- Top-level functions: none
-- Classes:
-  - `BinValidityTests` (line 13): Tests for bin overlap/gap/ordering validation.
-    - Methods (9): `test_clean_bins_valid`, `test_overlapping_bins_detected`, `test_gapped_bins_detected`, `test_inverted_bin_detected`, `test_single_bin_valid`, `test_missing_columns_valid`, `test_empty_dataframe_valid`, `test_unordered_bins_detected`, `test_severe_overlap`
-
-### `kalshi/tests/test_distribution.py`
-
-- LOC: 41
-- Module intent: Kalshi test module for distribution behavior and regressions.
-- Imports (3): `import unittest`, `import pandas as pd`, `from quant_engine.kalshi.distribution import DistributionConfig, build_distribution_snapshot`
-- Top-level functions: none
-- Classes:
-  - `DistributionLocalTests` (line 12): Test cases covering Kalshi subsystem behavior and safety constraints.
-    - Methods (1): `test_bin_distribution_probability_mass_is_normalized`
-
-### `kalshi/tests/test_leakage.py`
-
-- LOC: 46
-- Module intent: Kalshi test module for leakage behavior and regressions.
-- Imports (3): `import unittest`, `import pandas as pd`, `from quant_engine.kalshi.events import EventFeatureConfig, build_event_feature_panel`
-- Top-level functions: none
-- Classes:
-  - `LeakageLocalTests` (line 12): Test cases covering Kalshi subsystem behavior and safety constraints.
-    - Methods (1): `test_feature_rows_strictly_pre_release`
-
-### `kalshi/tests/test_no_leakage.py`
-
-- LOC: 117
-- Module intent: No-leakage test at panel level (Instructions I.4).
-- Imports (4): `import unittest`, `import numpy as np`, `import pandas as pd`, `from quant_engine.kalshi.events import EventFeatureConfig, build_event_feature_panel`
-- Top-level functions: none
-- Classes:
-  - `NoLeakageTests` (line 16): Panel-level look-ahead bias detection.
-    - Methods (3): `_build_synthetic_panel`, `test_all_asof_before_release`, `test_single_event_no_leakage`
-
-### `kalshi/tests/test_signature_kat.py`
-
-- LOC: 141
-- Module intent: Known-answer test for Kalshi RSA-PSS SHA256 signature (Instructions A3 + I.1).
-- Imports (3): `import base64`, `import unittest`, `from quant_engine.kalshi.client import KalshiSigner`
-- Top-level functions: none
-- Classes:
-  - `SignatureKATTests` (line 46): Known-answer tests for Kalshi request signing.
-    - Methods (5): `_skip_if_no_crypto`, `test_sign_produces_valid_base64`, `test_sign_deterministic_message_format`, `test_sign_verifies_with_public_key`, `test_canonical_path_normalization`
-
-### `kalshi/tests/test_stale_quotes.py`
-
-- LOC: 152
-- Module intent: Stale quote cutoff test (Instructions I.5).
-- Imports (2): `import unittest`, `from quant_engine.kalshi.quality import StalePolicy, dynamic_stale_cutoff_minutes`
-- Top-level functions: none
-- Classes:
-  - `StaleQuoteCutoffTests` (line 15): Tests for dynamic stale-cutoff schedule.
-    - Methods (10): `test_near_event_tight_cutoff`, `test_far_event_loose_cutoff`, `test_midpoint_interpolation`, `test_cutoff_monotonically_increases_with_distance`, `test_cpi_market_type_multiplier`, `test_fomc_market_type_multiplier`, `test_low_liquidity_widens_cutoff`, `test_high_liquidity_tightens_cutoff`, `test_none_time_to_event_uses_base`, `test_cutoff_clamped_to_bounds`
-
-### `kalshi/tests/test_threshold_direction.py`
-
-- LOC: 126
-- Module intent: Threshold direction correctness test (Instructions I.2).
-- Imports (2): `import unittest`, `from quant_engine.kalshi.distribution import _resolve_threshold_direction, _resolve_threshold_direction_with_confidence`
-- Top-level functions: none
-- Classes:
-  - `ThresholdDirectionTests` (line 15): Tests for threshold direction resolution.
-    - Methods (17): `test_explicit_ge_direction`, `test_explicit_le_direction`, `test_explicit_gte_alias`, `test_explicit_lte_alias`, `test_explicit_ge_symbol`, `test_explicit_le_symbol`, `test_payout_structure_above`, `test_payout_structure_below`, `test_rules_text_greater_than`, `test_rules_text_less_than`, `test_rules_text_above`, `test_rules_text_below`, `test_title_guess_or_higher`, `test_title_guess_or_lower`, `test_no_direction_signal`, `test_empty_row`, `test_legacy_resolve_returns_string`
-
-### `kalshi/tests/test_walkforward_purge.py`
-
-- LOC: 159
-- Module intent: Walk-forward purge/embargo test (Instructions I.6).
-- Imports (4): `import unittest`, `import numpy as np`, `import pandas as pd`, `from quant_engine.kalshi.walkforward import EventWalkForwardConfig, _prepare_panel, run_event_walkforward`
-- Top-level functions: none
-- Classes:
-  - `WalkForwardPurgeTests` (line 18): Tests that walk-forward purge/embargo prevents data leakage.
-    - Methods (5): `_build_synthetic_data`, `test_no_train_events_in_purge_window`, `test_event_type_aware_purge`, `test_embargo_removes_adjacent_events`, `test_trial_counting`
 
 ### `kalshi/walkforward.py`
-
-- LOC: 492
-- Module intent: Walk-forward evaluation for event-centric Kalshi feature panels.
-- Imports (6): `from __future__ import annotations`, `from dataclasses import dataclass, field`, `from typing import Any, Dict, List, Optional, Sequence`, `import numpy as np`, `import pandas as pd`, `from ..backtest.advanced_validation import deflated_sharpe_ratio, monte_carlo_validation`
-- Top-level functions:
-  - `_bootstrap_mean_ci(values, n_bootstrap, random_seed)` (line 103): Estimate a bootstrap mean and 95% confidence interval for event returns.
-  - `_event_regime_stability(event_returns, event_types)` (line 118): Score return consistency across event types on a 0-1 stability scale.
-  - `evaluate_event_contract_metrics(result, n_bootstrap, max_events_per_day)` (line 147): Advanced validation contract metrics for event strategies:
-  - `_corr(a, b)` (line 238): Compute a finite-sample-safe correlation between two numeric arrays.
-  - `_fit_ridge(X, y, alpha)` (line 252): Fit a simple ridge regression coefficient vector for event walk-forward evaluation.
-  - `_predict(X, beta)` (line 262): Apply a fitted linear coefficient vector to a feature matrix.
-  - `_prepare_panel(panel, labels, label_col)` (line 267): Normalize and merge feature panel and labels into a walk-forward-ready event dataset.
-  - `run_event_walkforward(panel, labels, config, label_col)` (line 315): Run purge/embargo-aware walk-forward evaluation on an event feature panel.
+- Intent: Walk-forward evaluation for event-centric Kalshi feature panels.
+- LOC: 493
 - Classes:
-  - `EventWalkForwardConfig` (line 16): Configuration for event-level walk-forward splits, purge/embargo, and trial accounting.
-  - `EventWalkForwardFold` (line 36): Per-fold event walk-forward metrics for fit quality and event-return diagnostics.
-  - `EventWalkForwardResult` (line 52): Aggregate event walk-forward outputs and OOS traces used in promotion checks.
-    - Methods (5): `wf_oos_corr`, `wf_positive_fold_fraction`, `wf_is_oos_gap`, `worst_event_loss`, `to_metrics`
+  - `EventWalkForwardConfig` (methods: none)
+  - `EventWalkForwardFold` (methods: none)
+  - `EventWalkForwardResult` (methods: `wf_oos_corr`, `wf_positive_fold_fraction`, `wf_is_oos_gap`, `worst_event_loss`, `to_metrics`)
+- Top-level functions: `_bootstrap_mean_ci`, `_event_regime_stability`, `evaluate_event_contract_metrics`, `_corr`, `_fit_ridge`, `_predict`, `_prepare_panel`, `run_event_walkforward`
 
-## Package `models`
+## `models`
+
+| Module | Lines | Classes | Top-level Functions | Intent |
+|---|---|---|---|---|
+| `models/__init__.py` | 25 | 0 | 0 | Models subpackage — training, prediction, versioning, and retraining triggers. |
+| `models/calibration.py` | 328 | 2 | 2 | Confidence Calibration --- Platt scaling and isotonic regression. |
+| `models/conformal.py` | 296 | 3 | 0 | Conformal Prediction — distribution-free prediction intervals. |
+| `models/cross_sectional.py` | 137 | 0 | 1 | Cross-Sectional Ranking Model — rank stocks relative to peers at each date. |
+| `models/feature_stability.py` | 314 | 2 | 0 | Feature Stability Monitoring — tracks feature importance rankings across |
+| `models/governance.py` | 156 | 2 | 0 | Champion/challenger governance for model versions. |
+| `models/iv/__init__.py` | 32 | 0 | 0 | Implied Volatility Surface Models — Heston, SVI, Black-Scholes, and IV Surface. |
+| `models/iv/models.py` | 938 | 10 | 1 | Implied Volatility Surface Models. |
+| `models/neural_net.py` | 199 | 1 | 0 | Tabular Neural Network — feedforward network for tabular financial data. |
+| `models/online_learning.py` | 274 | 2 | 0 | Online learning module for incremental model updates between full retrains. |
+| `models/predictor.py` | 485 | 1 | 1 | Model Predictor — loads trained ensemble and generates predictions. |
+| `models/retrain_trigger.py` | 345 | 1 | 0 | ML Retraining Trigger Logic |
+| `models/shift_detection.py` | 323 | 3 | 0 | Distribution Shift Detection — CUSUM and PSI methods. |
+| `models/trainer.py` | 1675 | 5 | 0 | Model Trainer — trains regime-conditional gradient boosting ensemble. |
+| `models/versioning.py` | 208 | 2 | 0 | Model Versioning — timestamped model directories with registry. |
+| `models/walk_forward.py` | 236 | 0 | 4 | Walk-Forward Model Selection — expanding-window hyperparameter search |
 
 ### `models/__init__.py`
-
-- LOC: 20
-- Module intent: Models subpackage — training, prediction, versioning, and retraining triggers.
-- Imports (6): `from .governance import ModelGovernance, ChampionRecord`, `from .cross_sectional import cross_sectional_rank`, `from .calibration import ConfidenceCalibrator`, `from .neural_net import TabularNet`, `from .walk_forward import walk_forward_select`, `from .feature_stability import FeatureStabilityTracker`
-- Top-level functions: none
+- Intent: Models subpackage — training, prediction, versioning, and retraining triggers.
+- LOC: 25
 - Classes: none
+- Top-level functions: none
 
 ### `models/calibration.py`
-
-- LOC: 327
-- Module intent: Confidence Calibration --- Platt scaling and isotonic regression.
-- Imports (3): `from __future__ import annotations`, `from typing import Optional`, `import numpy as np`
-- Top-level functions:
-  - `compute_ece(predicted_probs, actual_outcomes, n_bins)` (line 228): Compute Expected Calibration Error.
-  - `compute_reliability_curve(predicted_probs, actual_outcomes, n_bins)` (line 277): Compute reliability curve data for calibration diagnostics.
+- Intent: Confidence Calibration --- Platt scaling and isotonic regression.
+- LOC: 328
 - Classes:
-  - `_LinearRescaler` (line 41): Maps raw scores to [0, 1] via min-max linear rescaling.
-    - Methods (3): `__init__`, `fit`, `transform`
-  - `ConfidenceCalibrator` (line 69): Post-hoc confidence calibration via Platt scaling or isotonic regression.
-    - Methods (8): `__init__`, `fit`, `_fit_sklearn`, `transform`, `fit_transform`, `is_fitted`, `backend`, `__repr__`
+  - `_LinearRescaler` (methods: `fit`, `transform`)
+  - `ConfidenceCalibrator` (methods: `fit`, `transform`, `fit_transform`, `is_fitted`, `backend`)
+- Top-level functions: `compute_ece`, `compute_reliability_curve`
+
+### `models/conformal.py`
+- Intent: Conformal Prediction — distribution-free prediction intervals.
+- LOC: 296
+- Classes:
+  - `ConformalInterval` (methods: none)
+  - `ConformalCalibrationResult` (methods: none)
+  - `ConformalPredictor` (methods: `is_calibrated`, `calibrate`, `predict_interval`, `predict_intervals_batch`, `uncertainty_scalars`, `evaluate_coverage`, `to_dict`, `from_dict`)
+- Top-level functions: none
 
 ### `models/cross_sectional.py`
-
-- LOC: 136
-- Module intent: Cross-Sectional Ranking Model — rank stocks relative to peers at each date.
-- Imports (3): `from typing import Optional`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `cross_sectional_rank(predictions, date_col, prediction_col, asset_col, long_quantile, short_quantile)` (line 18): Rank stocks cross-sectionally by predicted return at each date.
+- Intent: Cross-Sectional Ranking Model — rank stocks relative to peers at each date.
+- LOC: 137
 - Classes: none
+- Top-level functions: `cross_sectional_rank`
 
 ### `models/feature_stability.py`
-
-- LOC: 313
-- Module intent: Feature Stability Monitoring — tracks feature importance rankings across
-- Imports (7): `import json`, `import time`, `from dataclasses import dataclass, field, asdict`, `from pathlib import Path`, `from typing import Dict, List, Optional, Tuple`, `import numpy as np`, `from ..config import RESULTS_DIR`
-- Top-level functions: none
+- Intent: Feature Stability Monitoring — tracks feature importance rankings across
+- LOC: 314
 - Classes:
-  - `StabilityReport` (line 47): Summary returned by :meth:`FeatureStabilityTracker.check_stability`.
-    - Methods (1): `to_dict`
-  - `FeatureStabilityTracker` (line 69): Record and compare feature importance rankings over training cycles.
-    - Methods (6): `__init__`, `_load`, `_save`, `record_importance`, `_spearman_rank_correlation`, `check_stability`
+  - `StabilityReport` (methods: `to_dict`)
+  - `FeatureStabilityTracker` (methods: `record_importance`, `check_stability`)
+- Top-level functions: none
 
 ### `models/governance.py`
-
-- LOC: 155
-- Module intent: Champion/challenger governance for model versions.
-- Imports (7): `import json`, `from dataclasses import dataclass, asdict`, `from datetime import datetime, timezone`, `from pathlib import Path`, `from typing import Dict, Optional`, `from ..config import CHAMPION_REGISTRY`, `from ..config import GOVERNANCE_SCORE_WEIGHTS`
-- Top-level functions: none
+- Intent: Champion/challenger governance for model versions.
+- LOC: 156
 - Classes:
-  - `ChampionRecord` (line 15): Persisted champion model record for a prediction horizon.
-    - Methods (1): `to_dict`
-  - `ModelGovernance` (line 28): Maintains champion model per horizon and promotes challengers if better.
-    - Methods (6): `__init__`, `_load`, `_save`, `_score`, `get_champion_version`, `evaluate_and_update`
+  - `ChampionRecord` (methods: `to_dict`)
+  - `ModelGovernance` (methods: `get_champion_version`, `evaluate_and_update`)
+- Top-level functions: none
 
 ### `models/iv/__init__.py`
-
-- LOC: 31
-- Module intent: Implied Volatility Surface Models — Heston, SVI, Black-Scholes, and IV Surface.
-- Imports (1): `from .models import ArbitrageFreeSVIBuilder, BlackScholes, HestonModel, SVIModel, IVSurface, IVPoint, OptionType, Greeks, HestonParams, SVIParams`
-- Top-level functions: none
+- Intent: Implied Volatility Surface Models — Heston, SVI, Black-Scholes, and IV Surface.
+- LOC: 32
 - Classes: none
+- Top-level functions: none
 
 ### `models/iv/models.py`
-
-- LOC: 937
-- Module intent: Implied Volatility Surface Models.
-- Imports (5): `from dataclasses import dataclass, field`, `from enum import Enum`, `from typing import Dict, List, Optional, Tuple`, `import numpy as np`, `from scipy import optimize, integrate, interpolate, stats`
-- Top-level functions:
-  - `generate_synthetic_market_surface(S, r, q)` (line 655): Generate a realistic synthetic market IV surface for demonstration.
+- Intent: Implied Volatility Surface Models.
+- LOC: 938
 - Classes:
-  - `OptionType` (line 19): Supported option contract types for pricing and volatility surface models.
-  - `Greeks` (line 26): Option Greeks container.
-  - `HestonParams` (line 36): Heston model parameters.
-    - Methods (1): `validate`
-  - `SVIParams` (line 50): Raw SVI parameterization: w(k) = a + b*(rho*(k-m) + sqrt((k-m)^2 + sigma^2)).
-  - `BlackScholes` (line 59): Black-Scholes option pricing and analytics.
-    - Methods (4): `price`, `greeks`, `implied_vol`, `iv_surface`
-  - `HestonModel` (line 139): Heston (1993) stochastic volatility model.
-    - Methods (6): `__init__`, `characteristic_function`, `price`, `implied_vol`, `iv_surface`, `calibrate`
-  - `SVIModel` (line 295): SVI (Stochastic Volatility Inspired) implied variance parameterization.
-    - Methods (7): `__init__`, `total_variance`, `implied_vol`, `iv_surface`, `smile`, `calibrate`, `check_no_butterfly_arbitrage`
-  - `ArbitrageFreeSVIBuilder` (line 397): Arbitrage-aware SVI surface builder.
-    - Methods (9): `__init__`, `_svi_total_variance`, `_initial_guess`, `_vega_spread_weights`, `_slice_objective`, `fit_slice`, `enforce_calendar_monotonicity`, `interpolate_total_variance`, `build_surface`
-  - `IVPoint` (line 688): Single implied-volatility observation.
-  - `IVSurface` (line 698): Store and interpolate an implied-volatility surface.
-    - Methods (11): `__init__`, `add_point`, `add_slice`, `add_surface`, `n_points`, `_log_moneyness`, `_build_interpolator`, `get_iv`, `get_smile`, `decompose`, `decompose_surface`
+  - `OptionType` (methods: none)
+  - `Greeks` (methods: none)
+  - `HestonParams` (methods: `validate`)
+  - `SVIParams` (methods: none)
+  - `BlackScholes` (methods: `price`, `greeks`, `implied_vol`, `iv_surface`)
+  - `HestonModel` (methods: `characteristic_function`, `price`, `implied_vol`, `iv_surface`, `calibrate`)
+  - `SVIModel` (methods: `total_variance`, `implied_vol`, `iv_surface`, `smile`, `calibrate`, `check_no_butterfly_arbitrage`)
+  - `ArbitrageFreeSVIBuilder` (methods: `fit_slice`, `enforce_calendar_monotonicity`, `interpolate_total_variance`, `build_surface`)
+  - `IVPoint` (methods: none)
+  - `IVSurface` (methods: `add_point`, `add_slice`, `add_surface`, `n_points`, `get_iv`, `get_smile`, `decompose`, `decompose_surface`)
+- Top-level functions: `generate_synthetic_market_surface`
 
 ### `models/neural_net.py`
-
-- LOC: 198
-- Module intent: Tabular Neural Network — feedforward network for tabular financial data.
-- Imports (2): `from typing import List, Optional`, `import numpy as np`
-- Top-level functions: none
+- Intent: Tabular Neural Network — feedforward network for tabular financial data.
+- LOC: 199
 - Classes:
-  - `TabularNet` (line 29): Feedforward network for tabular financial data.
-    - Methods (5): `__init__`, `_build_model`, `fit`, `predict`, `feature_importances_`
+  - `TabularNet` (methods: `fit`, `predict`, `feature_importances_`)
+- Top-level functions: none
 
 ### `models/online_learning.py`
-
-- LOC: 273
-- Module intent: Online learning module for incremental model updates between full retrains.
-- Imports (8): `from __future__ import annotations`, `import json`, `import logging`, `from dataclasses import dataclass, field`, `from datetime import datetime, timezone`, `from pathlib import Path`, `from typing import Any, Dict, List, Optional`, `import numpy as np`
-- Top-level functions: none
+- Intent: Online learning module for incremental model updates between full retrains.
+- LOC: 274
 - Classes:
-  - `OnlineUpdate` (line 23): Record of a single online update step.
-  - `OnlineLearner` (line 34): Incremental model updater between full retrains.
-    - Methods (8): `__init__`, `add_sample`, `update`, `adjust_prediction`, `should_retrain`, `get_status`, `_save_state`, `load_state`
+  - `OnlineUpdate` (methods: none)
+  - `OnlineLearner` (methods: `add_sample`, `update`, `adjust_prediction`, `should_retrain`, `get_status`, `load_state`)
+- Top-level functions: none
 
 ### `models/predictor.py`
-
-- LOC: 404
-- Module intent: Model Predictor — loads trained ensemble and generates predictions.
-- Imports (9): `import json`, `from pathlib import Path`, `from typing import Optional, Dict`, `import joblib`, `import numpy as np`, `import pandas as pd`, `from ..config import MODEL_DIR, REGIME_NAMES`, `from .governance import ModelGovernance`, `from .versioning import ModelRegistry`
-- Top-level functions:
-  - `_prepare_features(raw, expected, medians)` (line 24): Align, impute, and return features matching expected column order.
+- Intent: Model Predictor — loads trained ensemble and generates predictions.
+- LOC: 485
 - Classes:
-  - `EnsemblePredictor` (line 45): Loads a trained regime-conditional ensemble and generates predictions.
-    - Methods (6): `__init__`, `_resolve_model_dir`, `_load`, `predict`, `_calibrate_confidence`, `predict_single`
+  - `EnsemblePredictor` (methods: `predict`, `blend_multi_horizon`, `predict_single`)
+- Top-level functions: `_prepare_features`
 
 ### `models/retrain_trigger.py`
-
-- LOC: 296
-- Module intent: ML Retraining Trigger Logic
-- Imports (6): `import json`, `import os`, `from datetime import datetime, timedelta`, `from typing import Tuple, List, Dict, Optional`, `import numpy as np`, `from ..config import MODEL_DIR`
-- Top-level functions: none
+- Intent: ML Retraining Trigger Logic
+- LOC: 345
 - Classes:
-  - `RetrainTrigger` (line 37): Determines when ML model should be retrained.
-    - Methods (7): `__init__`, `_load_metadata`, `_save_metadata`, `add_trade_result`, `check`, `record_retraining`, `status`
+  - `RetrainTrigger` (methods: `add_trade_result`, `check_shift`, `check`, `record_retraining`, `status`)
+- Top-level functions: none
+
+### `models/shift_detection.py`
+- Intent: Distribution Shift Detection — CUSUM and PSI methods.
+- LOC: 323
+- Classes:
+  - `CUSUMResult` (methods: none)
+  - `PSIResult` (methods: none)
+  - `DistributionShiftDetector` (methods: `set_reference`, `check_cusum`, `check_psi`, `check_all`)
+- Top-level functions: none
 
 ### `models/trainer.py`
-
-- LOC: 1598
-- Module intent: Model Trainer — trains regime-conditional gradient boosting ensemble.
-- Imports (11): `import json`, `import time`, `from dataclasses import dataclass, field`, `from pathlib import Path`, `from typing import Dict, List, Optional, Tuple`, `import joblib`, `import numpy as np`, `import pandas as pd`, `from ..config import MODEL_PARAMS, MAX_FEATURES_SELECTED, MAX_IS_OOS_GAP, CV_FOLDS, HOLDOUT_FRACTION, MODEL_DIR, MIN_REGIME_SAMPLES, REGIME_NAMES, RECENCY_DECAY, REGIME_SOFT_ASSIGNMENT_THRESHOLD, ENSEMBLE_DIVERSIFY, WF_MAX_TRAIN_DATES`, `from .feature_stability import FeatureStabilityTracker`, `from .versioning import ModelVersion, ModelRegistry`
-- Top-level functions: none
+- Intent: Model Trainer — trains regime-conditional gradient boosting ensemble.
+- LOC: 1675
 - Classes:
-  - `IdentityScaler` (line 87): No-op scaler that passes data through unchanged.
-    - Methods (4): `fit`, `transform`, `fit_transform`, `inverse_transform`
-  - `DiverseEnsemble` (line 112): Lightweight ensemble wrapper that combines predictions from multiple
-    - Methods (3): `__init__`, `_aggregate_feature_importances`, `predict`
-  - `TrainResult` (line 171): Result of training a single model.
-  - `EnsembleResult` (line 190): Result of training the full regime-conditional ensemble.
-  - `ModelTrainer` (line 200): Trains a regime-conditional gradient boosting ensemble for
-    - Methods (19): `__init__`, `_spearmanr`, `_require_sklearn`, `_extract_dates`, `_sort_panel_by_time`, `_temporal_holdout_masks`, `_date_purged_folds`, `_prune_correlated_features`, `_select_features`, `_compute_stable_features`, `train_ensemble`, `_train_single`, `_train_diverse_ensemble`, `_optimize_ensemble_weights`, `_clone_model`, `_make_model`, `_save`, `_fit_calibrator`, `_print_summary`
+  - `IdentityScaler` (methods: `fit`, `transform`, `fit_transform`, `inverse_transform`)
+  - `DiverseEnsemble` (methods: `predict`)
+  - `TrainResult` (methods: none)
+  - `EnsembleResult` (methods: none)
+  - `ModelTrainer` (methods: `train_ensemble`, `compute_shared_features`)
+- Top-level functions: none
 
 ### `models/versioning.py`
-
-- LOC: 207
-- Module intent: Model Versioning — timestamped model directories with registry.
-- Imports (7): `import json`, `import shutil`, `from dataclasses import dataclass, field, asdict`, `from datetime import datetime`, `from pathlib import Path`, `from typing import Dict, List, Optional`, `from ..config import MODEL_DIR, MAX_MODEL_VERSIONS`
-- Top-level functions: none
+- Intent: Model Versioning — timestamped model directories with registry.
+- LOC: 208
 - Classes:
-  - `ModelVersion` (line 26): Metadata for a single model version.
-    - Methods (2): `to_dict`, `from_dict`
-  - `ModelRegistry` (line 60): Manages versioned model storage and retrieval.
-    - Methods (14): `__init__`, `_load_registry`, `_save_registry`, `latest_version_id`, `get_latest`, `get_version`, `get_version_dir`, `get_latest_dir`, `list_versions`, `create_version_dir`, `register_version`, `rollback`, `prune_old`, `has_versions`
+  - `ModelVersion` (methods: `to_dict`, `from_dict`)
+  - `ModelRegistry` (methods: `latest_version_id`, `get_latest`, `get_version`, `get_version_dir`, `get_latest_dir`, `list_versions`, `create_version_dir`, `register_version`, `rollback`, `prune_old`, `has_versions`)
+- Top-level functions: none
 
 ### `models/walk_forward.py`
-
-- LOC: 235
-- Module intent: Walk-Forward Model Selection — expanding-window hyperparameter search
-- Imports (4): `from itertools import product`, `from typing import Any, Dict, List, Optional`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `_spearmanr(x, y)` (line 24): Spearman rank correlation (scipy optional).
-  - `_expanding_walk_forward_folds(dates, n_folds, horizon)` (line 45): Generate expanding-window walk-forward folds using unique dates.
-  - `_extract_dates(index)` (line 84): Return row-aligned timestamps from an index (supports panel MultiIndex).
-  - `walk_forward_select(features, targets, regimes, param_grid, n_folds, horizon)` (line 93): Select the best model configuration via walk-forward cross-validation.
+- Intent: Walk-Forward Model Selection — expanding-window hyperparameter search
+- LOC: 236
 - Classes: none
+- Top-level functions: `_spearmanr`, `_expanding_walk_forward_folds`, `_extract_dates`, `walk_forward_select`
 
-## Package `regime`
+## `regime`
+
+| Module | Lines | Classes | Top-level Functions | Intent |
+|---|---|---|---|---|
+| `regime/__init__.py` | 41 | 0 | 0 | Regime modeling components. |
+| `regime/bocpd.py` | 452 | 3 | 0 | Bayesian Online Change-Point Detection (BOCPD) with Gaussian likelihood. |
+| `regime/confidence_calibrator.py` | 252 | 1 | 0 | Confidence Calibrator for regime ensemble voting (SPEC_10 T2). |
+| `regime/consensus.py` | 274 | 1 | 0 | Cross-Sectional Regime Consensus (SPEC_10 T6). |
+| `regime/correlation.py` | 214 | 1 | 0 | Correlation Regime Detection (NEW 11). |
+| `regime/detector.py` | 941 | 2 | 2 | Regime detector with multiple engines and structural state layer. |
+| `regime/hmm.py` | 662 | 2 | 4 | Gaussian HMM regime model with sticky transitions and duration smoothing. |
+| `regime/jump_model.py` | 10 | 0 | 0 | Backward-compatible re-export of legacy Statistical Jump Model. |
+| `regime/jump_model_legacy.py` | 243 | 2 | 0 | Statistical Jump Model for regime detection. |
+| `regime/jump_model_pypi.py` | 421 | 1 | 0 | PyPI jumpmodels package wrapper for regime detection. |
+| `regime/online_update.py` | 246 | 1 | 0 | Online Regime Updating via Forward Algorithm (SPEC_10 T5). |
+| `regime/shock_vector.py` | 306 | 2 | 0 | Unified Shock/Structure Vector — version-locked market state representation. |
+| `regime/uncertainty_gate.py` | 181 | 1 | 0 | Regime Uncertainty Gate — entropy-based position sizing modifier (SPEC_10 T3). |
 
 ### `regime/__init__.py`
-
-- LOC: 17
-- Module intent: Regime modeling components.
-- Imports (4): `from .correlation import CorrelationRegimeDetector`, `from .detector import RegimeDetector, RegimeOutput, detect_regimes_batch`, `from .hmm import GaussianHMM, HMMFitResult`, `from .jump_model import StatisticalJumpModel, JumpModelResult`
-- Top-level functions: none
+- Intent: Regime modeling components.
+- LOC: 41
 - Classes: none
+- Top-level functions: none
+
+### `regime/bocpd.py`
+- Intent: Bayesian Online Change-Point Detection (BOCPD) with Gaussian likelihood.
+- LOC: 452
+- Classes:
+  - `BOCPDResult` (methods: none)
+  - `BOCPDBatchResult` (methods: none)
+  - `BOCPDDetector` (methods: `reset`, `update`, `batch_update`)
+- Top-level functions: none
+
+### `regime/confidence_calibrator.py`
+- Intent: Confidence Calibrator for regime ensemble voting (SPEC_10 T2).
+- LOC: 252
+- Classes:
+  - `ConfidenceCalibrator` (methods: `fitted`, `component_weights`, `fit`, `calibrate`, `get_component_weight`, `expected_calibration_error`)
+- Top-level functions: none
+
+### `regime/consensus.py`
+- Intent: Cross-Sectional Regime Consensus (SPEC_10 T6).
+- LOC: 274
+- Classes:
+  - `RegimeConsensus` (methods: `compute_consensus`, `detect_divergence`, `early_warning`, `compute_consensus_series`, `reset_history`)
+- Top-level functions: none
 
 ### `regime/correlation.py`
-
-- LOC: 213
-- Module intent: Correlation Regime Detection (NEW 11).
-- Imports (4): `from __future__ import annotations`, `from typing import Dict, Optional`, `import numpy as np`, `import pandas as pd`
-- Top-level functions: none
+- Intent: Correlation Regime Detection (NEW 11).
+- LOC: 214
 - Classes:
-  - `CorrelationRegimeDetector` (line 29): Detect regime changes in pairwise correlation structure.
-    - Methods (4): `__init__`, `compute_rolling_correlation`, `detect_correlation_spike`, `get_correlation_features`
+  - `CorrelationRegimeDetector` (methods: `compute_rolling_correlation`, `detect_correlation_spike`, `get_correlation_features`)
+- Top-level functions: none
 
 ### `regime/detector.py`
-
-- LOC: 586
-- Module intent: Regime detector with two engines:
-- Imports (8): `from dataclasses import dataclass`, `from typing import Dict, Optional, Tuple`, `import logging`, `import numpy as np`, `import pandas as pd`, `from ..config import REGIME_MODEL_TYPE, REGIME_HMM_STATES, REGIME_HMM_MAX_ITER, REGIME_HMM_STICKINESS, REGIME_MIN_DURATION, REGIME_HMM_AUTO_SELECT_STATES, REGIME_HMM_MIN_STATES, REGIME_HMM_MAX_STATES, REGIME_JUMP_MODEL_ENABLED, REGIME_JUMP_PENALTY, REGIME_EXPECTED_CHANGES_PER_YEAR, REGIME_ENSEMBLE_ENABLED, REGIME_ENSEMBLE_CONSENSUS_THRESHOLD`, `from .hmm import GaussianHMM, build_hmm_observation_matrix, map_raw_states_to_regimes, select_hmm_states_bic`, `from .jump_model import StatisticalJumpModel`
-- Top-level functions:
-  - `detect_regimes_batch(features_by_id, detector, verbose)` (line 546): Shared regime detection across multiple PERMNOs.
+- Intent: Regime detector with multiple engines and structural state layer.
+- LOC: 941
 - Classes:
-  - `RegimeOutput` (line 41): Unified regime detection output consumed by modeling, backtesting, and UI layers.
-  - `RegimeDetector` (line 51): Classifies market regime at each bar using either rules or HMM.
-    - Methods (13): `__init__`, `detect`, `_apply_min_duration`, `_rule_detect`, `_hmm_detect`, `_jump_detect`, `detect_ensemble`, `detect_with_confidence`, `detect_full`, `regime_features`, `get_regime_uncertainty`, `map_raw_states_to_regimes_stable`, `_get_col`
+  - `RegimeOutput` (methods: none)
+  - `RegimeDetector` (methods: `detect`, `detect_ensemble`, `calibrate_confidence_weights`, `detect_with_confidence`, `detect_full`, `regime_features`, `get_regime_uncertainty`, `map_raw_states_to_regimes_stable`, `detect_with_shock_context`, `detect_batch_with_shock_context`)
+- Top-level functions: `validate_hmm_observation_features`, `detect_regimes_batch`
 
 ### `regime/hmm.py`
-
-- LOC: 566
-- Module intent: Gaussian HMM regime model with sticky transitions and duration smoothing.
-- Imports (4): `from dataclasses import dataclass`, `from typing import Dict, Optional, Tuple`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `_logsumexp(a, axis)` (line 13): Internal helper for logsumexp.
-  - `select_hmm_states_bic(X, min_states, max_states)` (line 359): Select the optimal number of HMM states using the Bayesian Information Criterion.
-  - `build_hmm_observation_matrix(features)` (line 438): Build an expanded observation matrix for regime inference.
-  - `map_raw_states_to_regimes(raw_states, features)` (line 517): Map unlabeled HMM states -> semantic regimes used by the system.
+- Intent: Gaussian HMM regime model with sticky transitions and duration smoothing.
+- LOC: 662
 - Classes:
-  - `HMMFitResult` (line 24): Fitted HMM outputs including decoded states, posteriors, transitions, and log-likelihood.
-  - `GaussianHMM` (line 32): Gaussian HMM using EM (Baum-Welch).
-    - Methods (9): `__init__`, `_ensure_positive_definite`, `_init_params`, `_log_emission`, `_forward_backward`, `viterbi`, `_smooth_duration`, `fit`, `predict_proba`
+  - `HMMFitResult` (methods: none)
+  - `GaussianHMM` (methods: `viterbi`, `fit`, `predict_proba`)
+- Top-level functions: `_logsumexp`, `select_hmm_states_bic`, `build_hmm_observation_matrix`, `map_raw_states_to_regimes`
 
 ### `regime/jump_model.py`
-
-- LOC: 242
-- Module intent: Statistical Jump Model for regime detection.
-- Imports (5): `from __future__ import annotations`, `import logging`, `from dataclasses import dataclass`, `from typing import Optional`, `import numpy as np`
+- Intent: Backward-compatible re-export of legacy Statistical Jump Model.
+- LOC: 10
+- Classes: none
 - Top-level functions: none
-- Classes:
-  - `JumpModelResult` (line 25): Result from fitting a Statistical Jump Model.
-  - `StatisticalJumpModel` (line 36): Statistical Jump Model for regime detection.
-    - Methods (7): `__init__`, `fit`, `_kmeans_init`, `_dp_segment`, `_compute_probs`, `compute_jump_penalty_from_data`, `predict`
 
-## Package `risk`
+### `regime/jump_model_legacy.py`
+- Intent: Statistical Jump Model for regime detection.
+- LOC: 243
+- Classes:
+  - `JumpModelResult` (methods: none)
+  - `StatisticalJumpModel` (methods: `fit`, `compute_jump_penalty_from_data`, `predict`)
+- Top-level functions: none
+
+### `regime/jump_model_pypi.py`
+- Intent: PyPI jumpmodels package wrapper for regime detection.
+- LOC: 421
+- Classes:
+  - `PyPIJumpModel` (methods: `fit`, `predict_online`, `predict_proba_online`)
+- Top-level functions: none
+
+### `regime/online_update.py`
+- Intent: Online Regime Updating via Forward Algorithm (SPEC_10 T5).
+- LOC: 246
+- Classes:
+  - `OnlineRegimeUpdater` (methods: `forward_step`, `update_regime_for_security`, `update_batch`, `should_refit`, `reset_security_cache`, `cached_securities`, `get_state_probabilities`)
+- Top-level functions: none
+
+### `regime/shock_vector.py`
+- Intent: Unified Shock/Structure Vector — version-locked market state representation.
+- LOC: 306
+- Classes:
+  - `ShockVector` (methods: `to_dict`, `from_dict`, `is_shock_event`, `regime_name`)
+  - `ShockVectorValidator` (methods: `validate`, `batch_validate`)
+- Top-level functions: none
+
+### `regime/uncertainty_gate.py`
+- Intent: Regime Uncertainty Gate — entropy-based position sizing modifier (SPEC_10 T3).
+- LOC: 181
+- Classes:
+  - `UncertaintyGate` (methods: `compute_size_multiplier`, `apply_uncertainty_gate`, `should_assume_stress`, `is_uncertain`, `gate_series`)
+- Top-level functions: none
+
+## `risk`
+
+| Module | Lines | Classes | Top-level Functions | Intent |
+|---|---|---|---|---|
+| `risk/__init__.py` | 73 | 0 | 0 | Risk Management Module — Renaissance-grade portfolio risk controls. |
+| `risk/attribution.py` | 369 | 0 | 5 | Performance Attribution --- decompose portfolio returns into market, factor, and alpha. |
+| `risk/constraint_replay.py` | 198 | 0 | 2 | Constraint Tightening Replay — stress-test portfolios under regime-conditioned constraints. |
+| `risk/cost_budget.py` | 222 | 1 | 2 | Transaction Cost Budget Optimization — minimize implementation cost for rebalances. |
+| `risk/covariance.py` | 356 | 2 | 2 | Covariance estimation utilities for portfolio risk controls. |
+| `risk/drawdown.py` | 261 | 3 | 0 | Drawdown Controller — circuit breakers and recovery protocols. |
+| `risk/factor_exposures.py` | 269 | 1 | 0 | Factor Exposure Manager — compute and enforce regime-conditioned factor bounds. |
+| `risk/factor_monitor.py` | 301 | 3 | 0 | Factor Exposure Monitoring — track portfolio factor tilts and alert on violations. |
+| `risk/factor_portfolio.py` | 221 | 0 | 2 | Factor-Based Portfolio Construction — factor decomposition and exposure analysis. |
+| `risk/metrics.py` | 321 | 2 | 0 | Risk Metrics — VaR, CVaR, tail risk, MAE/MFE, and advanced risk analytics. |
+| `risk/portfolio_optimizer.py` | 277 | 0 | 1 | Mean-Variance Portfolio Optimization — turnover-penalised portfolio construction. |
+| `risk/portfolio_risk.py` | 724 | 3 | 0 | Portfolio Risk Manager — enforces sector, correlation, and exposure limits. |
+| `risk/position_sizer.py` | 1115 | 2 | 0 | Position Sizing — Kelly criterion, volatility-scaled, and ATR-based methods. |
+| `risk/stop_loss.py` | 294 | 3 | 0 | Stop Loss Manager — regime-aware ATR stops, trailing, time, and regime-change stops. |
+| `risk/stress_test.py` | 548 | 0 | 7 | Stress Testing Module --- scenario analysis, correlation stress, and historical drawdown replay. |
+| `risk/universe_config.py` | 296 | 2 | 0 | Universe Configuration — centralized sector, liquidity, and borrowability metadata. |
 
 ### `risk/__init__.py`
-
-- LOC: 42
-- Module intent: Risk Management Module — Renaissance-grade portfolio risk controls.
-- Imports (10): `from .position_sizer import PositionSizer`, `from .portfolio_risk import PortfolioRiskManager`, `from .drawdown import DrawdownController`, `from .metrics import RiskMetrics`, `from .stop_loss import StopLossManager`, `from .covariance import CovarianceEstimator, compute_regime_covariance, get_regime_covariance`, `from .factor_portfolio import compute_factor_exposures, compute_residual_returns`, `from .portfolio_optimizer import optimize_portfolio`, `from .attribution import decompose_returns, compute_attribution_report`, `from .stress_test import run_stress_scenarios, run_historical_drawdown_test`
-- Top-level functions: none
+- Intent: Risk Management Module — Renaissance-grade portfolio risk controls.
+- LOC: 73
 - Classes: none
+- Top-level functions: none
 
 ### `risk/attribution.py`
-
-- LOC: 266
-- Module intent: Performance Attribution --- decompose portfolio returns into market, factor, and alpha.
-- Imports (4): `from __future__ import annotations`, `from typing import Dict, Optional`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `_estimate_beta(portfolio_returns, benchmark_returns)` (line 26): OLS beta of portfolio vs benchmark.
-  - `_estimate_factor_loadings(portfolio_returns, benchmark_returns, factor_returns)` (line 49): Multivariate OLS regression of excess returns on factor returns.
-  - `decompose_returns(portfolio_returns, benchmark_returns, factor_returns)` (line 87): Decompose portfolio returns into market, factor, and alpha components.
-  - `compute_attribution_report(portfolio_returns, benchmark_returns, factor_returns, annual_trading_days)` (line 178): Produce an extended attribution summary with risk-adjusted metrics.
+- Intent: Performance Attribution --- decompose portfolio returns into market, factor, and alpha.
+- LOC: 369
 - Classes: none
+- Top-level functions: `_estimate_beta`, `_estimate_factor_loadings`, `decompose_returns`, `compute_rolling_attribution`, `compute_attribution_report`
+
+### `risk/constraint_replay.py`
+- Intent: Constraint Tightening Replay — stress-test portfolios under regime-conditioned constraints.
+- LOC: 198
+- Classes: none
+- Top-level functions: `replay_with_stress_constraints`, `compute_robustness_score`
+
+### `risk/cost_budget.py`
+- Intent: Transaction Cost Budget Optimization — minimize implementation cost for rebalances.
+- LOC: 222
+- Classes:
+  - `RebalanceResult` (methods: none)
+- Top-level functions: `estimate_trade_cost_bps`, `optimize_rebalance_cost`
 
 ### `risk/covariance.py`
-
-- LOC: 249
-- Module intent: Covariance estimation utilities for portfolio risk controls.
-- Imports (4): `from dataclasses import dataclass`, `from typing import Dict`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `compute_regime_covariance(returns, regimes, min_obs, shrinkage)` (line 124): Compute separate covariance matrices for each market regime.
-  - `get_regime_covariance(regime_covs, current_regime)` (line 211): Return the covariance matrix for *current_regime*.
+- Intent: Covariance estimation utilities for portfolio risk controls.
+- LOC: 356
 - Classes:
-  - `CovarianceEstimate` (line 12): Covariance estimation output bundle with metadata about the fit method and sample count.
-  - `CovarianceEstimator` (line 19): Estimate a robust covariance matrix for asset returns.
-    - Methods (4): `__init__`, `estimate`, `portfolio_volatility`, `_estimate_values`
+  - `CovarianceEstimate` (methods: none)
+  - `CovarianceEstimator` (methods: `estimate`, `portfolio_volatility`)
+- Top-level functions: `compute_regime_covariance`, `get_regime_covariance`
 
 ### `risk/drawdown.py`
-
-- LOC: 240
-- Module intent: Drawdown Controller — circuit breakers and recovery protocols.
-- Imports (6): `from dataclasses import dataclass, field`, `from enum import Enum`, `from typing import Dict, List, Optional`, `import numpy as np`, `import pandas as pd`, `from ..config import DRAWDOWN_WARNING_THRESHOLD, DRAWDOWN_CAUTION_THRESHOLD, DRAWDOWN_CRITICAL_THRESHOLD, DRAWDOWN_DAILY_LOSS_LIMIT, DRAWDOWN_WEEKLY_LOSS_LIMIT, DRAWDOWN_RECOVERY_DAYS, DRAWDOWN_SIZE_MULT_WARNING, DRAWDOWN_SIZE_MULT_CAUTION`
-- Top-level functions: none
+- Intent: Drawdown Controller — circuit breakers and recovery protocols.
+- LOC: 261
 - Classes:
-  - `DrawdownState` (line 24): Discrete drawdown-control states used by the drawdown controller.
-  - `DrawdownStatus` (line 34): Current drawdown state and action directives.
-  - `DrawdownController` (line 49): Multi-tier drawdown protection with circuit breakers.
-    - Methods (5): `__init__`, `update`, `_compute_actions`, `reset`, `get_summary`
+  - `DrawdownState` (methods: none)
+  - `DrawdownStatus` (methods: none)
+  - `DrawdownController` (methods: `update`, `reset`, `get_summary`)
+- Top-level functions: none
+
+### `risk/factor_exposures.py`
+- Intent: Factor Exposure Manager — compute and enforce regime-conditioned factor bounds.
+- LOC: 269
+- Classes:
+  - `FactorExposureManager` (methods: `compute_exposures`, `is_stress_regime`, `check_factor_bounds`)
+- Top-level functions: none
+
+### `risk/factor_monitor.py`
+- Intent: Factor Exposure Monitoring — track portfolio factor tilts and alert on violations.
+- LOC: 301
+- Classes:
+  - `FactorExposure` (methods: none)
+  - `FactorExposureReport` (methods: none)
+  - `FactorExposureMonitor` (methods: `compute_exposures`, `check_limits`, `compute_report`)
+- Top-level functions: none
 
 ### `risk/factor_portfolio.py`
-
-- LOC: 220
-- Module intent: Factor-Based Portfolio Construction — factor decomposition and exposure analysis.
-- Imports (3): `from typing import Optional`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `compute_factor_exposures(returns, factor_returns)` (line 18): Estimate factor betas for each asset via OLS regression.
-  - `compute_residual_returns(returns, factor_returns, factor_betas)` (line 135): Strip out systematic factor exposure, returning idiosyncratic returns.
+- Intent: Factor-Based Portfolio Construction — factor decomposition and exposure analysis.
+- LOC: 221
 - Classes: none
+- Top-level functions: `compute_factor_exposures`, `compute_residual_returns`
 
 ### `risk/metrics.py`
-
-- LOC: 253
-- Module intent: Risk Metrics — VaR, CVaR, tail risk, MAE/MFE, and advanced risk analytics.
-- Imports (4): `from dataclasses import dataclass, field`, `from typing import Dict, List, Optional`, `import numpy as np`, `import pandas as pd`
-- Top-level functions: none
+- Intent: Risk Metrics — VaR, CVaR, tail risk, MAE/MFE, and advanced risk analytics.
+- LOC: 321
 - Classes:
-  - `RiskReport` (line 15): Comprehensive risk metrics report.
-  - `RiskMetrics` (line 49): Computes comprehensive risk metrics from trade returns and equity curves.
-    - Methods (7): `__init__`, `compute_full_report`, `_drawdown_analytics`, `_drawdown_analytics_array`, `_compute_mae_mfe`, `_empty_report`, `print_report`
+  - `RiskReport` (methods: none)
+  - `RiskMetrics` (methods: `compute_full_report`, `print_report`)
+- Top-level functions: none
 
 ### `risk/portfolio_optimizer.py`
-
-- LOC: 276
-- Module intent: Mean-Variance Portfolio Optimization — turnover-penalised portfolio construction.
-- Imports (5): `import logging`, `from typing import Dict, Optional`, `import numpy as np`, `import pandas as pd`, `from scipy.optimize import minimize`
-- Top-level functions:
-  - `optimize_portfolio(expected_returns, covariance, current_weights, max_position, max_portfolio_vol, turnover_penalty, risk_aversion, sector_map, max_sector_exposure)` (line 27): Find optimal portfolio weights via mean-variance optimization.
+- Intent: Mean-Variance Portfolio Optimization — turnover-penalised portfolio construction.
+- LOC: 277
 - Classes: none
+- Top-level functions: `optimize_portfolio`
 
 ### `risk/portfolio_risk.py`
-
-- LOC: 329
-- Module intent: Portfolio Risk Manager — enforces sector, correlation, and exposure limits.
-- Imports (6): `from dataclasses import dataclass, field`, `from typing import Dict, List, Optional`, `import numpy as np`, `import pandas as pd`, `from ..config import MAX_PORTFOLIO_VOL`, `from .covariance import CovarianceEstimator`
-- Top-level functions: none
+- Intent: Portfolio Risk Manager — enforces sector, correlation, and exposure limits.
+- LOC: 724
 - Classes:
-  - `RiskCheck` (line 51): Result of a portfolio risk check.
-  - `PortfolioRiskManager` (line 58): Enforces portfolio-level risk constraints.
-    - Methods (8): `__init__`, `_infer_ticker_from_price_df`, `_resolve_sector`, `check_new_position`, `_check_correlations`, `_estimate_portfolio_beta`, `_estimate_portfolio_vol`, `portfolio_summary`
+  - `RiskCheck` (methods: none)
+  - `ConstraintMultiplier` (methods: `is_stress_regime`, `get_multipliers`, `get_multipliers_smoothed`, `reset`)
+  - `PortfolioRiskManager` (methods: `check_new_position`, `compute_constraint_utilization`, `invalidate_regime_cov_cache`, `portfolio_summary`)
+- Top-level functions: none
 
 ### `risk/position_sizer.py`
-
-- LOC: 564
-- Module intent: Position Sizing — Kelly criterion, volatility-scaled, and ATR-based methods.
-- Imports (5): `import math`, `from dataclasses import dataclass, field`, `from typing import Dict, List, Optional`, `import numpy as np`, `import pandas as pd`
-- Top-level functions: none
+- Intent: Position Sizing — Kelly criterion, volatility-scaled, and ATR-based methods.
+- LOC: 1115
 - Classes:
-  - `PositionSize` (line 22): Result of position sizing calculation.
-  - `PositionSizer` (line 35): Multi-method position sizer with conservative blending.
-    - Methods (11): `__init__`, `size_position`, `_kelly`, `_vol_scaled`, `_atr_based`, `_apply_drawdown_governor`, `update_regime_stats`, `update_kelly_bayesian`, `get_bayesian_kelly`, `size_portfolio_aware`, `size_portfolio`
+  - `PositionSize` (methods: none)
+  - `PositionSizer` (methods: `size_position`, `size_position_paper_trader`, `record_turnover`, `reset_turnover_tracking`, `update_regime_stats`, `update_kelly_bayesian`, `get_bayesian_kelly`, `size_portfolio_aware`, `size_portfolio`, `size_with_backoff`)
+- Top-level functions: none
 
 ### `risk/stop_loss.py`
-
-- LOC: 255
-- Module intent: Stop Loss Manager — regime-aware ATR stops, trailing, time, and regime-change stops.
-- Imports (7): `from dataclasses import dataclass`, `from enum import Enum`, `from typing import Optional`, `import numpy as np`, `import pandas as pd`, `from ..config import REGIME_STOP_MULTIPLIER`, `from ..config import HARD_STOP_PCT, ATR_STOP_MULTIPLIER, TRAILING_ATR_MULTIPLIER, TRAILING_ACTIVATION_PCT, MAX_HOLDING_DAYS`
-- Top-level functions: none
+- Intent: Stop Loss Manager — regime-aware ATR stops, trailing, time, and regime-change stops.
+- LOC: 294
 - Classes:
-  - `StopReason` (line 28): Enumerated reasons a stop-loss evaluation can trigger an exit.
-  - `StopResult` (line 40): Result of stop-loss evaluation.
-  - `StopLossManager` (line 51): Multi-strategy stop-loss manager.
-    - Methods (4): `__init__`, `evaluate`, `compute_initial_stop`, `compute_risk_per_share`
+  - `StopReason` (methods: none)
+  - `StopResult` (methods: none)
+  - `StopLossManager` (methods: `evaluate`, `compute_initial_stop`, `compute_risk_per_share`)
+- Top-level functions: none
 
 ### `risk/stress_test.py`
-
-- LOC: 363
-- Module intent: Stress Testing Module --- scenario analysis and historical drawdown replay.
-- Imports (4): `from __future__ import annotations`, `from typing import Dict, List, Optional, Tuple`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `_estimate_portfolio_beta(portfolio_weights, returns_history, min_obs)` (line 66): Estimate weighted-average beta of the portfolio vs equal-weight market proxy.
-  - `_compute_portfolio_vol(portfolio_weights, returns_history, annual_trading_days)` (line 111): Annualized portfolio volatility from historical covariance.
-  - `run_stress_scenarios(portfolio_weights, returns_history, scenarios)` (line 136): Apply stress scenarios to a portfolio and estimate impact.
-  - `run_historical_drawdown_test(portfolio_weights, returns_history, n_worst, min_drawdown_pct)` (line 207): Replay the worst historical drawdown episodes on the portfolio.
-  - `_find_drawdown_episodes(returns, min_drawdown_pct)` (line 303): Identify non-overlapping drawdown episodes from a return series.
+- Intent: Stress Testing Module --- scenario analysis, correlation stress, and historical drawdown replay.
+- LOC: 548
 - Classes: none
+- Top-level functions: `_estimate_portfolio_beta`, `_compute_portfolio_vol`, `run_stress_scenarios`, `run_historical_drawdown_test`, `_find_drawdown_episodes`, `correlation_stress_test`, `factor_stress_test`
 
-## Package `scripts`
+### `risk/universe_config.py`
+- Intent: Universe Configuration — centralized sector, liquidity, and borrowability metadata.
+- LOC: 296
+- Classes:
+  - `ConfigError` (methods: none)
+  - `UniverseConfig` (methods: `get_sector`, `get_sector_constituents`, `get_all_sectors`, `get_liquidity_tier`, `is_hard_to_borrow`, `is_restricted`, `constraint_base`, `stress_multipliers`, `factor_limits`, `backoff_policy`, `get_stress_multiplier_set`, `get_factor_bounds` (+1 more))
+- Top-level functions: none
+
+## `scripts`
+
+| Module | Lines | Classes | Top-level Functions | Intent |
+|---|---|---|---|---|
+| `scripts/alpaca_intraday_download.py` | 799 | 0 | 7 | Hybrid Intraday Data Downloader: Alpaca (primary) + IBKR (validation/gap-fill). |
+| `scripts/compare_regime_models.py` | 324 | 0 | 3 | A/B comparison: Jump Model (PyPI) vs HMM baseline. |
+| `scripts/generate_types.py` | 147 | 0 | 3 | Generate TypeScript interfaces from Pydantic schemas. |
+| `scripts/ibkr_daily_gapfill.py` | 418 | 0 | 4 | IBKR Daily Gap-Fill Downloader for quant_engine cache. |
+| `scripts/ibkr_intraday_download.py` | 509 | 0 | 4 | IBKR Intraday Data Downloader for quant_engine cache. |
+
+### `scripts/alpaca_intraday_download.py`
+- Intent: Hybrid Intraday Data Downloader: Alpaca (primary) + IBKR (validation/gap-fill).
+- LOC: 799
+- Classes: none
+- Top-level functions: `survey_intraday`, `_build_alpaca_client`, `download_alpaca_chunked`, `validate_with_ibkr`, `save_intraday`, `quality_check`, `main`
+
+### `scripts/compare_regime_models.py`
+- Intent: A/B comparison: Jump Model (PyPI) vs HMM baseline.
+- LOC: 324
+- Classes: none
+- Top-level functions: `load_representative_features`, `compute_regime_metrics`, `main`
 
 ### `scripts/generate_types.py`
-
-- LOC: 146
-- Module intent: Generate TypeScript interfaces from Pydantic schemas.
-- Imports (7): `from __future__ import annotations`, `import importlib`, `import sys`, `from datetime import datetime`, `from pathlib import Path`, `from typing import Any, Dict, List, Optional, Set, get_args, get_origin`, `from pydantic import BaseModel`
-- Top-level functions:
-  - `python_type_to_ts(annotation, seen)` (line 31): Convert a Python type annotation to a TypeScript type string.
-  - `model_to_ts(model)` (line 100): Convert a Pydantic model class to a TypeScript interface.
-  - `main()` (line 113): No module docstring.
+- Intent: Generate TypeScript interfaces from Pydantic schemas.
+- LOC: 147
 - Classes: none
+- Top-level functions: `python_type_to_ts`, `model_to_ts`, `main`
 
 ### `scripts/ibkr_daily_gapfill.py`
-
-- LOC: 417
-- Module intent: IBKR Daily Gap-Fill Downloader for quant_engine cache.
-- Imports (13): `import argparse`, `import json`, `import os`, `import sys`, `import time`, `from datetime import datetime, timedelta, timezone`, `from pathlib import Path`, `from typing import Dict, List, Optional, Tuple`, `import pandas as pd`, `import numpy as np`, `import asyncio`, `from quant_engine.config import UNIVERSE_FULL` (+1 more)
-- Top-level functions:
-  - `survey_cache(cache_dir)` (line 64): Survey the cache to find stale and missing tickers.
-  - `download_daily_ibkr(ib, ticker, duration)` (line 120): Download daily OHLCV data for a single ticker from IBKR.
-  - `merge_and_save(ticker, existing_path, ibkr_df, cache_dir)` (line 182): Merge IBKR data with existing WRDS data and save.
-  - `main()` (line 269): No module docstring.
+- Intent: IBKR Daily Gap-Fill Downloader for quant_engine cache.
+- LOC: 418
 - Classes: none
+- Top-level functions: `survey_cache`, `download_daily_ibkr`, `merge_and_save`, `main`
 
 ### `scripts/ibkr_intraday_download.py`
-
-- LOC: 493
-- Module intent: IBKR Intraday Data Downloader for quant_engine cache.
-- Imports (11): `import argparse`, `import json`, `import sys`, `import time`, `from datetime import datetime, timedelta, timezone`, `from pathlib import Path`, `from typing import Dict, List, Optional, Tuple`, `import pandas as pd`, `import numpy as np`, `import asyncio`, `import importlib.util as _ilu`
-- Top-level functions:
-  - `survey_intraday(cache_dir, tickers, timeframes)` (line 127): Survey intraday cache for given tickers/timeframes.
-  - `download_intraday_chunked(ib, ticker, timeframe, target_days)` (line 172): Download intraday data for a single ticker using IBKR chunked requests.
-  - `save_intraday(ticker, timeframe, df, cache_dir, existing_path)` (line 263): Save intraday data to cache. If existing data exists, merge (keep both,
-  - `main()` (line 322): No module docstring.
+- Intent: IBKR Intraday Data Downloader for quant_engine cache.
+- LOC: 509
 - Classes: none
+- Top-level functions: `survey_intraday`, `download_intraday_chunked`, `save_intraday`, `main`
 
-## Package `tests`
+## `utils`
 
-### `tests/__init__.py`
-
-- LOC: 6
-- Module intent: Project-level test suite package.
-- Top-level functions: none
-- Classes: none
-
-### `tests/api/__init__.py`
-
-- LOC: 0
-- Module intent: No module docstring.
-- Top-level functions: none
-- Classes: none
-
-### `tests/api/test_compute_routers.py`
-
-- LOC: 65
-- Module intent: Tests for POST compute endpoints — verify job creation.
-- Imports (1): `import pytest`
-- Top-level functions:
-  - `async test_train_creates_job(client)` (line 6): No module docstring.
-  - `async test_predict_creates_job(client)` (line 17): No module docstring.
-  - `async test_backtest_creates_job(client)` (line 27): No module docstring.
-  - `async test_autopilot_creates_job(client)` (line 37): No module docstring.
-  - `async test_job_status_queryable(client)` (line 47): No module docstring.
-  - `async test_nonexistent_job_404(client)` (line 61): No module docstring.
-- Classes: none
-
-### `tests/api/test_envelope.py`
-
-- LOC: 51
-- Module intent: Tests for ApiResponse envelope and ResponseMeta.
-- Imports (1): `from quant_engine.api.schemas.envelope import ApiResponse, ResponseMeta`
-- Top-level functions:
-  - `test_success_response()` (line 5): No module docstring.
-  - `test_fail_response()` (line 13): No module docstring.
-  - `test_from_cached()` (line 20): No module docstring.
-  - `test_meta_defaults()` (line 27): No module docstring.
-  - `test_meta_custom_fields()` (line 35): No module docstring.
-  - `test_serialization_roundtrip()` (line 46): No module docstring.
-- Classes: none
-
-### `tests/api/test_integration.py`
-
-- LOC: 72
-- Module intent: Integration tests — full app startup, envelope consistency, config patch.
-- Imports (1): `import pytest`
-- Top-level functions:
-  - `async test_all_gets_return_envelope(client)` (line 6): Every GET endpoint should return an ApiResponse envelope.
-  - `async test_config_patch_and_read(client)` (line 34): PATCH /api/config should update values and be reflected in GET.
-  - `async test_config_patch_invalid_key(client)` (line 58): PATCH with invalid key should return 422.
-  - `async test_meta_has_generated_at(client)` (line 67): Response meta should always include generated_at timestamp.
-- Classes: none
-
-### `tests/api/test_jobs.py`
-
-- LOC: 135
-- Module intent: Tests for the job system: store, runner, lifecycle.
-- Imports (5): `import asyncio`, `import pytest`, `from quant_engine.api.jobs.models import JobRecord, JobStatus`, `from quant_engine.api.jobs.store import JobStore`, `from quant_engine.api.jobs.runner import JobRunner`
-- Top-level functions:
-  - `async store()` (line 12): No module docstring.
-  - `async runner(store)` (line 20): No module docstring.
-  - `async test_create_and_get_job(store)` (line 25): No module docstring.
-  - `async test_list_jobs(store)` (line 37): No module docstring.
-  - `async test_update_status(store)` (line 45): No module docstring.
-  - `async test_update_progress(store)` (line 54): No module docstring.
-  - `async test_cancel_queued_job(store)` (line 63): No module docstring.
-  - `async test_cancel_completed_job_fails(store)` (line 72): No module docstring.
-  - `async test_get_nonexistent_job(store)` (line 80): No module docstring.
-  - `async test_job_runner_succeeds(store, runner)` (line 86): No module docstring.
-  - `async test_job_runner_failure(store, runner)` (line 102): No module docstring.
-  - `async test_sse_events(store, runner)` (line 115): No module docstring.
-- Classes: none
-
-### `tests/api/test_main.py`
-
-- LOC: 48
-- Module intent: Tests for app factory and basic middleware.
-- Imports (3): `import pytest`, `from quant_engine.api.main import create_app`, `from quant_engine.api.config import ApiSettings`
-- Top-level functions:
-  - `test_create_app()` (line 7): No module docstring.
-  - `test_openapi_schema()` (line 12): No module docstring.
-  - `test_routes_registered()` (line 19): No module docstring.
-  - `async test_404_wrapped(client)` (line 36): No module docstring.
-  - `async test_cors_headers(client)` (line 42): No module docstring.
-- Classes: none
-
-### `tests/api/test_read_routers.py`
-
-- LOC: 118
-- Module intent: Tests for all GET endpoints — verify ApiResponse envelope.
-- Imports (1): `import pytest`
-- Top-level functions:
-  - `async test_health(client)` (line 6): No module docstring.
-  - `async test_dashboard_summary(client)` (line 16): No module docstring.
-  - `async test_data_universe(client)` (line 24): No module docstring.
-  - `async test_models_versions(client)` (line 33): No module docstring.
-  - `async test_signals_latest(client)` (line 41): No module docstring.
-  - `async test_backtests_latest(client)` (line 49): No module docstring.
-  - `async test_backtests_trades(client)` (line 57): No module docstring.
-  - `async test_backtests_equity_curve(client)` (line 65): No module docstring.
-  - `async test_autopilot_latest_cycle(client)` (line 73): No module docstring.
-  - `async test_autopilot_strategies(client)` (line 81): No module docstring.
-  - `async test_autopilot_paper_state(client)` (line 89): No module docstring.
-  - `async test_config_get(client)` (line 97): No module docstring.
-  - `async test_logs(client)` (line 106): No module docstring.
-  - `async test_jobs_list_empty(client)` (line 114): No module docstring.
-- Classes: none
-
-### `tests/api/test_services.py`
-
-- LOC: 80
-- Module intent: Tests for service wrappers — verify dict outputs.
-- Imports (6): `from quant_engine.api.services.data_service import DataService`, `from quant_engine.api.services.autopilot_service import AutopilotService`, `from quant_engine.api.services.backtest_service import BacktestService`, `from quant_engine.api.services.health_service import HealthService`, `from quant_engine.api.services.model_service import ModelService`, `from quant_engine.api.services.results_service import ResultsService`
-- Top-level functions:
-  - `test_data_service_universe_info()` (line 10): No module docstring.
-  - `test_data_service_cached_tickers()` (line 20): No module docstring.
-  - `test_backtest_service_no_results()` (line 26): When no results files exist, should return available=False.
-  - `test_autopilot_service_latest_cycle()` (line 35): No module docstring.
-  - `test_autopilot_service_strategy_registry()` (line 42): No module docstring.
-  - `test_autopilot_service_paper_state()` (line 49): No module docstring.
-  - `test_health_service_quick()` (line 56): No module docstring.
-  - `test_model_service_list_versions()` (line 64): No module docstring.
-  - `test_model_service_champion_info()` (line 70): No module docstring.
-  - `test_results_service_list()` (line 77): No module docstring.
-- Classes: none
-
-### `tests/conftest.py`
-
-- LOC: 240
-- Module intent: Shared test fixtures for the quant_engine test suite.
-- Imports (6): `from __future__ import annotations`, `import json`, `from pathlib import Path`, `import numpy as np`, `import pandas as pd`, `import pytest`
-- Top-level functions:
-  - `pytest_sessionfinish(session, exitstatus)` (line 12): Spawn a watchdog that force-exits if the process hangs at shutdown.
-  - `synthetic_ohlcv_data()` (line 35): 10 synthetic stock series, each with 500 daily bars.
-  - `synthetic_trades_csv(tmp_path)` (line 61): Generate a synthetic backtest trades CSV and return its path.
-  - `synthetic_model_meta(tmp_model_dir)` (line 93): Write a synthetic model metadata JSON and return the model dir.
-  - `tmp_results_dir(tmp_path)` (line 123): Temporary results directory.
-  - `tmp_model_dir(tmp_path)` (line 131): Temporary model directory.
-  - `tmp_data_cache_dir(tmp_path)` (line 139): Temporary data cache directory.
-  - `async app(tmp_path)` (line 195): Create a test FastAPI app with a fresh per-test job store.
-  - `async client(app)` (line 232): Async HTTP client bound to the test app.
-- Classes:
-  - `_InMemoryJobStore` (line 149): Lightweight in-memory job store for tests (avoids aiosqlite threads).
-    - Methods (9): `__init__`, `initialize`, `close`, `create_job`, `get_job`, `list_jobs`, `update_status`, `update_progress`, `cancel_job`
-
-### `tests/test_autopilot_predictor_fallback.py`
-
-- LOC: 58
-- Module intent: Test module for autopilot predictor fallback behavior and regressions.
-- Imports (4): `import unittest`, `from unittest.mock import patch`, `import pandas as pd`, `from quant_engine.autopilot.engine import AutopilotEngine, HeuristicPredictor`
-- Top-level functions: none
-- Classes:
-  - `AutopilotPredictorFallbackTests` (line 13): Test cases covering autopilot predictor fallback behavior and system invariants.
-    - Methods (1): `test_ensure_predictor_falls_back_when_model_import_fails`
-
-### `tests/test_backtest_realism.py`
-
-- LOC: 561
-- Module intent: Spec 011 — Backtest Execution Realism & Validation Enforcement tests.
-- Imports (11): `import inspect`, `import unittest`, `import numpy as np`, `import pandas as pd`, `from quant_engine.backtest.advanced_validation import deflated_sharpe_ratio, probability_of_backtest_overfitting`, `from quant_engine.backtest.engine import Backtester, BacktestResult`, `from quant_engine.backtest.execution import ExecutionModel`, `from quant_engine.backtest.optimal_execution import almgren_chriss_trajectory`, `from quant_engine.autopilot.promotion_gate import PromotionGate`, `from quant_engine.autopilot.strategy_discovery import StrategyCandidate`, `from quant_engine.config import ALMGREN_CHRISS_RISK_AVERSION, PROMOTION_MAX_PBO`
-- Top-level functions:
-  - `_make_ohlcv(n_bars, base_price, daily_volume, seed)` (line 37): Generate synthetic OHLCV data for testing.
-  - `_make_predictions(ohlcv, ticker, n_signals, start_bar, spacing)` (line 59): Generate synthetic predictions aligned with OHLCV data.
-  - `_candidate()` (line 83): Build a reusable test fixture.
-  - `_passing_result(sharpe)` (line 96): Build a passing backtest result.
-  - `_all_pass_metrics()` (line 125): Contract metrics that satisfy all promotion gates.
-- Classes:
-  - `TestEntryTimingConsistency` (line 147): T1: Both simple and risk-managed modes use next-bar Open for entry.
-    - Methods (2): `test_simple_mode_entry_at_next_bar_open`, `test_risk_managed_mode_entry_at_next_bar_open`
-  - `TestAlmgrenChrissCalibration` (line 204): T2: AC risk_aversion calibrated to institutional levels.
-    - Methods (3): `test_config_risk_aversion_not_risk_neutral`, `test_trajectory_default_matches_config`, `test_higher_risk_aversion_frontloads_execution`
-  - `TestExitVolumeConstraints` (line 246): T3: Exit simulation respects volume constraints.
-    - Methods (3): `test_execution_model_limits_fill_ratio`, `test_force_full_bypasses_volume_constraint`, `test_moderate_order_gets_partial_fill`
-  - `TestNegativeSharpeFailsDSR` (line 312): T5: Negative Sharpe strategies always fail DSR.
-    - Methods (4): `test_negative_sharpe_rejected`, `test_zero_sharpe_rejected`, `test_positive_sharpe_can_pass`, `test_weak_positive_sharpe_with_many_trials_fails`
-  - `TestPBOThreshold` (line 356): T6: PBO threshold tightened to 0.45.
-    - Methods (3): `test_config_pbo_threshold`, `test_pbo_above_045_is_overfit`, `test_pbo_max_combinations_increased`
-  - `TestValidationRequiredForPromotion` (line 404): T4: Validation required for autopilot promotion.
-    - Methods (5): `test_no_validation_rejects_promotion`, `test_negative_sharpe_always_rejected`, `test_mc_not_significant_rejects_promotion`, `test_all_validations_pass_allows_promotion`, `test_pbo_above_045_rejects_promotion`
-  - `TestPartialExitMultiBar` (line 486): T7: Residual shares tracked across bars for multi-bar exits.
-    - Methods (3): `test_backtester_has_residual_tracking`, `test_volume_constrained_exit_records_fill_ratio`, `test_residual_position_exit_concept`
-
-### `tests/test_cache_metadata_rehydrate.py`
-
-- LOC: 97
-- Module intent: Test module for cache metadata rehydrate behavior and regressions.
-- Imports (6): `import json`, `import tempfile`, `import unittest`, `from pathlib import Path`, `import pandas as pd`, `from quant_engine.data.local_cache import rehydrate_cache_metadata`
-- Top-level functions:
-  - `_write_daily_csv(path)` (line 15): Local helper used by the cache metadata rehydrate tests.
-- Classes:
-  - `CacheMetadataRehydrateTests` (line 31): Test cases covering cache metadata rehydrate behavior and system invariants.
-    - Methods (3): `test_rehydrate_writes_metadata_for_daily_csv`, `test_rehydrate_only_missing_does_not_overwrite`, `test_rehydrate_force_with_overwrite_source_updates_source`
-
-### `tests/test_conceptual_fixes.py`
-
-- LOC: 324
-- Module intent: Tests for Spec 008 — Ensemble & Conceptual Fixes.
-- Imports (5): `from __future__ import annotations`, `from unittest.mock import patch`, `import numpy as np`, `import pandas as pd`, `import pytest`
-- Top-level functions:
-  - `_make_synthetic_features(n, seed)` (line 23): Generate synthetic OHLCV features for regime detection.
-  - `_make_features_with_regime_flickers(n, seed)` (line 39): Create features designed to produce short regime flickers in rule-based detection.
-- Classes:
-  - `TestEnsembleNoPhantomVote` (line 97): When REGIME_JUMP_MODEL_ENABLED=False, ensemble must use 2 methods, not 3.
-    - Methods (2): `test_two_method_ensemble_does_not_call_jump`, `test_two_method_ensemble_requires_unanimity`
-  - `TestEnsembleWithJumpModel` (line 156): When REGIME_JUMP_MODEL_ENABLED=True, ensemble uses 3 independent methods.
-    - Methods (2): `test_three_method_ensemble_calls_all_methods`, `test_three_method_probabilities_sum_to_one`
-  - `TestRuleDetectMinDuration` (line 211): Rule-based detection must enforce REGIME_MIN_DURATION.
-    - Methods (3): `test_no_short_runs_with_min_duration`, `test_min_duration_1_is_noop`, `test_smoothing_preserves_regime_count`
-  - `TestConfigEndpointDefaults` (line 270): The /api/config endpoint returns values that match config.py.
-    - Methods (4): `test_adjustable_config_includes_backtest_keys`, `test_adjustable_config_values_match_config_py`, `test_config_status_includes_training_section`, `test_config_status_backtest_section_matches`
-
-### `tests/test_covariance_estimator.py`
-
-- LOC: 25
-- Module intent: Test module for covariance estimator behavior and regressions.
-- Imports (4): `import unittest`, `import numpy as np`, `import pandas as pd`, `from quant_engine.risk.covariance import CovarianceEstimator`
-- Top-level functions: none
-- Classes:
-  - `CovarianceEstimatorTests` (line 13): Test cases covering covariance estimator behavior and system invariants.
-    - Methods (1): `test_single_asset_covariance_is_2d_and_positive`
-
-### `tests/test_data_diagnostics.py`
-
-- LOC: 183
-- Module intent: Tests for data loading diagnostics (Spec 005).
-- Imports (7): `import json`, `import logging`, `import tempfile`, `import unittest`, `from pathlib import Path`, `from unittest.mock import MagicMock, patch`, `import pandas as pd`
-- Top-level functions: none
-- Classes:
-  - `TestOrchestratorImport` (line 20): T1: DATA_DIR -> DATA_CACHE_DIR fix.
-    - Methods (2): `test_orchestrator_imports_data_cache_dir`, `test_orchestrator_uses_data_cache_dir_in_diagnostics`
-  - `TestLoadUniverseSkipReasons` (line 47): T2: Skip reasons logged at WARNING even with verbose=False.
-    - Methods (2): `test_load_universe_logs_skip_reasons`, `test_skip_reasons_include_reason_text`
-  - `TestErrorMessageDiagnostics` (line 91): T3: RuntimeError includes ticker list, WRDS, cache count.
-    - Methods (1): `test_error_message_includes_diagnostics`
-  - `TestDataStatusService` (line 119): T4: DataService.get_cache_status returns valid ticker info.
-    - Methods (4): `test_data_status_returns_summary`, `test_data_status_ticker_entries`, `test_data_status_with_missing_cache_dir`, `test_data_status_freshness_categories`
-
-### `tests/test_delisting_total_return.py`
-
-- LOC: 76
-- Module intent: Test module for delisting total return behavior and regressions.
-- Imports (4): `import unittest`, `import numpy as np`, `import pandas as pd`, `from quant_engine.features.pipeline import compute_indicator_features, compute_targets`
-- Top-level functions: none
-- Classes:
-  - `DelistingTotalReturnTests` (line 13): Test cases covering delisting total return behavior and system invariants.
-    - Methods (2): `test_target_uses_total_return_when_available`, `test_indicator_values_unaffected_by_delist_return_columns`
-
-### `tests/test_drawdown_liquidation.py`
-
-- LOC: 138
-- Module intent: Test module for drawdown liquidation behavior and regressions.
-- Imports (6): `import unittest`, `from types import SimpleNamespace`, `import pandas as pd`, `from quant_engine.backtest.engine import Backtester`, `from quant_engine.risk.drawdown import DrawdownState, DrawdownStatus`, `from quant_engine.risk.stop_loss import StopReason, StopResult`
-- Top-level functions: none
-- Classes:
-  - `_FakePositionSizer` (line 15): Test double used to isolate behavior in this test module.
-    - Methods (1): `size_position`
-  - `_FakeDrawdownController` (line 21): Test double used to isolate behavior in this test module.
-    - Methods (3): `__init__`, `update`, `get_summary`
-  - `_FakeStopLossManager` (line 60): Test double used to isolate behavior in this test module.
-    - Methods (1): `evaluate`
-  - `_FakePortfolioRisk` (line 74): Test double used to isolate behavior in this test module.
-    - Methods (1): `check_new_position`
-  - `_FakeRiskMetrics` (line 80): Test double used to isolate behavior in this test module.
-    - Methods (1): `compute_full_report`
-  - `DrawdownLiquidationTests` (line 92): Test cases covering drawdown liquidation behavior and system invariants.
-    - Methods (1): `test_critical_drawdown_forces_liquidation`
-
-### `tests/test_execution_dynamic_costs.py`
-
-- LOC: 48
-- Module intent: Test module for execution dynamic costs behavior and regressions.
-- Imports (2): `import unittest`, `from quant_engine.backtest.execution import ExecutionModel`
-- Top-level functions: none
-- Classes:
-  - `ExecutionDynamicCostTests` (line 10): Test cases covering execution dynamic costs behavior and system invariants.
-    - Methods (1): `test_dynamic_costs_increase_under_stress`
-
-### `tests/test_feature_fixes.py`
-
-- LOC: 377
-- Module intent: Tests verifying Spec 012 feature engineering fixes:
-- Imports (3): `import unittest`, `import numpy as np`, `import pandas as pd`
-- Top-level functions:
-  - `_make_ohlcv(n, seed)` (line 17): Synthetic OHLCV data for testing.
-  - `_make_ohlcv_with_iv(n, seed)` (line 33): Synthetic OHLCV data with option surface columns.
-- Classes:
-  - `TestTSMomBackwardShift` (line 46): Verify TSMom features are backward-looking (causal).
-    - Methods (2): `test_tsmom_uses_backward_shift`, `test_tsmom_values_dont_change_when_future_removed`
-  - `TestIVShockNonFuture` (line 112): Verify IV shock features use only backward-looking shifts.
-    - Methods (2): `test_iv_shock_no_future_shift`, `test_iv_shock_no_lookahead`
-  - `TestFeatureMetadata` (line 163): Verify feature metadata registry coverage.
-    - Methods (3): `test_feature_metadata_exists`, `test_all_metadata_has_valid_type`, `test_pipeline_features_have_metadata`
-  - `TestProductionModeFilter` (line 223): Verify production_mode filters RESEARCH_ONLY features.
-    - Methods (2): `test_production_mode_filters_research`, `test_production_mode_default_false`
-  - `TestRollingVWAPIsCausal` (line 272): Verify rolling VWAP uses only past data.
-    - Methods (2): `test_rolling_vwap_is_causal`, `test_rolling_vwap_first_rows_nan`
-  - `TestMultiHorizonVRP` (line 314): Verify enhanced VRP computation at multiple horizons.
-    - Methods (1): `test_vrp_multi_horizon`
-  - `TestFullPipelineLookahead` (line 334): End-to-end lookahead check on the complete feature pipeline.
-    - Methods (1): `test_automated_lookahead_detection`
-
-### `tests/test_integration.py`
-
-- LOC: 556
-- Module intent: End-to-end integration tests for the quant engine pipeline.
-- Imports (5): `import sys`, `from pathlib import Path`, `import numpy as np`, `import pandas as pd`, `import pytest`
-- Top-level functions:
-  - `_generate_synthetic_ohlcv(n_stocks, n_days, seed)` (line 23): Generate synthetic OHLCV data for *n_stocks* over *n_days*.
-- Classes:
-  - `TestFullPipelineSynthetic` (line 70): End-to-end test: data -> features -> regimes -> training -> prediction -> backtest.
-    - Methods (8): `synthetic_data`, `pipeline_outputs`, `test_features_shape`, `test_targets_shape`, `test_regimes_aligned`, `test_pit_no_future_in_features`, `test_pit_no_future_in_targets`, `test_training_produces_result`
-  - `TestCvGapHardBlock` (line 229): Verify that the CV gap hard block rejects overfit models.
-    - Methods (1): `test_cv_gap_hard_block`
-  - `TestRegime2Suppression` (line 304): Verify regime 2 gating suppresses trades.
-    - Methods (2): `test_regime_2_suppression`, `test_regime_0_not_suppressed`
-  - `TestCrossSectionalRanking` (line 412): Verify cross-sectional ranker produces valid output.
-    - Methods (4): `test_cross_sectional_rank_basic`, `test_cross_sectional_rank_multiindex`, `test_cross_sectional_rank_zscore_centered`, `test_cross_sectional_rank_signals_count`
-
-### `tests/test_iv_arbitrage_builder.py`
-
-- LOC: 38
-- Module intent: Test module for iv arbitrage builder behavior and regressions.
-- Imports (3): `import unittest`, `import numpy as np`, `from quant_engine.models.iv.models import ArbitrageFreeSVIBuilder, generate_synthetic_market_surface`
-- Top-level functions: none
-- Classes:
-  - `ArbitrageFreeSVIBuilderTests` (line 12): Test cases covering iv arbitrage builder behavior and system invariants.
-    - Methods (1): `test_build_surface_has_valid_shape_and_monotone_total_variance`
-
-### `tests/test_kalshi_asof_features.py`
-
-- LOC: 65
-- Module intent: Test module for kalshi asof features behavior and regressions.
-- Imports (3): `import unittest`, `import pandas as pd`, `from quant_engine.kalshi.events import EventFeatureConfig, build_event_feature_panel`
-- Top-level functions: none
-- Classes:
-  - `KalshiAsofFeatureTests` (line 12): Test cases covering kalshi asof features behavior and regression protections.
-    - Methods (2): `test_event_feature_panel_uses_backward_asof_join`, `test_event_feature_panel_raises_when_required_columns_missing`
-
-### `tests/test_kalshi_distribution.py`
-
-- LOC: 114
-- Module intent: Test module for kalshi distribution behavior and regressions.
-- Imports (3): `import unittest`, `import pandas as pd`, `from quant_engine.kalshi.distribution import DistributionConfig, build_distribution_panel, build_distribution_snapshot`
-- Top-level functions: none
-- Classes:
-  - `KalshiDistributionTests` (line 16): Test cases covering kalshi distribution behavior and regression protections.
-    - Methods (3): `test_bin_distribution_normalizes_and_computes_moments`, `test_threshold_distribution_applies_monotone_constraint`, `test_distribution_panel_accepts_tz_aware_snapshot_times`
-
-### `tests/test_kalshi_hardening.py`
-
-- LOC: 605
-- Module intent: Test module for kalshi hardening behavior and regressions.
-- Imports (16): `import base64`, `import tempfile`, `import unittest`, `from pathlib import Path`, `import numpy as np`, `import pandas as pd`, `from quant_engine.kalshi.client import KalshiClient, KalshiSigner`, `from quant_engine.kalshi.distribution import DistributionConfig, build_distribution_snapshot`, `from quant_engine.kalshi.events import EventFeatureConfig, build_event_feature_panel, build_event_labels`, `from quant_engine.kalshi.mapping_store import EventMarketMappingRecord, EventMarketMappingStore`, `from quant_engine.kalshi.options import add_options_disagreement_features, build_options_reference_panel`, `from quant_engine.kalshi.promotion import EventPromotionConfig, evaluate_event_promotion` (+4 more)
-- Top-level functions: none
-- Classes:
-  - `KalshiHardeningTests` (line 37): Test cases covering kalshi hardening behavior and regression protections.
-    - Methods (16): `test_bin_distribution_mass_normalizes_to_one`, `test_threshold_direction_semantics_change_tail_probabilities`, `test_unknown_threshold_direction_marked_quality_low`, `test_dynamic_stale_cutoff_tightens_near_event`, `test_dynamic_stale_cutoff_adjusts_for_market_type_and_liquidity`, `test_quality_score_behaves_sensibly_on_synthetic_cases`, `test_event_panel_supports_event_id_mapping`, `test_event_labels_first_vs_latest`, `test_walkforward_runs_and_counts_trials`, `test_walkforward_contract_metrics_are_computed`, `test_event_promotion_flow_uses_walkforward_contract_metrics`, `test_options_disagreement_features_are_joined_asof`, `test_mapping_store_asof`, `test_store_ingestion_and_health_tables`, `test_provider_materializes_daily_health_report`, `test_signer_canonical_payload_and_header_fields`
-
-### `tests/test_loader_and_predictor.py`
-
-- LOC: 230
-- Module intent: Test module for loader and predictor behavior and regressions.
-- Imports (9): `import tempfile`, `import unittest`, `from unittest.mock import patch`, `import pandas as pd`, `from quant_engine.data.loader import load_ohlcv, load_survivorship_universe, load_with_delistings`, `from quant_engine.data.local_cache import load_ohlcv as cache_load`, `from quant_engine.data.local_cache import load_ohlcv_with_meta as cache_load_with_meta`, `from quant_engine.data.local_cache import save_ohlcv as cache_save`, `from quant_engine.models.predictor import EnsemblePredictor`
-- Top-level functions: none
-- Classes:
-  - `_FakeWRDSProvider` (line 22): Test double used to isolate behavior in this test module.
-    - Methods (5): `available`, `get_crsp_prices`, `get_crsp_prices_with_delistings`, `get_option_surface_features`, `resolve_permno`
-  - `_UnavailableWRDSProvider` (line 79): Test double representing an unavailable dependency or provider.
-    - Methods (1): `available`
-  - `LoaderAndPredictorTests` (line 85): Test cases covering loader and predictor behavior and system invariants.
-    - Methods (8): `test_load_ohlcv_uses_wrds_contract_and_stable_columns`, `test_load_with_delistings_applies_delisting_return`, `test_predictor_explicit_version_does_not_silently_fallback`, `test_cache_load_reads_daily_csv_when_parquet_unavailable`, `test_cache_save_falls_back_to_csv_without_parquet_engine`, `test_trusted_wrds_cache_short_circuits_live_wrds`, `test_untrusted_cache_refreshes_from_wrds_and_sets_wrds_source`, `test_survivorship_fallback_prefers_cached_subset_when_wrds_unavailable`
-
-### `tests/test_lookahead_detection.py`
-
-- LOC: 144
-- Module intent: Automated lookahead bias detection for the feature pipeline.
-- Imports (4): `import unittest`, `import numpy as np`, `import pandas as pd`, `from quant_engine.features.pipeline import FeaturePipeline`
-- Top-level functions:
-  - `_make_synthetic_ohlcv(n, seed)` (line 20): Build synthetic OHLCV data for lookahead testing.
-- Classes:
-  - `TestLookaheadDetection` (line 36): Detect any feature that uses future data.
-    - Methods (2): `test_no_feature_uses_future_data`, `test_no_feature_uses_future_data_deep`
-
-### `tests/test_panel_split.py`
-
-- LOC: 55
-- Module intent: Test module for panel split behavior and regressions.
-- Imports (3): `import unittest`, `import pandas as pd`, `from quant_engine.models.trainer import ModelTrainer`
-- Top-level functions: none
-- Classes:
-  - `PanelSplitTests` (line 12): Test cases covering panel split behavior and system invariants.
-    - Methods (2): `test_holdout_mask_uses_dates_not_raw_rows`, `test_date_purged_folds_do_not_overlap`
-
-### `tests/test_paper_trader_kelly.py`
-
-- LOC: 128
-- Module intent: Test module for paper trader kelly behavior and regressions.
-- Imports (8): `import json`, `import tempfile`, `import unittest`, `from pathlib import Path`, `import numpy as np`, `import pandas as pd`, `from quant_engine.autopilot.paper_trader import PaperTrader`, `from quant_engine.autopilot.registry import ActiveStrategy`
-- Top-level functions:
-  - `_mock_price_data()` (line 17): Create mock inputs used by the test cases in this module.
-  - `_seed_state(path)` (line 35): Seed deterministic test state used by this module.
-  - `_run_cycle(use_kelly)` (line 64): Run the local test helper workflow and return intermediate outputs.
-- Classes:
-  - `PaperTraderKellyTests` (line 115): Test cases covering paper trader kelly behavior and system invariants.
-    - Methods (1): `test_kelly_sizing_changes_position_size_with_bounds`
-
-### `tests/test_position_sizing_overhaul.py`
-
-- LOC: 414
-- Module intent: Comprehensive tests for Spec 009: Kelly Position Sizing Overhaul.
-- Imports (8): `import math`, `import sys`, `from pathlib import Path`, `import numpy as np`, `import pandas as pd`, `import pytest`, `from quant_engine.risk.position_sizer import PositionSizer, PositionSize`, `from quant_engine.risk.drawdown import DrawdownController, DrawdownState`
-- Top-level functions: none
-- Classes:
-  - `TestKellyNegativeEdge` (line 32): T1: Kelly returns 0.0 for negative-edge signals, not min_position.
-    - Methods (5): `test_kelly_negative_edge_returns_zero`, `test_kelly_positive_edge_returns_positive`, `test_kelly_invalid_inputs_return_zero`, `test_kelly_small_sample_penalty`, `test_kelly_n_trades_passed_through_size_position`
-  - `TestDrawdownGovernor` (line 87): T2: Exponential drawdown governor is more lenient early.
-    - Methods (6): `test_convex_at_50pct_drawdown`, `test_aggressive_at_90pct_drawdown`, `test_no_drawdown_full_sizing`, `test_beyond_max_dd_returns_zero`, `test_positive_drawdown_returns_full`, `test_convex_curve_is_smooth`
-  - `TestPerRegimeBayesian` (line 137): T3: Bayesian win-rate tracked per-regime with separate priors.
-    - Methods (4): `_make_trades`, `test_bull_kelly_greater_than_hv`, `test_global_fallback_when_few_regime_trades`, `test_per_regime_counters_populated`
-  - `TestRegimeStatsUpdate` (line 187): T4: Regime stats updated from trade DataFrame with regime column.
-    - Methods (3): `test_update_from_trade_df`, `test_too_few_trades_keeps_defaults`, `test_multiple_regimes_updated`
-  - `TestConfidenceScalar` (line 232): T5: Confidence scalar range is [0.5, 1.0], never 1.5.
-    - Methods (3): `test_max_confidence_scalar_is_one`, `test_zero_confidence_scalar_is_half`, `test_confidence_never_amplifies`
-  - `TestPortfolioCorrelationPenalty` (line 268): T6: High-correlation positions get reduced allocation.
-    - Methods (4): `returns_data`, `test_high_corr_smaller_than_uncorr`, `test_no_positions_returns_base`, `test_negative_corr_no_penalty`
-  - `TestDrawdownControllerIntegration` (line 331): T7: DrawdownController blocks entries and forces liquidation.
-    - Methods (5): `test_normal_state_allows_entries`, `test_large_loss_triggers_caution`, `test_critical_drawdown_forces_liquidation`, `test_paper_trader_has_drawdown_controller`, `test_recovery_allows_gradual_reentry`
-  - `TestSizePositionIntegration` (line 387): End-to-end tests for the updated size_position method.
-    - Methods (2): `test_negative_edge_signal_still_gets_sized_via_blend`, `test_drawdown_reduces_kelly_in_blend`
-
-### `tests/test_promotion_contract.py`
-
-- LOC: 105
-- Module intent: Test module for promotion contract behavior and regressions.
-- Imports (5): `import unittest`, `import pandas as pd`, `from quant_engine.autopilot.promotion_gate import PromotionGate`, `from quant_engine.autopilot.strategy_discovery import StrategyCandidate`, `from quant_engine.backtest.engine import BacktestResult`
-- Top-level functions:
-  - `_candidate()` (line 14): Build a reusable test fixture object for promotion-contract assertions.
-  - `_result()` (line 27): Build a reusable test fixture object for promotion-contract assertions.
-- Classes:
-  - `PromotionContractTests` (line 56): Test cases covering promotion contract behavior and system invariants.
-    - Methods (2): `test_contract_fails_when_advanced_requirements_fail`, `test_contract_passes_when_all_checks_pass`
-
-### `tests/test_provider_registry.py`
-
-- LOC: 29
-- Module intent: Test module for provider registry behavior and regressions.
-- Imports (3): `import unittest`, `from quant_engine.data.provider_registry import get_provider, list_providers`, `from quant_engine.kalshi.client import KalshiClient`
-- Top-level functions: none
-- Classes:
-  - `ProviderRegistryTests` (line 11): Test cases covering provider registry behavior and system invariants.
-    - Methods (3): `test_registry_lists_core_providers`, `test_registry_rejects_unknown_provider`, `test_registry_can_construct_kalshi_provider`
-
-### `tests/test_research_factors.py`
-
-- LOC: 133
-- Module intent: Test module for research factors behavior and regressions.
-- Imports (5): `import unittest`, `import numpy as np`, `import pandas as pd`, `from quant_engine.features.pipeline import FeaturePipeline`, `from quant_engine.features.research_factors import ResearchFactorConfig, compute_cross_asset_research_factors, compute_single_asset_research_factors`
-- Top-level functions:
-  - `_make_ohlcv(seed, periods, drift)` (line 18): Build synthetic test data for the scenarios in this module.
-- Classes:
-  - `ResearchFactorTests` (line 40): Test cases covering research factors behavior and system invariants.
-    - Methods (4): `test_single_asset_research_features_exist`, `test_cross_asset_network_features_shape_and_bounds`, `test_cross_asset_factors_are_causally_lagged`, `test_pipeline_universe_includes_research_features`
-
-### `tests/test_survivorship_pit.py`
-
-- LOC: 74
-- Module intent: Test module for survivorship pit behavior and regressions.
-- Imports (5): `import tempfile`, `import unittest`, `from pathlib import Path`, `import pandas as pd`, `from quant_engine.data.survivorship import filter_panel_by_point_in_time_universe, hydrate_universe_history_from_snapshots`
-- Top-level functions: none
-- Classes:
-  - `SurvivorshipPointInTimeTests` (line 17): Test cases covering survivorship pit behavior and system invariants.
-    - Methods (1): `test_filter_panel_by_point_in_time_universe`
-
-### `tests/test_training_pipeline_fixes.py`
-
-- LOC: 567
-- Module intent: Tests for Spec 013: Model Training Pipeline — CV Fixes, Calibration, and Governance.
-- Imports (6): `import sys`, `from collections import Counter`, `from pathlib import Path`, `import numpy as np`, `import pandas as pd`, `import pytest`
-- Top-level functions:
-  - `_make_feature_matrix(n_rows, n_features, seed)` (line 26): Create a synthetic feature matrix with a MultiIndex (permno, date).
-  - `_make_targets(X, signal_features, seed)` (line 40): Create synthetic targets with signal from specified features.
-  - `_make_regimes(X, seed)` (line 51): Create synthetic regime labels (0-3) aligned with features.
-- Classes:
-  - `TestPerFoldFeatureSelection` (line 62): Verify that feature selection runs independently per CV fold.
-    - Methods (3): `test_feature_selection_per_fold`, `test_stable_features_selected_most_folds`, `test_compute_stable_features_fallback`
-  - `TestCalibrationValidationSplit` (line 185): Verify calibration uses a separate split and computes ECE.
-    - Methods (5): `test_calibration_uses_separate_split`, `test_ece_computed`, `test_ece_perfect_calibration`, `test_ece_worst_calibration`, `test_reliability_curve`
-  - `TestRegimeMinSamples` (line 282): Verify regime models require minimum sample count.
-    - Methods (3): `test_regime_model_min_samples`, `test_regime_model_skipped_for_low_samples`, `test_regime_fallback_to_global`
-  - `TestCorrelationPruning` (line 365): Verify feature correlation pruning at 0.80 threshold.
-    - Methods (3): `test_correlation_threshold_080`, `test_old_threshold_would_keep_correlated`, `test_default_threshold_is_080`
-  - `TestGovernanceScoring` (line 443): Verify governance scoring includes validation metrics.
-    - Methods (4): `test_governance_score_includes_validation`, `test_governance_score_backward_compatible`, `test_governance_promotion_with_validation`, `test_dsr_penalty_reduces_score`
-
-### `tests/test_validation_and_risk_extensions.py`
-
-- LOC: 107
-- Module intent: Test module for validation and risk extensions behavior and regressions.
-- Imports (5): `import unittest`, `import numpy as np`, `import pandas as pd`, `from quant_engine.backtest.validation import combinatorial_purged_cv, superior_predictive_ability, strategy_signal_returns`, `from quant_engine.risk.portfolio_risk import PortfolioRiskManager`
-- Top-level functions:
-  - `_make_ohlcv(close)` (line 18): Build synthetic test data for the scenarios in this module.
-- Classes:
-  - `ValidationAndRiskExtensionTests` (line 32): Test cases covering validation and risk extensions behavior and system invariants.
-    - Methods (3): `test_cpcv_detects_positive_signal_quality`, `test_spa_passes_for_consistently_positive_signal_returns`, `test_portfolio_risk_rejects_high_projected_volatility`
-
-### `tests/test_zero_errors.py`
-
-- LOC: 120
-- Module intent: Integration test: common operations must produce zero ERROR-level log entries.
-- Imports (6): `from __future__ import annotations`, `import logging`, `from pathlib import Path`, `import numpy as np`, `import pandas as pd`, `import pytest`
-- Top-level functions:
-  - `error_capture()` (line 29): Attach an error-capturing handler to the root logger for the test.
-  - `test_config_validation_no_errors(error_capture)` (line 38): validate_config() must not trigger ERROR-level logs.
-  - `test_regime_detection_no_errors(error_capture)` (line 49): Regime detection on synthetic data must not produce ERROR-level logs.
-  - `test_health_service_no_errors(error_capture)` (line 75): HealthService instantiation must not produce ERROR-level logs.
-  - `test_data_loading_graceful_degradation(error_capture)` (line 87): Loading a nonexistent ticker must fail gracefully (no ERROR logs, no crash).
-  - `test_data_loading_single_ticker_if_cache_exists(error_capture)` (line 98): If cache exists, loading a single ticker must not produce ERROR-level logs.
-- Classes:
-  - `_ErrorCapture` (line 17): Handler that records any ERROR or CRITICAL log records.
-    - Methods (2): `__init__`, `emit`
-
-## Package `utils`
+| Module | Lines | Classes | Top-level Functions | Intent |
+|---|---|---|---|---|
+| `utils/__init__.py` | 6 | 0 | 0 | Utility helpers package namespace. |
+| `utils/logging.py` | 440 | 3 | 1 | Structured logging for the quant engine. |
 
 ### `utils/__init__.py`
-
-- LOC: 5
-- Module intent: Utility helpers package namespace.
-- Top-level functions: none
+- Intent: Utility helpers package namespace.
+- LOC: 6
 - Classes: none
+- Top-level functions: none
 
 ### `utils/logging.py`
-
-- LOC: 439
-- Module intent: Structured logging for the quant engine.
-- Imports (9): `from __future__ import annotations`, `import json`, `import logging`, `import sys`, `import urllib.request`, `import urllib.error`, `from datetime import datetime, timezone`, `from pathlib import Path`, `from typing import Any, Dict, List, Optional`
-- Top-level functions:
-  - `get_logger(name, level)` (line 46): Get a structured logger for the quant engine.
+- Intent: Structured logging for the quant engine.
+- LOC: 440
 - Classes:
-  - `StructuredFormatter` (line 22): JSON formatter for machine-parseable log output.
-    - Methods (1): `format`
-  - `AlertHistory` (line 77): Persistent alert history with optional webhook notifications.
-    - Methods (7): `__init__`, `_load`, `_save`, `record`, `record_batch`, `query`, `_notify_webhook`
-  - `MetricsEmitter` (line 322): Emit key metrics on every cycle and check alert thresholds.
-    - Methods (3): `__init__`, `emit_cycle_metrics`, `check_alerts`
+  - `StructuredFormatter` (methods: `format`)
+  - `AlertHistory` (methods: `record`, `record_batch`, `query`)
+  - `MetricsEmitter` (methods: `emit_cycle_metrics`, `check_alerts`)
+- Top-level functions: `get_logger`
+
+## `validation`
+
+| Module | Lines | Classes | Top-level Functions | Intent |
+|---|---|---|---|---|
+| `validation/__init__.py` | 9 | 0 | 0 | Truth Layer validation — preflight checks for the quant engine. |
+| `validation/data_integrity.py` | 115 | 2 | 0 | Data integrity preflight — Truth Layer T2. |
+| `validation/feature_redundancy.py` | 115 | 1 | 1 | Feature Redundancy Detection — identifies highly correlated features. |
+| `validation/leakage_detection.py` | 194 | 2 | 1 | Leakage detection — Truth Layer T3. |
+| `validation/preconditions.py` | 72 | 0 | 2 | Execution contract validation — Truth Layer T1. |
+
+### `validation/__init__.py`
+- Intent: Truth Layer validation — preflight checks for the quant engine.
+- LOC: 9
+- Classes: none
+- Top-level functions: none
+
+### `validation/data_integrity.py`
+- Intent: Data integrity preflight — Truth Layer T2.
+- LOC: 115
+- Classes:
+  - `DataIntegrityCheckResult` (methods: none)
+  - `DataIntegrityValidator` (methods: `validate_universe`)
+- Top-level functions: none
+
+### `validation/feature_redundancy.py`
+- Intent: Feature Redundancy Detection — identifies highly correlated features.
+- LOC: 115
+- Classes:
+  - `FeatureRedundancyDetector` (methods: `detect_redundant_pairs`, `report`)
+- Top-level functions: `validate_structural_feature_composition`
+
+### `validation/leakage_detection.py`
+- Intent: Leakage detection — Truth Layer T3.
+- LOC: 194
+- Classes:
+  - `LeakageTestResult` (methods: none)
+  - `LeakageDetector` (methods: `test_time_shift_leakage`)
+- Top-level functions: `run_leakage_checks`
+
+### `validation/preconditions.py`
+- Intent: Execution contract validation — Truth Layer T1.
+- LOC: 72
+- Classes: none
+- Top-level functions: `validate_execution_contract`, `enforce_preconditions`
