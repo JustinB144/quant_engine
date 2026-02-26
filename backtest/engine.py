@@ -50,10 +50,19 @@ from ..config import (
     ADV_LOOKBACK_DAYS,
     ADV_EMA_SPAN,
     EXEC_LOW_VOLUME_COST_MULT,
+    # Spec 06: cost calibration per market cap segment
+    EXEC_CALIBRATION_ENABLED,
+    EXEC_CALIBRATION_MIN_TRADES,
+    EXEC_CALIBRATION_MIN_SEGMENT_TRADES,
+    EXEC_CALIBRATION_SMOOTHING,
+    EXEC_COST_IMPACT_COEFF_BY_MARKETCAP,
+    EXEC_MARKETCAP_THRESHOLDS,
 )
 
 logger = logging.getLogger(__name__)
 from .execution import ExecutionModel
+from .cost_calibrator import CostCalibrator
+from ..regime.shock_vector import compute_shock_vectors, ShockVector
 
 _PERMNO_RE = re.compile(r"^\d{1,10}$")
 
@@ -79,6 +88,7 @@ class Trade:
     exit_impact_bps: float = 0.0
     entry_reference_price: float = 0.0   # pre-slippage Open on entry bar
     exit_reference_price: float = 0.0    # pre-slippage Close on exit bar
+    market_cap_segment: str = ""         # SPEC-W02: micro/small/mid/large
 
 
 @dataclass
@@ -222,12 +232,33 @@ class Backtester:
             low_volume_cost_mult=EXEC_LOW_VOLUME_COST_MULT,
         )
 
+        # SPEC-W02: Per-market-cap-segment cost calibrator.
+        # Provides differentiated impact coefficients (micro ~40 bps,
+        # large ~15 bps) instead of the flat 25 bps default.
+        from pathlib import Path
+        if EXEC_CALIBRATION_ENABLED:
+            self._cost_calibrator = CostCalibrator(
+                default_coefficients=EXEC_COST_IMPACT_COEFF_BY_MARKETCAP,
+                marketcap_thresholds=EXEC_MARKETCAP_THRESHOLDS,
+                min_total_trades=EXEC_CALIBRATION_MIN_TRADES,
+                min_segment_trades=EXEC_CALIBRATION_MIN_SEGMENT_TRADES,
+                smoothing=EXEC_CALIBRATION_SMOOTHING,
+                model_dir=Path("trained_models"),
+            )
+        else:
+            self._cost_calibrator = None
+
         # When dynamic execution model is active, costs are already embedded in
         # fill prices from _simulate_entry/_simulate_exit.  Setting tx_cost to
         # zero avoids double-counting.  TRANSACTION_COST_BPS is for legacy
         # flat-cost mode only (EXEC_DYNAMIC_COSTS=False).
         if EXEC_DYNAMIC_COSTS:
             self.tx_cost = 0.0
+
+        # SPEC-W01: Pre-computed shock vectors for structural state
+        # conditioning.  Populated in run() before trade processing.
+        # Keyed by (ticker_str, bar_date) → ShockVector.
+        self._shock_vectors: Dict[tuple, ShockVector] = {}
 
         # Risk components (lazy-initialized if needed)
         self._position_sizer = None
@@ -322,6 +353,20 @@ class Backtester:
             if ticker_id and vol > 0 else None
         )
 
+        # SPEC-W01: look up pre-computed shock vector for this bar
+        bar_date = ohlcv.index[entry_idx]
+        shock = self._shock_vectors.get((str(ticker_id), bar_date))
+
+        # SPEC-W02: get per-segment calibrated impact coefficient
+        impact_coeff_override = None
+        estimated_market_cap = 0.0
+        if self._cost_calibrator is not None:
+            estimated_market_cap = self._estimate_market_cap(ohlcv, entry_idx)
+            if estimated_market_cap > 0:
+                impact_coeff_override = self._cost_calibrator.get_impact_coeff(
+                    estimated_market_cap,
+                )
+
         fill = self.execution_model.simulate(
             side="buy",
             reference_price=ref_price,
@@ -333,6 +378,13 @@ class Backtester:
             intraday_range=context["intraday_range"],
             urgency_type="entry",
             volume_trend=volume_trend,
+            # SPEC-W01: structural state from shock vector
+            break_probability=shock.bocpd_changepoint_prob if shock else None,
+            structure_uncertainty=shock.hmm_uncertainty if shock else None,
+            drift_score=shock.structural_features.get("drift_score") if shock else None,
+            systemic_stress=shock.structural_features.get("systemic_stress") if shock else None,
+            # SPEC-W02: per-segment impact coefficient
+            impact_coeff_override=impact_coeff_override,
         )
         if fill.fill_ratio <= 0:
             return None
@@ -366,12 +418,29 @@ class Backtester:
                     fill_price = ref_price * (1.0 + total_bps / 10_000.0)
                     shares = actual_notional / max(1e-9, fill_price)
 
+        # SPEC-W02: record realized cost for online recalibration
+        if self._cost_calibrator is not None and fill.participation_rate > 0:
+            self._cost_calibrator.record_trade(
+                symbol=str(ticker_id),
+                market_cap=estimated_market_cap,
+                participation_rate=fill.participation_rate,
+                realized_cost_bps=float(impact_bps),
+            )
+
+        # SPEC-W02: include market cap segment in return dict for TCA
+        segment = ""
+        if self._cost_calibrator is not None and estimated_market_cap > 0:
+            segment = self._cost_calibrator.get_marketcap_segment(
+                estimated_market_cap,
+            )
+
         return {
             "entry_price": float(fill_price),
             "entry_impact_bps": float(impact_bps),
             "fill_ratio": float(fill.fill_ratio),
             "shares": float(shares),
             "position_size": float(position_size * fill.fill_ratio),
+            "market_cap_segment": segment,
         }
 
     def _simulate_exit(
@@ -396,6 +465,20 @@ class Backtester:
             if ticker_id and vol > 0 else None
         )
 
+        # SPEC-W01: look up pre-computed shock vector for this bar
+        bar_date = ohlcv.index[exit_idx]
+        shock = self._shock_vectors.get((str(ticker_id), bar_date))
+
+        # SPEC-W02: get per-segment calibrated impact coefficient
+        impact_coeff_override = None
+        estimated_market_cap = 0.0
+        if self._cost_calibrator is not None:
+            estimated_market_cap = self._estimate_market_cap(ohlcv, exit_idx)
+            if estimated_market_cap > 0:
+                impact_coeff_override = self._cost_calibrator.get_impact_coeff(
+                    estimated_market_cap,
+                )
+
         fill = self.execution_model.simulate(
             side="sell",
             reference_price=ref_price,
@@ -407,6 +490,13 @@ class Backtester:
             intraday_range=context["intraday_range"],
             urgency_type="exit",
             volume_trend=volume_trend,
+            # SPEC-W01: structural state from shock vector
+            break_probability=shock.bocpd_changepoint_prob if shock else None,
+            structure_uncertainty=shock.hmm_uncertainty if shock else None,
+            drift_score=shock.structural_features.get("drift_score") if shock else None,
+            systemic_stress=shock.structural_features.get("systemic_stress") if shock else None,
+            # SPEC-W02: per-segment impact coefficient
+            impact_coeff_override=impact_coeff_override,
         )
         if fill.fill_ratio <= 0:
             # Emergency fallback: force full exit with legacy slippage.
@@ -439,6 +529,15 @@ class Backtester:
                     half_spread_bps = 0.5 * float(fill.spread_bps)
                     total_bps = half_spread_bps + ac_cost_bps
                     fill_price = ref_price * (1.0 - total_bps / 10_000.0)
+
+        # SPEC-W02: record realized cost for online recalibration
+        if self._cost_calibrator is not None and fill.participation_rate > 0:
+            self._cost_calibrator.record_trade(
+                symbol=str(ticker_id),
+                market_cap=estimated_market_cap,
+                participation_rate=fill.participation_rate,
+                realized_cost_bps=float(impact_bps),
+            )
 
         return {
             "exit_price": float(fill_price),
@@ -478,6 +577,47 @@ class Backtester:
             "overnight_gap": overnight_gap,
             "intraday_range": intraday_range,
         }
+
+    @staticmethod
+    def _estimate_market_cap(ohlcv: pd.DataFrame, bar_idx: int) -> float:
+        """Estimate market cap from trailing average daily dollar volume.
+
+        Uses the empirical relationship:
+            market_cap ≈ ADV / assumed_daily_turnover
+
+        where assumed_daily_turnover = 0.5% is the median turnover rate
+        across US equities.  This is a robust proxy when shares outstanding
+        data is unavailable.
+
+        Parameters
+        ----------
+        ohlcv : pd.DataFrame
+            OHLCV price data with ``Close`` and ``Volume`` columns.
+        bar_idx : int
+            Index of the current bar.
+
+        Returns
+        -------
+        float
+            Estimated market capitalization in USD.  Returns 0.0 if the
+            estimate cannot be computed (no volume data).
+        """
+        ASSUMED_DAILY_TURNOVER = 0.005  # 0.5% — median for US equities
+        LOOKBACK = 20  # trailing window for ADV
+
+        start = max(0, bar_idx - LOOKBACK)
+        close_slice = ohlcv["Close"].iloc[start : bar_idx + 1]
+        if "Volume" not in ohlcv.columns:
+            return 0.0
+        vol_slice = ohlcv["Volume"].iloc[start : bar_idx + 1]
+        dollar_volumes = close_slice * vol_slice
+        valid = dollar_volumes.dropna()
+        if len(valid) == 0:
+            return 0.0
+        adv = float(valid.mean())
+        if adv <= 0 or not np.isfinite(adv):
+            return 0.0
+        return adv / ASSUMED_DAILY_TURNOVER
 
     @staticmethod
     def _effective_return_series(ohlcv: pd.DataFrame) -> pd.Series:
@@ -620,10 +760,48 @@ class Backtester:
                 else:
                     self._regime_lookup[idx] = int(row["regime"])
 
+        # SPEC-W01: Pre-compute shock vectors for structural state conditioning.
+        # This runs BOCPD + jump detection + drift/stress estimation per ticker
+        # once, so the execution simulator can condition costs on structural
+        # state without per-bar regime re-detection overhead.
+        self._shock_vectors = {}
+        tickers = predictions.index.get_level_values(0).unique()
+
+        if EXEC_STRUCTURAL_STRESS_ENABLED:
+            for ticker in tickers:
+                if ticker not in price_data:
+                    continue
+                ohlcv = price_data[ticker]
+                try:
+                    ticker_preds = predictions.loc[ticker]
+                    regime_s = (
+                        ticker_preds["regime"].astype(int)
+                        if "regime" in ticker_preds.columns else None
+                    )
+                    conf_s = (
+                        ticker_preds["confidence"]
+                        if "confidence" in ticker_preds.columns else None
+                    )
+                except KeyError:
+                    regime_s = None
+                    conf_s = None
+
+                try:
+                    shock_vecs = compute_shock_vectors(
+                        ohlcv=ohlcv,
+                        regime_series=regime_s,
+                        confidence_series=conf_s,
+                        ticker=str(ticker),
+                    )
+                    for dt, sv in shock_vecs.items():
+                        self._shock_vectors[(str(ticker), dt)] = sv
+                except Exception as e:
+                    logger.warning(
+                        "Shock vector computation failed for %s: %s", ticker, e,
+                    )
+
         # Collect all candidate signals across tickers
         all_signals = []
-
-        tickers = predictions.index.get_level_values(0).unique()
 
         for ticker in tickers:
             if ticker not in price_data:
@@ -677,6 +855,17 @@ class Backtester:
             if verbose:
                 print("  No trades generated.")
             return self._empty_result()
+
+        # SPEC-W02: trigger online recalibration after backtest completes.
+        # This uses the accumulated trade cost observations to update
+        # per-segment impact coefficients via EMA smoothing.
+        if self._cost_calibrator is not None:
+            calibration_result = self._cost_calibrator.calibrate()
+            if calibration_result:
+                logger.info(
+                    "CostCalibrator: recalibrated %d segments after backtest",
+                    len(calibration_result),
+                )
 
         result = self._compute_metrics(all_trades, price_data, verbose=verbose)
         return result
@@ -781,6 +970,7 @@ class Backtester:
                     exit_impact_bps=float(exit_fill["exit_impact_bps"]),
                     entry_reference_price=entry_ref,
                     exit_reference_price=exit_ref,
+                    market_cap_segment=entry_fill.get("market_cap_segment", ""),
                 ))
 
                 open_positions.append((permno, exit_date))
@@ -900,6 +1090,7 @@ class Backtester:
                         exit_impact_bps=float(exit_fill["exit_impact_bps"]),
                         entry_reference_price=res.get("entry_reference_price", 0.0),
                         exit_reference_price=exit_ref,
+                        market_cap_segment=res.get("market_cap_segment", ""),
                     ))
                     completed_returns.append(net_return)
                     ticker_last_exit[ticker] = dt
@@ -1005,6 +1196,7 @@ class Backtester:
                             "fill_ratio": pos.get("fill_ratio", 1.0),
                             "entry_impact_bps": pos.get("entry_impact_bps", 0.0),
                             "entry_reference_price": pos.get("entry_reference_price", 0.0),
+                            "market_cap_segment": pos.get("market_cap_segment", ""),
                             "exit_reason": stop_result.reason.value,
                             "bars_held_at_stop": pos["bars_held"],
                             "bars_since_exit_start": 0,
@@ -1041,6 +1233,7 @@ class Backtester:
                             exit_impact_bps=float(exit_fill["exit_impact_bps"]),
                             entry_reference_price=pos.get("entry_reference_price", 0.0),
                             exit_reference_price=exit_ref,
+                            market_cap_segment=pos.get("market_cap_segment", ""),
                         ))
                         completed_returns.append(net_return)
                         ticker_last_exit[ticker] = dt
@@ -1133,6 +1326,7 @@ class Backtester:
                             "fill_ratio": pos.get("fill_ratio", 1.0),
                             "entry_impact_bps": pos.get("entry_impact_bps", 0.0),
                             "entry_reference_price": pos.get("entry_reference_price", 0.0),
+                            "market_cap_segment": pos.get("market_cap_segment", ""),
                             "exit_reason": "circuit_breaker",
                             "bars_held_at_stop": max(1, pos.get("bars_held", 0)),
                             "bars_since_exit_start": 0,
@@ -1168,6 +1362,7 @@ class Backtester:
                             exit_impact_bps=float(exit_fill["exit_impact_bps"]),
                             entry_reference_price=pos.get("entry_reference_price", 0.0),
                             exit_reference_price=exit_ref,
+                            market_cap_segment=pos.get("market_cap_segment", ""),
                         ))
                         completed_returns.append(net_return)
                         ticker_last_exit[ticker] = pd.Timestamp(exit_date)
@@ -1297,6 +1492,7 @@ class Backtester:
                     "entry_reference_price": entry_ref,
                     "bars_held": 0,
                     "permno": ticker,
+                    "market_cap_segment": entry_fill.get("market_cap_segment", ""),
                 }
 
         # ── Close any remaining open positions at last available price ──
@@ -1341,6 +1537,7 @@ class Backtester:
                 exit_impact_bps=float(exit_fill["exit_impact_bps"]),
                 entry_reference_price=pos.get("entry_reference_price", 0.0),
                 exit_reference_price=exit_ref,
+                market_cap_segment=pos.get("market_cap_segment", ""),
             ))
 
         # ── Close any remaining residual positions (force full at end of data) ──
@@ -1390,6 +1587,7 @@ class Backtester:
                 exit_impact_bps=float(exit_fill["exit_impact_bps"]),
                 entry_reference_price=res.get("entry_reference_price", 0.0),
                 exit_reference_price=exit_ref,
+                market_cap_segment=res.get("market_cap_segment", ""),
             ))
 
         return trades
@@ -1785,10 +1983,12 @@ class Backtester:
 
         For each trade, compares the realized slippage (fill_price vs
         reference_price) to the cost model's predicted impact.  Produces
-        aggregate statistics broken down by side (entry=buy, exit=sell).
+        aggregate statistics broken down by side (entry=buy, exit=sell)
+        and by market cap segment (SPEC-W02).
 
         Returns a TCA summary dict with average slippage, slippage std,
-        slippage by side, and predicted-vs-realized correlation.
+        slippage by side, predicted-vs-realized correlation, and
+        per-segment cost breakdowns.
         """
         if not trades:
             return {}
@@ -1797,6 +1997,10 @@ class Backtester:
         exit_slippages_bps: list = []
         entry_predicted_bps: list = []
         exit_predicted_bps: list = []
+
+        # SPEC-W02: per-segment cost accumulation
+        from collections import defaultdict
+        segment_costs: Dict[str, list] = defaultdict(list)
 
         for t in trades:
             # Entry side (buy): realized slippage = (fill - ref) / ref * 10000
@@ -1809,6 +2013,10 @@ class Backtester:
                 entry_slippages_bps.append(float(entry_slip))
                 entry_predicted_bps.append(float(t.entry_impact_bps))
 
+                # SPEC-W02: accumulate per-segment
+                seg = t.market_cap_segment or "unknown"
+                segment_costs[seg].append(float(entry_slip))
+
             # Exit side (sell): realized slippage = (ref - fill) / ref * 10000
             if t.exit_reference_price > 0:
                 exit_slip = (
@@ -1818,6 +2026,10 @@ class Backtester:
                 )
                 exit_slippages_bps.append(float(exit_slip))
                 exit_predicted_bps.append(float(t.exit_impact_bps))
+
+                # SPEC-W02: accumulate per-segment (exit uses same segment)
+                seg = t.market_cap_segment or "unknown"
+                segment_costs[seg].append(float(exit_slip))
 
         all_realized = np.array(entry_slippages_bps + exit_slippages_bps)
         all_predicted = np.array(entry_predicted_bps + exit_predicted_bps)
@@ -1852,6 +2064,23 @@ class Backtester:
             "predicted_vs_realized_rmse_bps": rmse_bps,
             "total_cost_bps": float(all_realized.sum() / max(1, len(trades))),
         }
+
+        # SPEC-W02: per-market-cap-segment cost breakdown
+        segment_breakdown: Dict[str, Dict] = {}
+        for seg, costs in sorted(segment_costs.items()):
+            arr = np.array(costs)
+            segment_breakdown[seg] = {
+                "n_trades": len(costs),
+                "avg_slippage_bps": float(arr.mean()),
+                "median_slippage_bps": float(np.median(arr)),
+                "std_slippage_bps": float(arr.std()) if len(arr) > 1 else 0.0,
+            }
+        tca["segment_breakdown"] = segment_breakdown
+
+        # SPEC-W02: include calibrated coefficients if available
+        if self._cost_calibrator is not None:
+            tca["calibrated_coefficients"] = self._cost_calibrator.coefficients
+
         return tca
 
     def _print_result(self, r: BacktestResult):
@@ -1923,6 +2152,22 @@ class Backtester:
             print(f"    Predicted vs realized corr: {tca['predicted_vs_realized_corr']:.3f}")
             print(f"    Predicted vs realized RMSE: {tca['predicted_vs_realized_rmse_bps']:.2f} bps")
             print(f"    Round-trip cost per trade: {tca['total_cost_bps']:.2f} bps")
+
+            # SPEC-W02: per-segment cost breakdown
+            seg_breakdown = tca.get("segment_breakdown", {})
+            if seg_breakdown:
+                print(f"    By market cap segment:")
+                for seg, stats in seg_breakdown.items():
+                    print(f"      {seg:>6s}: {stats['avg_slippage_bps']:6.2f} bps avg "
+                          f"({stats['n_trades']} trades, "
+                          f"median: {stats['median_slippage_bps']:.2f})")
+
+            cal_coeffs = tca.get("calibrated_coefficients", {})
+            if cal_coeffs:
+                print(f"    Calibrated impact coefficients:")
+                for seg in ("micro", "small", "mid", "large"):
+                    if seg in cal_coeffs:
+                        print(f"      {seg:>6s}: {cal_coeffs[seg]:6.1f} bps/sqrt(part)")
 
         if r.exit_reason_breakdown:
             print(f"\n  Exit reasons:")

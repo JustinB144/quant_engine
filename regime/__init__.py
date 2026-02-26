@@ -14,7 +14,7 @@ from .hmm import GaussianHMM, HMMFitResult
 from .jump_model import StatisticalJumpModel, JumpModelResult
 from .jump_model_pypi import PyPIJumpModel
 from .online_update import OnlineRegimeUpdater
-from .shock_vector import ShockVector, ShockVectorValidator
+from .shock_vector import ShockVector, ShockVectorValidator, compute_shock_vectors
 from .uncertainty_gate import UncertaintyGate
 
 __all__ = [
@@ -35,6 +35,7 @@ __all__ = [
     "ShockVector",
     "ShockVectorValidator",
     "UncertaintyGate",
+    "compute_shock_vectors",
     "detect_regimes_batch",
     "validate_hmm_observation_features",
 ]

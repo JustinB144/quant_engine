@@ -303,3 +303,192 @@ class ShockVectorValidator:
             if not is_valid:
                 errors_by_idx[i] = errors
         return errors_by_idx
+
+
+# ── Batch ShockVector Computation (SPEC-W01) ────────────────────────────
+
+
+def compute_shock_vectors(
+    ohlcv: "pd.DataFrame",
+    regime_series: Optional["pd.Series"] = None,
+    confidence_series: Optional["pd.Series"] = None,
+    ticker: str = "",
+    bocpd_hazard_lambda: float = 1.0 / 60,
+    bocpd_hazard_func: str = "constant",
+    bocpd_max_runlength: int = 200,
+    jump_sigma_threshold: float = 2.5,
+    vol_lookback: int = 20,
+) -> Dict:
+    """Compute ShockVectors for every bar in a price series.
+
+    Pre-computes structural state (BOCPD changepoint probability, jump
+    detection, regime uncertainty) for each bar, enabling downstream systems
+    (backtester, execution simulator) to condition on structural state
+    without re-running full regime detection.
+
+    Parameters
+    ----------
+    ohlcv : pd.DataFrame
+        OHLCV DataFrame for a single security.  Must have a ``Close``
+        column and a DatetimeIndex (or similar ordered index).
+    regime_series : pd.Series, optional
+        Per-bar regime labels (0-3), aligned to ``ohlcv.index``.
+        If ``None``, defaults to regime 0 for all bars.
+    confidence_series : pd.Series, optional
+        Per-bar regime confidence in [0, 1], aligned to ``ohlcv.index``.
+        If ``None``, defaults to 0.5 for all bars.
+    ticker : str
+        Security identifier embedded in each ShockVector.
+    bocpd_hazard_lambda : float
+        BOCPD constant hazard rate (expected changepoints per bar).
+    bocpd_hazard_func : str
+        BOCPD hazard function type: ``"constant"`` or ``"geometric"``.
+    bocpd_max_runlength : int
+        Maximum run-length tracked by the BOCPD detector.
+    jump_sigma_threshold : float
+        Sigma threshold for jump detection (default 2.5).
+    vol_lookback : int
+        Lookback window for realized volatility and jump detection.
+
+    Returns
+    -------
+    dict
+        Mapping from index value (typically ``pd.Timestamp``) to
+        ``ShockVector``.  One entry per bar in ``ohlcv``.
+    """
+    import pandas as pd
+
+    if ohlcv is None or len(ohlcv) == 0:
+        return {}
+
+    if "Close" not in ohlcv.columns:
+        logger.warning("compute_shock_vectors: 'Close' column missing; returning empty dict")
+        return {}
+
+    close = ohlcv["Close"].astype(float)
+    n = len(close)
+
+    # ── Compute daily returns ──
+    returns = close.pct_change().fillna(0.0).values
+
+    # ── BOCPD batch processing ──
+    bocpd_cp_probs = np.zeros(n)
+    bocpd_runlengths = np.zeros(n, dtype=int)
+
+    try:
+        from .bocpd import BOCPDDetector
+
+        bocpd = BOCPDDetector(
+            hazard_lambda=bocpd_hazard_lambda,
+            hazard_func=bocpd_hazard_func,
+            max_runlength=bocpd_max_runlength,
+        )
+        batch_result = bocpd.batch_update(returns)
+        bocpd_cp_probs = batch_result.changepoint_probs
+        bocpd_runlengths = batch_result.run_lengths
+    except Exception as e:
+        logger.warning(
+            "compute_shock_vectors: BOCPD batch processing failed for %s: %s",
+            ticker, e,
+        )
+
+    # ── Per-bar jump detection ──
+    jump_flags = np.zeros(n, dtype=bool)
+    jump_magnitudes = np.zeros(n)
+
+    for i in range(vol_lookback, n):
+        window = returns[i - vol_lookback : i]
+        window_std = float(np.std(window))
+        if window_std > 1e-10:
+            current_ret = returns[i]
+            if abs(current_ret) > jump_sigma_threshold * window_std:
+                jump_flags[i] = True
+            jump_magnitudes[i] = current_ret
+
+    # ── Per-bar uncertainty from confidence ──
+    # Uncertainty ≈ 1 - confidence.  When the regime detector is confident
+    # (high probability on one state), uncertainty is low.  This is a
+    # monotone proxy for the full entropy computation.
+    if confidence_series is not None and len(confidence_series) > 0:
+        conf_vals = confidence_series.reindex(ohlcv.index).fillna(0.5).values
+        conf_vals = np.clip(conf_vals.astype(float), 0.0, 1.0)
+        uncertainty_vals = 1.0 - conf_vals
+    else:
+        conf_vals = np.full(n, 0.5)
+        uncertainty_vals = np.full(n, 0.5)
+
+    # ── Per-bar regime ──
+    if regime_series is not None and len(regime_series) > 0:
+        regime_vals = regime_series.reindex(ohlcv.index).fillna(0).values
+        regime_vals = np.clip(regime_vals.astype(int), 0, 3)
+    else:
+        regime_vals = np.zeros(n, dtype=int)
+
+    # ── Per-bar drift score (trend conviction) ──
+    # drift_score = |price - SMA| / (ATR * sqrt(lookback)), clipped to [0, 1].
+    # High drift = strong trend = lower execution urgency.
+    drift_scores = np.zeros(n)
+    if n >= vol_lookback:
+        sma = pd.Series(close.values).rolling(vol_lookback, min_periods=1).mean().values
+        high_vals = ohlcv["High"].values.astype(float) if "High" in ohlcv.columns else close.values
+        low_vals = ohlcv["Low"].values.astype(float) if "Low" in ohlcv.columns else close.values
+        tr = np.maximum(
+            high_vals - low_vals,
+            np.maximum(
+                np.abs(high_vals - np.roll(close.values, 1)),
+                np.abs(low_vals - np.roll(close.values, 1)),
+            ),
+        )
+        tr[0] = high_vals[0] - low_vals[0]
+        atr = pd.Series(tr).rolling(vol_lookback, min_periods=1).mean().values
+        atr = np.maximum(atr, 1e-10)
+
+        drift_raw = np.abs(close.values - sma) / (atr * np.sqrt(vol_lookback))
+        drift_scores = np.clip(drift_raw, 0.0, 1.0)
+
+    # ── Per-bar systemic stress (realized vol percentile) ──
+    # Uses a rolling percentile of realized volatility as a proxy for
+    # market-wide stress.  Higher vol relative to history = higher stress.
+    systemic_stress = np.zeros(n)
+    if n >= vol_lookback:
+        rolling_vol = pd.Series(returns).rolling(vol_lookback, min_periods=1).std().values
+        rolling_vol = np.nan_to_num(rolling_vol, nan=0.0)
+        # Expanding percentile: rank current vol vs all prior vol
+        for i in range(vol_lookback, n):
+            hist = rolling_vol[:i + 1]
+            if len(hist) > 1 and np.max(hist) > 1e-10:
+                percentile = float(np.sum(hist <= rolling_vol[i])) / len(hist)
+                systemic_stress[i] = float(np.clip(percentile, 0.0, 1.0))
+
+    # ── Build ShockVectors ──
+    shock_vectors: Dict = {}
+    for i in range(n):
+        idx = ohlcv.index[i]
+        ts = idx if hasattr(idx, 'isoformat') else datetime.now()
+
+        structural_features: Dict[str, float] = {
+            "drift_score": float(drift_scores[i]),
+            "systemic_stress": float(systemic_stress[i]),
+        }
+
+        sv = ShockVector(
+            schema_version="1.0",
+            timestamp=ts,
+            ticker=ticker,
+            hmm_regime=int(regime_vals[i]),
+            hmm_confidence=float(conf_vals[i]),
+            hmm_uncertainty=float(uncertainty_vals[i]),
+            bocpd_changepoint_prob=float(bocpd_cp_probs[i]),
+            bocpd_runlength=int(bocpd_runlengths[i]),
+            jump_detected=bool(jump_flags[i]),
+            jump_magnitude=float(jump_magnitudes[i]),
+            structural_features=structural_features,
+            transition_matrix=None,
+            ensemble_model_type="hmm",
+        )
+        shock_vectors[idx] = sv
+
+    logger.debug(
+        "compute_shock_vectors: computed %d vectors for %s", len(shock_vectors), ticker,
+    )
+    return shock_vectors
