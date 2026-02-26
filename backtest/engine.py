@@ -63,6 +63,7 @@ logger = logging.getLogger(__name__)
 from .execution import ExecutionModel
 from .cost_calibrator import CostCalibrator
 from ..regime.shock_vector import compute_shock_vectors, ShockVector
+from ..regime.uncertainty_gate import UncertaintyGate
 
 _PERMNO_RE = re.compile(r"^\d{1,10}$")
 
@@ -259,6 +260,10 @@ class Backtester:
         # conditioning.  Populated in run() before trade processing.
         # Keyed by (ticker_str, bar_date) → ShockVector.
         self._shock_vectors: Dict[tuple, ShockVector] = {}
+
+        # SPEC-W03: Uncertainty gate scales position sizes down when
+        # regime detection entropy is high (regime transitions).
+        self._uncertainty_gate = UncertaintyGate()
 
         # Risk components (lazy-initialized if needed)
         self._position_sizer = None
@@ -921,10 +926,21 @@ class Backtester:
                 if exit_idx >= len(close):
                     continue
 
+                # SPEC-W03: Apply uncertainty gate to position size.
+                # When regime entropy is high, reduce position size to limit
+                # exposure during uncertain regime transitions.
+                adjusted_size = self.position_size_pct
+                shock = self._shock_vectors.get((permno, dt))
+                if shock is not None and shock.hmm_uncertainty is not None:
+                    size_mult = self._uncertainty_gate.compute_size_multiplier(
+                        shock.hmm_uncertainty,
+                    )
+                    adjusted_size *= size_mult
+
                 entry_fill = self._simulate_entry(
                     ohlcv=ohlcv,
                     entry_idx=entry_idx,
-                    position_size=self.position_size_pct,
+                    position_size=adjusted_size,
                 )
                 if entry_fill is None:
                     continue
@@ -1452,6 +1468,17 @@ class Backtester:
                 # Apply drawdown size multiplier
                 regime_mult = float(REGIME_RISK_MULTIPLIER.get(int(signal["regime"]), 1.0))
                 position_size = ps.final_size * dd_status.size_multiplier * regime_mult
+
+                # SPEC-W03: Apply uncertainty gate to position size.
+                # When regime entropy is high, reduce position size to limit
+                # exposure during uncertain regime transitions.
+                shock = self._shock_vectors.get((ticker, dt))
+                if shock is not None and shock.hmm_uncertainty is not None:
+                    size_mult = self._uncertainty_gate.compute_size_multiplier(
+                        shock.hmm_uncertainty,
+                    )
+                    position_size *= size_mult
+
                 if position_size <= 0:
                     continue
 

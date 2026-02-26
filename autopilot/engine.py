@@ -54,6 +54,7 @@ from ..models.cross_sectional import cross_sectional_rank
 from ..models.predictor import EnsemblePredictor
 from ..models.trainer import ModelTrainer
 from ..regime.detector import RegimeDetector
+from ..regime.uncertainty_gate import UncertaintyGate
 from ..risk.portfolio_optimizer import optimize_portfolio
 from .meta_labeler import MetaLabelingModel
 from .paper_trader import PaperTrader
@@ -1278,8 +1279,46 @@ class AutopilotEngine:
                 if abs(w_sum) > 1e-10:
                     weights = weights / w_sum
 
+            # ── SPEC-W03: Uncertainty gate — reduce portfolio weights when
+            #    regime entropy is high (uncertain regime transitions). ──
+            # Compute the current aggregate regime uncertainty from the
+            # latest predictions.  Use regime_prob_* columns (Shannon entropy)
+            # or fall back to regime_confidence (inverse).
+            regime_prob_cols = [
+                c for c in latest_predictions.columns
+                if c.startswith("regime_prob_")
+            ]
+            if len(regime_prob_cols) >= 2:
+                probs = latest_predictions[regime_prob_cols].astype(float).clip(lower=1e-10)
+                row_sums = probs.sum(axis=1)
+                probs = probs.div(row_sums, axis=0)
+                entropy = -(probs * np.log(probs)).sum(axis=1) / np.log(len(regime_prob_cols))
+                current_uncertainty = float(entropy.clip(0, 1).mean())
+            elif "regime_confidence" in latest_predictions.columns:
+                conf = latest_predictions["regime_confidence"].astype(float).clip(0, 1).mean()
+                current_uncertainty = float(1.0 - conf)
+            else:
+                current_uncertainty = 0.0
+
+            if current_uncertainty > 0.0:
+                gate = UncertaintyGate()
+                weights = pd.Series(
+                    gate.apply_uncertainty_gate(weights.values, current_uncertainty),
+                    index=weights.index,
+                )
+                # Re-normalise so weights sum to 1 after gate scaling
+                w_sum = weights.sum()
+                if abs(w_sum) > 1e-10:
+                    weights = weights / w_sum
+                weights[weights.abs() < 1e-6] = 0.0
+                w_sum = weights.sum()
+                if abs(w_sum) > 1e-10:
+                    weights = weights / w_sum
+                self._log(f"  Uncertainty gate: multiplier={gate.compute_size_multiplier(current_uncertainty):.3f} "
+                          f"(entropy={current_uncertainty:.3f})")
+
             self._log(f"  Portfolio optimizer: {(weights != 0).sum()} non-zero weights "
-                      f"out of {len(common)} assets (confidence-weighted)")
+                      f"out of {len(common)} assets (confidence-weighted, uncertainty-gated)")
             return weights
         except (ValueError, RuntimeError) as e:
             self._log(f"  Portfolio optimizer failed ({type(e).__name__}: {e}); "
