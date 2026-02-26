@@ -1,15 +1,23 @@
 """System health assessment for API consumption.
 
-Expanded health service with 15 runtime monitoring checks across 5 domains:
+Expanded health service with 16 runtime monitoring checks across 5 domains:
     - Data Integrity (25%)
-    - Signal Quality (25%)
+    - Signal Quality (25%)  — includes Information Ratio (Spec 09)
     - Risk Management (20%)
-    - Execution Quality (15%)
-    - Model Governance (15%)
+    - Execution Quality (20%)  — increased from 15% (Spec 09)
+    - Model Governance (10%)   — reduced from 15% (Spec 09)
 
 Each check returns a ``HealthCheckResult`` dataclass with score, status,
 methodology, and raw metrics.  UNAVAILABLE checks (missing data) score 0
 and are excluded from domain averages so they don't inflate results.
+
+Spec 09 additions:
+    - Information Ratio check (rolling 20-day IR vs baseline)
+    - Quantified survivorship bias (PnL loss from deleted securities)
+    - Confidence intervals on all health scores
+    - Enhanced health history with rolling averages and trend detection
+    - Health alert integration (degradation + domain failure detection)
+    - Health-to-risk feedback loop (position size scaling)
 """
 from __future__ import annotations
 
@@ -202,13 +210,16 @@ class HealthService:
     def compute_comprehensive_health(self) -> Dict[str, Any]:
         """Compute comprehensive health score across 5 weighted domains.
 
-        Domain weights:
+        Domain weights (Spec 09 updated):
             - Data Integrity (25%): survivorship + anomalies + microstructure
-            - Signal Quality (25%): IC decay + prediction distribution + ensemble
+            - Signal Quality (25%): IC decay + prediction distribution + ensemble + IR
             - Risk Management (20%): tail risk + correlations + capital utilization
-            - Execution Quality (15%): execution quality + signal profitability
-            - Model Governance (15%): feature drift + CV gap + regime + retraining
+            - Execution Quality (20%): execution quality + signal profitability
+            - Model Governance (10%): feature drift + CV gap + regime + retraining
         """
+        from .health_confidence import HealthConfidenceCalculator, ConfidenceResult
+
+        ci_calc = HealthConfidenceCalculator()
         domains: Dict[str, Dict[str, Any]] = {}
 
         checks_total = 0
@@ -234,11 +245,12 @@ class HealthService:
             "checks": [c.to_dict() for c in data_checks],
         }
 
-        # ── Signal Quality (25%) ──
+        # ── Signal Quality (25%) — now includes Information Ratio (Spec 09) ──
         signal_checks = [
             self._check_signal_decay(),
             self._check_prediction_distribution(),
             self._check_ensemble_disagreement(),
+            self._check_information_ratio(),
         ]
         for c in signal_checks:
             c.severity = "critical"
@@ -264,7 +276,7 @@ class HealthService:
             "checks": [c.to_dict() for c in risk_checks],
         }
 
-        # ── Execution Quality (15%) ──
+        # ── Execution Quality (20% — increased from 15%, Spec 09) ──
         exec_checks = [
             self._check_execution_quality(),
             self._check_signal_profitability(),
@@ -274,11 +286,11 @@ class HealthService:
         exec_score = self._domain_score(exec_checks)
         exec_status = self._domain_status(exec_checks)
         domains["execution_quality"] = {
-            "weight": 0.15, "score": exec_score, "status": exec_status,
+            "weight": 0.20, "score": exec_score, "status": exec_status,
             "checks": [c.to_dict() for c in exec_checks],
         }
 
-        # ── Model Governance (15%) ──
+        # ── Model Governance (10% — reduced from 15%, Spec 09) ──
         gov_checks = [
             self._check_feature_importance_drift(),
             self._check_cv_gap_trend(),
@@ -290,7 +302,7 @@ class HealthService:
         gov_score = self._domain_score(gov_checks)
         gov_status = self._domain_status(gov_checks)
         domains["model_governance"] = {
-            "weight": 0.15, "score": gov_score, "status": gov_status,
+            "weight": 0.10, "score": gov_score, "status": gov_status,
             "checks": [c.to_dict() for c in gov_checks],
         }
 
@@ -315,22 +327,65 @@ class HealthService:
         if overall is not None:
             overall_status = "PASS" if overall >= 75 else "WARN" if overall >= 50 else "FAIL"
 
+        # ── Confidence intervals (Spec 09) ──
+        domain_ci: Dict[str, Dict[str, Any]] = {}
+        for dname, dinfo in domains.items():
+            avail = [
+                c for c in dinfo["checks"]
+                if c.get("status") != "UNAVAILABLE"
+            ]
+            scores = [c.get("score", 0.0) for c in avail]
+            if scores:
+                ci_result = ci_calc.compute_ci(samples=np.array(scores))
+                domain_ci[dname] = ci_result.to_dict()
+            else:
+                domain_ci[dname] = {"mean": 0.0, "ci_lower": 0.0, "ci_upper": 0.0,
+                                    "n_samples": 0, "method": "insufficient",
+                                    "low_confidence": True, "ci_width": 0.0}
+
+        # Overall CI: propagate through weighted domains
+        overall_ci = None
+        if overall is not None and available_domains:
+            d_scores = []
+            d_widths = []
+            d_weights = []
+            for dname, dinfo in available_domains.items():
+                d_scores.append(dinfo["score"])
+                ci = domain_ci.get(dname, {})
+                d_widths.append(ci.get("ci_width", 0.0))
+                d_weights.append(dinfo["weight"])
+            ci_lower, ci_upper = HealthConfidenceCalculator.propagate_weighted_ci(
+                d_scores, d_widths, d_weights,
+            )
+            overall_ci = {
+                "ci_lower": round(ci_lower, 1),
+                "ci_upper": round(ci_upper, 1),
+                "ci_width": round(ci_upper - ci_lower, 1),
+            }
+
+        # ── Alerts (Spec 09) ──
+        alert_events = self._run_alerts(overall, domains)
+
         return {
             "overall_score": round(overall, 1) if overall is not None else None,
             "overall_status": overall_status,
+            "overall_ci": overall_ci,
             "overall_methodology": (
                 "Weighted average of 5 domains: Data Integrity (25%), Signal Quality (25%), "
-                "Risk Management (20%), Execution Quality (15%), Model Governance (15%). "
+                "Risk Management (20%), Execution Quality (20%), Model Governance (10%). "
                 "Only checks with available data are scored. Within each domain, checks are "
-                "weighted by severity: critical (3x), standard (1x), informational (0.5x)."
+                "weighted by severity: critical (3x), standard (1x), informational (0.5x). "
+                "Confidence intervals computed via bootstrap (N<30) or normal approximation."
             ),
             "checks_available": checks_available,
             "checks_total": checks_total,
+            "alerts": alert_events,
             "domains": {
                 k: {
                     "score": round(v["score"], 1) if v["score"] is not None else None,
                     "weight": v["weight"],
                     "status": v["status"],
+                    "ci": domain_ci.get(k),
                     "checks_available": sum(
                         1 for c in v["checks"] if c.get("status") != "UNAVAILABLE"
                     ),
@@ -537,22 +592,172 @@ class HealthService:
             logger.warning("Health check '%s' failed: %s", name, e)
             return _unavailable(name, domain, f"Error: {e}")
 
+    # ── Information Ratio Check (Spec 09) ─────────────────────────────────
+
+    def _check_information_ratio(self) -> HealthCheckResult:
+        """Compute rolling Information Ratio and compare to baseline.
+
+        IR = (signal_return - benchmark_return) / tracking_error
+        Uses a 20-day rolling window.  Compares current IR to baseline
+        (from training period or historical average).
+
+        Score mapping:
+            IR >= 1.0  → 90 (excellent alpha generation)
+            IR >= 0.5  → 70 (acceptable)
+            IR >= 0.0  → 45 (marginal)
+            IR <  0.0  → 20 (no alpha)
+        """
+        domain = "signal_quality"
+        name = "information_ratio"
+        methodology = (
+            "IR = (signal_return - benchmark_return) / tracking_error. "
+            "Rolling 20-day window on backtest trade returns vs SPY benchmark. "
+            "IR > 1.0 is excellent, 0.5–1.0 acceptable, < 0.5 poor."
+        )
+        thresholds = {"ir_excellent": 1.0, "ir_acceptable": 0.5, "ir_poor": 0.0}
+        try:
+            df = self._load_trades_csv()
+            if df is None:
+                return _unavailable(name, domain, "No backtest trades CSV")
+
+            if "actual_return" not in df.columns:
+                return _unavailable(name, domain, "Missing actual_return column")
+
+            actual = pd.to_numeric(df["actual_return"], errors="coerce").dropna()
+            if len(actual) < 20:
+                return _unavailable(
+                    name, domain,
+                    f"Only {len(actual)} trade returns — need 20+",
+                )
+
+            # Load benchmark returns (SPY) if available
+            benchmark_returns = self._load_benchmark_returns()
+
+            # Compute strategy daily-like returns from trade returns
+            signal_returns = actual.values.astype(float)
+
+            if benchmark_returns is not None and len(benchmark_returns) >= 20:
+                # Align: use as many benchmark returns as we have trade returns
+                n = min(len(signal_returns), len(benchmark_returns))
+                sig = signal_returns[-n:]
+                bench = benchmark_returns[-n:]
+            else:
+                # Zero benchmark (excess return = signal return)
+                sig = signal_returns
+                bench = np.zeros_like(sig)
+
+            # Compute rolling IR over 20-day windows
+            window = min(20, len(sig))
+            if window < 10:
+                return _unavailable(
+                    name, domain,
+                    f"Window {window} too small for IR calculation",
+                )
+
+            excess = sig - bench
+            rolling_irs = []
+            for start in range(0, len(excess) - window + 1, max(1, window // 2)):
+                chunk = excess[start:start + window]
+                te = float(np.std(chunk, ddof=1))
+                if te > 1e-8:
+                    ir_val = float(np.mean(chunk)) / te
+                    rolling_irs.append(ir_val)
+
+            if not rolling_irs:
+                return _unavailable(name, domain, "Could not compute rolling IR")
+
+            current_ir = float(rolling_irs[-1])
+            avg_ir = float(np.mean(rolling_irs))
+
+            # Baseline IR: use first third of windows as baseline
+            n_baseline = max(1, len(rolling_irs) // 3)
+            baseline_ir = float(np.mean(rolling_irs[:n_baseline]))
+
+            # Degradation check
+            degradation = None
+            if abs(baseline_ir) > 1e-6:
+                degradation = current_ir / baseline_ir
+
+            raw = {
+                "current_ir": round(current_ir, 4),
+                "avg_ir": round(avg_ir, 4),
+                "baseline_ir": round(baseline_ir, 4),
+                "degradation_ratio": round(degradation, 4) if degradation is not None else None,
+                "n_windows": len(rolling_irs),
+                "n_trades": len(signal_returns),
+                "benchmark_available": benchmark_returns is not None,
+            }
+
+            # Score based on current IR level
+            if current_ir >= 1.0:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=90.0, status="PASS",
+                    explanation=f"Excellent IR={current_ir:.3f} (baseline={baseline_ir:.3f})",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            if current_ir >= 0.5:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=70.0, status="PASS",
+                    explanation=f"Acceptable IR={current_ir:.3f} (baseline={baseline_ir:.3f})",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            if current_ir >= 0.0:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=45.0, status="WARN",
+                    explanation=f"Marginal IR={current_ir:.3f} (baseline={baseline_ir:.3f})",
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            return HealthCheckResult(
+                name=name, domain=domain, score=20.0, status="FAIL",
+                explanation=f"Negative IR={current_ir:.3f} — no alpha generation",
+                methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+
+        except Exception as e:
+            logger.warning("Health check '%s' failed: %s", name, e)
+            return _unavailable(name, domain, f"Error: {e}")
+
+    @staticmethod
+    def _load_benchmark_returns() -> Optional[np.ndarray]:
+        """Load SPY daily returns for benchmark comparison."""
+        try:
+            from quant_engine.config import DATA_CACHE_DIR, BENCHMARK
+            cache_dir = Path(DATA_CACHE_DIR)
+            # Try daily cache first, then 4-hour
+            for suffix in ["_1d.parquet", "_4hour*.parquet"]:
+                paths = sorted(cache_dir.glob(f"{BENCHMARK}{suffix}"))
+                if paths:
+                    df = pd.read_parquet(paths[0])
+                    if "Close" in df.columns:
+                        close = pd.to_numeric(df["Close"], errors="coerce").dropna()
+                        returns = close.pct_change().dropna().values.astype(float)
+                        if len(returns) >= 20:
+                            return returns
+        except Exception:
+            pass
+        return None
+
     # ── Data Quality Checks ─────────────────────────────────────────────
 
     def _check_survivorship_bias(self) -> HealthCheckResult:
-        """Check actual data for survivorship bias indicators.
+        """Quantified survivorship bias check (Spec 09 enhanced).
 
-        Scans cache parquets for total_ret column (delisting returns) and
-        counts tickers whose last bar is >1yr old (likely delisted).
+        Scans cache for delisted securities and computes the PnL impact
+        of positions in those securities as a percentage of total PnL.
+
+        Scoring:
+            pnl_loss < 1%  → 90 (minimal bias)
+            pnl_loss < 5%  → 55 (moderate bias)
+            pnl_loss >= 5% → 25 (significant bias)
+
+        Falls back to binary delisting-return detection when trade data
+        is unavailable.
         """
         domain = "data_integrity"
         name = "survivorship_bias"
         methodology = (
-            "Scan cached parquets for total_ret column (delisting returns from WRDS). "
-            "Count tickers whose last data bar is >1yr old (delisted proxies). "
-            "Both indicators needed to confirm survivorship bias is mitigated."
+            "Identify securities deleted from universe (last bar >1yr old). "
+            "Compute PnL from trades in deleted securities as % of total PnL. "
+            "pnl_loss < 1% is clean; > 5% indicates significant survivorship bias. "
+            "Falls back to delisting return column detection if no trade data."
         )
-        thresholds = {"has_total_ret": True, "delisted_count_min": 1}
+        thresholds = {"pnl_loss_clean": 0.01, "pnl_loss_moderate": 0.05}
         try:
             from quant_engine.config import DATA_CACHE_DIR
             cache_dir = Path(DATA_CACHE_DIR)
@@ -561,7 +766,7 @@ class HealthService:
                 return _unavailable(name, domain, "No cached parquet files")
 
             has_total_ret = 0
-            delisted_count = 0
+            delisted_tickers: List[str] = []
             checked = 0
             cutoff = datetime.now().timestamp() - 365 * 86400  # 1 year ago
 
@@ -576,7 +781,9 @@ class HealthService:
                         try:
                             last_date = pd.Timestamp(df.index.max())
                             if last_date.timestamp() < cutoff:
-                                delisted_count += 1
+                                # Extract ticker from filename
+                                ticker = p.stem.replace("_1d", "")
+                                delisted_tickers.append(ticker)
                         except (TypeError, ValueError):
                             pass
                 except (OSError, ValueError):
@@ -585,21 +792,81 @@ class HealthService:
             if checked == 0:
                 return _unavailable(name, domain, "Could not read any cache files")
 
-            total_ret_present = has_total_ret > 0
-            raw = {"files_checked": checked, "has_total_ret": has_total_ret,
-                   "delisted_count": delisted_count}
+            # Attempt quantified PnL impact (Spec 09)
+            pnl_lost_pct = 0.0
+            pnl_quantified = False
+            n_deleted_trades = 0
 
-            if total_ret_present and delisted_count > 0:
+            if delisted_tickers:
+                trades_df = self._load_trades_csv()
+                if trades_df is not None and "ticker" in trades_df.columns:
+                    net_ret = pd.to_numeric(
+                        trades_df.get("net_return", pd.Series(dtype=float)),
+                        errors="coerce",
+                    )
+                    pos_size = pd.to_numeric(
+                        trades_df.get("position_size", pd.Series(dtype=float)),
+                        errors="coerce",
+                    )
+                    trade_pnl = (net_ret * pos_size).fillna(0.0)
+                    total_pnl = float(trade_pnl.abs().sum())
+
+                    if total_pnl > 0:
+                        deleted_mask = trades_df["ticker"].isin(delisted_tickers)
+                        deleted_pnl = float(trade_pnl[deleted_mask].sum())
+                        n_deleted_trades = int(deleted_mask.sum())
+                        pnl_lost_pct = abs(deleted_pnl) / total_pnl
+                        pnl_quantified = True
+
+            raw = {
+                "files_checked": checked,
+                "has_total_ret": has_total_ret,
+                "n_delisted": len(delisted_tickers),
+                "delisted_tickers": delisted_tickers[:20],
+                "pnl_lost_pct": round(pnl_lost_pct, 4),
+                "pnl_quantified": pnl_quantified,
+                "n_deleted_trades": n_deleted_trades,
+            }
+
+            if pnl_quantified:
+                # Quantified scoring (Spec 09)
+                if pnl_lost_pct < 0.01:
+                    return HealthCheckResult(
+                        name=name, domain=domain, score=90.0, status="PASS",
+                        explanation=(
+                            f"Survivorship bias minimal: {pnl_lost_pct:.2%} PnL from "
+                            f"{len(delisted_tickers)} delisted securities"
+                        ),
+                        methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+                if pnl_lost_pct < 0.05:
+                    return HealthCheckResult(
+                        name=name, domain=domain, score=55.0, status="WARN",
+                        explanation=(
+                            f"Moderate survivorship bias: {pnl_lost_pct:.2%} PnL from "
+                            f"{len(delisted_tickers)} delisted securities"
+                        ),
+                        methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+                return HealthCheckResult(
+                    name=name, domain=domain, score=25.0, status="FAIL",
+                    explanation=(
+                        f"Significant survivorship bias: {pnl_lost_pct:.2%} PnL from "
+                        f"{len(delisted_tickers)} delisted ({n_deleted_trades} trades)"
+                    ),
+                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+
+            # Fallback: binary check (pre-Spec 09 logic)
+            total_ret_present = has_total_ret > 0
+            if total_ret_present and len(delisted_tickers) > 0:
                 return HealthCheckResult(
                     name=name, domain=domain, score=90.0, status="PASS",
                     explanation=f"Delisting returns present ({has_total_ret} files), "
-                                f"{delisted_count} delisted tickers found",
+                                f"{len(delisted_tickers)} delisted tickers found",
                     methodology=methodology, raw_metrics=raw, thresholds=thresholds)
-            if total_ret_present or delisted_count > 0:
+            if total_ret_present or len(delisted_tickers) > 0:
                 return HealthCheckResult(
                     name=name, domain=domain, score=60.0, status="WARN",
                     explanation=f"Partial survivorship coverage (total_ret={has_total_ret}, "
-                                f"delisted={delisted_count})",
+                                f"delisted={len(delisted_tickers)})",
                     methodology=methodology, raw_metrics=raw, thresholds=thresholds)
             return HealthCheckResult(
                 name=name, domain=domain, score=30.0, status="FAIL",
@@ -1341,10 +1608,57 @@ class HealthService:
             logger.warning("Health check '%s' failed: %s", name, e)
             return _unavailable(name, domain, f"Error: {e}")
 
+    # ── Alert Integration (Spec 09) ────────────────────────────────────
+
+    def _run_alerts(
+        self,
+        overall_score: Optional[float],
+        domains: Dict[str, Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Run alert checks and return any triggered alerts.
+
+        Called during compute_comprehensive_health().  Compares today's
+        health to yesterday's (from history) for degradation detection.
+        """
+        try:
+            from .health_alerts import create_alert_manager
+
+            alert_mgr = create_alert_manager()
+            pending_alerts = []
+
+            # Check domain failures
+            domain_scores = {}
+            for dname, dinfo in domains.items():
+                score = dinfo.get("score")
+                if score is not None:
+                    domain_scores[dname] = score
+            domain_alerts = alert_mgr.check_domain_failures(domain_scores)
+            pending_alerts.extend(domain_alerts)
+
+            # Check day-over-day degradation using history
+            if overall_score is not None:
+                history = self.get_health_history(limit=2)
+                if history:
+                    yesterday_score = history[-1].get("overall_score")
+                    if yesterday_score is not None:
+                        deg_alert = alert_mgr.check_health_degradation(
+                            overall_score, yesterday_score,
+                        )
+                        if deg_alert is not None:
+                            pending_alerts.append(deg_alert)
+
+            # Process (deduplicate + dispatch)
+            sent = alert_mgr.process_alerts(pending_alerts)
+            return [a.to_dict() for a in sent]
+
+        except Exception as e:
+            logger.warning("Alert processing failed: %s", e)
+            return []
+
     # ── Health History Storage ─────────────────────────────────────────
 
     _HEALTH_DB_PATH: Optional[Path] = None
-    _MAX_SNAPSHOTS = 30
+    _MAX_SNAPSHOTS = 90  # Spec 09: 90 days retention (up from 30)
 
     @classmethod
     def _get_health_db_path(cls) -> Path:
@@ -1410,7 +1724,12 @@ class HealthService:
             logger.warning("Failed to save health snapshot: %s", e)
 
     def get_health_history(self, limit: int = 30) -> List[Dict[str, Any]]:
-        """Retrieve recent health snapshots for trend visualization."""
+        """Retrieve recent health snapshots for trend visualization.
+
+        Spec 09 enhancements:
+            - 7-day and 30-day rolling averages
+            - Trend detection (improving / stable / degrading)
+        """
         import sqlite3
         try:
             self._ensure_health_table()
@@ -1440,6 +1759,102 @@ class HealthService:
         except Exception as e:
             logger.warning("Failed to load health history: %s", e)
             return []
+
+    def get_health_history_with_trends(
+        self,
+        limit: int = 90,
+    ) -> Dict[str, Any]:
+        """Retrieve health history with rolling averages and trend analysis.
+
+        Returns
+        -------
+        dict with keys:
+            snapshots: list of {timestamp, overall_score, domain_scores}
+            rolling_7d: list of 7-day rolling averages
+            rolling_30d: list of 30-day rolling averages
+            trend: "improving", "stable", or "degrading"
+            trend_slope: linear regression slope per day
+        """
+        history = self.get_health_history(limit=limit)
+
+        if not history:
+            return {
+                "snapshots": [],
+                "rolling_7d": [],
+                "rolling_30d": [],
+                "trend": "unknown",
+                "trend_slope": 0.0,
+            }
+
+        scores = [h.get("overall_score") for h in history]
+        # Filter out None values for numeric operations
+        valid_scores = [s for s in scores if s is not None]
+
+        # Rolling averages
+        rolling_7d = self._compute_rolling_average(valid_scores, window=7)
+        rolling_30d = self._compute_rolling_average(valid_scores, window=30)
+
+        # Trend detection using linear regression on recent 30 points
+        trend, slope = self._detect_trend(valid_scores, window=30)
+
+        return {
+            "snapshots": history,
+            "rolling_7d": [round(v, 1) for v in rolling_7d],
+            "rolling_30d": [round(v, 1) for v in rolling_30d],
+            "trend": trend,
+            "trend_slope": round(slope, 4),
+        }
+
+    @staticmethod
+    def _compute_rolling_average(
+        scores: List[float],
+        window: int = 7,
+    ) -> List[float]:
+        """Compute rolling average of health scores."""
+        if not scores:
+            return []
+        arr = np.array(scores, dtype=float)
+        if len(arr) < window:
+            window = len(arr)
+        if window <= 0:
+            return scores
+        cumsum = np.cumsum(arr)
+        cumsum = np.insert(cumsum, 0, 0.0)
+        rolling = (cumsum[window:] - cumsum[:-window]) / window
+        # Pad front with partial averages
+        pad = [float(np.mean(arr[:i + 1])) for i in range(min(window - 1, len(arr)))]
+        return pad + rolling.tolist()
+
+    @staticmethod
+    def _detect_trend(
+        scores: List[float],
+        window: int = 30,
+    ) -> tuple:
+        """Detect health score trend using linear regression.
+
+        Returns
+        -------
+        (trend_label, slope)
+            trend_label: "improving" (slope > 0.5), "degrading" (slope < -0.5),
+                         or "stable" (|slope| <= 0.5).
+            slope: linear regression slope per observation (on 0–100 scale).
+        """
+        if len(scores) < 3:
+            return ("unknown", 0.0)
+
+        recent = scores[-window:] if len(scores) >= window else scores
+        x = np.arange(len(recent), dtype=float)
+        coeffs = np.polyfit(x, recent, 1)
+        slope = float(coeffs[0])
+
+        if slope > 0.5:
+            trend = "improving"
+        elif slope < -0.5:
+            trend = "degrading"
+        else:
+            trend = "stable"
+
+        return (trend, slope)
 
     def _check_regime_transition_health(self) -> HealthCheckResult:
         """Check regime model quality via entropy, transition frequency,

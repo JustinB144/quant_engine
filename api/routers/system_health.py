@@ -45,10 +45,10 @@ async def detailed_health(cache: CacheManager = Depends(get_cache)) -> ApiRespon
 
 @router.get("/api/health/history")
 async def health_history() -> ApiResponse:
-    """Return recent health score snapshots for trend visualization."""
+    """Return recent health score snapshots with rolling averages and trend."""
     t0 = time.monotonic()
     svc = HealthService()
-    data = svc.get_health_history(limit=30)
+    data = svc.get_health_history_with_trends(limit=90)
     elapsed = (time.monotonic() - t0) * 1000
     return ApiResponse.success(data, elapsed_ms=elapsed)
 

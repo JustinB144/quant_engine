@@ -99,6 +99,9 @@ class PaperTrader:
         # Portfolio risk manager — sector, correlation, single-name, volatility limits
         self._risk_mgr = PortfolioRiskManager()
 
+        # Spec 09: Health-to-risk feedback gate
+        self._health_risk_gate = self._init_health_gate()
+
         # Spec 06: Execution model with structural state-aware costs
         self._execution_model = ExecutionModel(
             spread_bps=EXEC_SPREAD_BPS,
@@ -138,6 +141,44 @@ class PaperTrader:
 
         # A/B test registry — lazily loaded to avoid circular imports
         self._ab_registry = None
+
+    @staticmethod
+    def _init_health_gate():
+        """Initialize the health-to-risk feedback gate (Spec 09).
+
+        Loads configuration from health.yaml; returns None if unavailable
+        (health gate is optional and non-blocking).
+        """
+        try:
+            from ..api.services.health_risk_feedback import create_health_risk_gate
+            return create_health_risk_gate()
+        except Exception as e:
+            logger.debug("Health risk gate unavailable: %s", e)
+            return None
+
+    def _apply_health_gate(self, position_size_pct: float) -> float:
+        """Apply health-based position size scaling (Spec 09).
+
+        Reads the latest overall health score from the health history
+        database and reduces position sizes proportionally if health
+        is degraded.  No-op if the health gate is disabled or unavailable.
+        """
+        if self._health_risk_gate is None:
+            return position_size_pct
+        try:
+            from ..api.services.health_service import HealthService
+            svc = HealthService()
+            history = svc.get_health_history(limit=1)
+            if history:
+                latest_score = history[-1].get("overall_score")
+                if latest_score is not None:
+                    self._health_risk_gate.update_health(latest_score)
+                    return self._health_risk_gate.apply_health_gate(
+                        position_size_pct, latest_score,
+                    )
+        except Exception as e:
+            logger.debug("Health gate lookup failed: %s", e)
+        return position_size_pct
 
     def _get_active_ab_test(self):
         """Return the active A/B test, if any.
@@ -916,6 +957,9 @@ class PaperTrader:
 
                     # Apply drawdown controller size multiplier
                     position_size_pct *= dd_status.size_multiplier
+
+                    # Spec 09: Apply health-to-risk feedback gate
+                    position_size_pct = self._apply_health_gate(position_size_pct)
 
                     # ── Portfolio risk check before entry ──
                     portfolio_weights: Dict[str, float] = {}

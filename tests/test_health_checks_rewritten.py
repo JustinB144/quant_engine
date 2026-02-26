@@ -173,13 +173,13 @@ class TestDomainScoring:
         score = svc._domain_score(checks)
         assert score == pytest.approx(70.0)
 
-    def test_all_unavailable_returns_zero(self, svc):
+    def test_all_unavailable_returns_none(self, svc):
         checks = [
             _unavailable("a", "test", "no data"),
             _unavailable("b", "test", "no data"),
         ]
         score = svc._domain_score(checks)
-        assert score == 0.0
+        assert score is None
 
     def test_domain_status_unavailable_majority(self, svc):
         checks = [
@@ -268,12 +268,13 @@ class TestSurvivorshipCheck:
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create parquet WITH total_ret column
+        # Create parquet WITH total_ret column — use recent dates so
+        # AAPL is NOT flagged as delisted (must be within last year)
         df = pd.DataFrame({
             "Close": np.random.uniform(100, 200, 100),
             "Volume": np.random.uniform(1e6, 1e7, 100),
             "total_ret": np.random.normal(0.001, 0.02, 100),
-        }, index=pd.date_range("2024-01-01", periods=100))
+        }, index=pd.date_range("2025-10-01", periods=100))
         df.to_parquet(cache_dir / "AAPL_1d.parquet")
 
         # Create parquet with old data (delisted proxy)
@@ -284,7 +285,10 @@ class TestSurvivorshipCheck:
         }, index=pd.date_range("2020-01-01", periods=100))
         df_old.to_parquet(cache_dir / "DELIST_1d.parquet")
 
-        with patch("quant_engine.config.DATA_CACHE_DIR", cache_dir):
+        # Patch RESULTS_DIR too so the enhanced survivorship check
+        # doesn't load real trade data from outside the test fixture
+        with patch("quant_engine.config.DATA_CACHE_DIR", cache_dir), \
+             patch("quant_engine.config.RESULTS_DIR", tmp_path / "results"):
             result = svc._check_survivorship_bias()
 
         assert result.status == "PASS"

@@ -1,0 +1,96 @@
+# Health System Configuration — Spec 09
+#
+# Domain weights, check thresholds, severity weights, risk feedback,
+# alert settings, and persistence configuration.
+
+domain_weights:
+  data_integrity: 0.25
+  signal_quality: 0.25
+  risk_management: 0.20
+  execution_quality: 0.20   # increased from 0.15 — live slippage/impact is critical
+  model_governance: 0.10    # reduced from 0.15 — governance is slower-moving
+
+check_thresholds:
+  information_ratio:
+    good: 1.0
+    acceptable: 0.5
+    poor: 0.0
+    rolling_window: 20           # trading days
+    baseline_degradation: 0.70   # flag if rolling IR < baseline * 0.70
+    min_observations: 20
+
+  survivorship_bias:
+    max_pnl_loss_pct: 0.05       # flag if > 5% of PnL from deleted securities
+    score_thresholds:
+      clean: 0.01                # < 1% PnL loss → score 1.0
+      moderate: 0.05             # 1–5% → score 0.5
+                                 # > 5% → score 0.0
+
+  signal_decay:
+    ic_ratio_pass: 0.80
+    ic_ratio_warn: 0.50
+    min_observations: 100
+
+  tail_risk:
+    cvar95_pass: -0.03
+    cvar95_warn: -0.05
+
+  prediction_distribution:
+    std_pass: 0.005
+    iqr_pass: 0.003
+
+severity_weights:
+  critical: 3.0
+  standard: 1.0
+  informational: 0.5
+
+risk_feedback:
+  enabled: true
+  # Linear interpolation table: health_score → position_size_multiplier
+  health_to_size_multiplier:
+    1.00: 1.00    # full health → full size
+    0.80: 0.95    # 80% health → 95% size
+    0.60: 0.80    # 60% health → 80% size
+    0.40: 0.50    # 40% health → 50% size
+    0.20: 0.20    # 20% health → 20% size
+    0.00: 0.05    # 0% health → 5% size (near-halt)
+  # Exponential smoothing factor for health score (avoids abrupt size changes)
+  smoothing_alpha: 0.3
+  # Minimum health score below which trading is halted
+  halt_threshold: 0.05
+
+alerts:
+  enabled: true
+  # Alert if overall health drops > this fraction day-over-day
+  health_degradation_threshold: 0.10
+  # Alert if any domain score falls below this (0–100 scale)
+  domain_critical_threshold: 50.0
+  # Rate limiting: suppress duplicate alerts within this window (seconds)
+  dedup_window_seconds: 86400     # 24 hours
+  notification_channels:
+    - type: "logging"
+      level: "warning"
+    - type: "email"
+      enabled: false
+      recipients: []
+    - type: "webhook"
+      enabled: false
+      url: ""
+
+persistence:
+  enabled: true
+  backend: "sqlite"
+  retention_days: 90
+  max_snapshots: 90
+
+reporting:
+  health_score_format: "{score:.1f} (N={n_samples}, CI=[{ci_lower:.1f}, {ci_upper:.1f}])"
+  include_domain_breakdown: true
+  include_check_details: true
+
+confidence_intervals:
+  default_ci_level: 0.95
+  bootstrap_samples: 1000
+  # Use bootstrap for small N, normal/t for larger N
+  bootstrap_threshold: 30
+  min_samples_for_ci: 5
