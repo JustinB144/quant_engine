@@ -18,8 +18,12 @@ def _get_signal_meta_fields() -> dict:
     """Collect transparency metadata for signal responses."""
     meta_fields: dict = {}
     try:
-        from quant_engine.config import REGIME_2_TRADE_ENABLED
-        meta_fields["regime_suppressed"] = not REGIME_2_TRADE_ENABLED
+        from quant_engine.config import REGIME_TRADE_POLICY
+        # Report True if *any* regime has suppression enabled (enabled=False)
+        meta_fields["regime_suppressed"] = any(
+            not p["enabled"] for p in REGIME_TRADE_POLICY.values()
+        )
+        meta_fields["regime_trade_policy"] = REGIME_TRADE_POLICY
     except (ImportError, AttributeError):
         pass
     try:

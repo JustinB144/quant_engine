@@ -238,6 +238,155 @@ class ExecutionModel:
         }
         return composite, details
 
+    # ── Cost Estimation (SPEC-E01) ──────────────────────────────────
+
+    def estimate_cost(
+        self,
+        daily_volume: float,
+        desired_notional: float,
+        realized_vol: float | None = None,
+        structure_uncertainty: float = 0.0,
+        overnight_gap: float | None = None,
+        intraday_range: float | None = None,
+        reference_price: float = 100.0,
+        event_spread_multiplier: float = 1.0,
+        break_probability: float | None = None,
+        drift_score: float | None = None,
+        systemic_stress: float | None = None,
+        volume_trend: float | None = None,
+        impact_coeff_override: float | None = None,
+    ) -> float:
+        """Estimate expected round-trip cost in basis points without executing.
+
+        Uses the same spread + market impact model as :meth:`simulate` but
+        returns only the total expected round-trip cost (entry + exit).  This
+        supports the edge-after-costs trade gate in the backtest engine.
+
+        Parameters
+        ----------
+        daily_volume : float
+            Daily share volume.
+        desired_notional : float
+            Target execution notional in USD.
+        realized_vol : float, optional
+            Annualized realized volatility for dynamic cost scaling.
+        structure_uncertainty : float
+            Regime state entropy / uncertainty (0-1). Defaults to 0.
+        overnight_gap : float, optional
+            Overnight gap return for spread scaling.
+        intraday_range : float, optional
+            Intraday range for spread scaling.
+        reference_price : float
+            Reference price for dollar volume computation. Defaults to 100.
+        event_spread_multiplier : float
+            Multiplier for event-window spread widening (>= 1.0).
+        break_probability : float, optional
+            Probability of flash crash / structural break (0-1).
+        drift_score : float, optional
+            Trend conviction strength; high = lower costs (0-1).
+        systemic_stress : float, optional
+            Normalized systemic stress (0-1).
+        volume_trend : float, optional
+            Current volume relative to ADV EMA.
+        impact_coeff_override : float, optional
+            Calibrated impact coefficient for this security's market cap segment.
+
+        Returns
+        -------
+        float
+            Estimated round-trip cost in basis points.  This is 2x the
+            one-way cost (half-spread + impact for entry, same for exit).
+        """
+        px = float(max(1e-9, reference_price))
+        vol = float(max(0.0, daily_volume))
+        desired = float(max(0.0, desired_notional))
+
+        if desired <= 0 or vol <= 0:
+            return 0.0
+
+        # Participation limit with optional volume trend adjustment
+        effective_max_participation = self.max_participation
+        if (
+            self.volume_trend_enabled
+            and volume_trend is not None
+            and np.isfinite(volume_trend)
+        ):
+            trend = float(np.clip(volume_trend, 0.5, 2.0))
+            effective_max_participation = float(np.clip(
+                self.max_participation * trend,
+                self.max_participation * 0.5,
+                self.max_participation * 2.0,
+            ))
+
+        daily_dollar_volume = max(px * vol, 1e-9)
+        max_notional = daily_dollar_volume * effective_max_participation
+        fill_notional = min(desired, max_notional)
+        participation = float(fill_notional / daily_dollar_volume)
+
+        # Use per-segment impact coefficient if provided
+        impact_coeff = (
+            float(max(0.0, impact_coeff_override))
+            if impact_coeff_override is not None
+            and np.isfinite(impact_coeff_override)
+            else self.impact_coeff
+        )
+
+        spread_bps = self.spread_bps
+
+        if self.dynamic_costs:
+            vol_component = 0.0
+            if realized_vol is not None and np.isfinite(realized_vol):
+                vol_component = max(
+                    0.0, (float(realized_vol) - self.vol_ref) / self.vol_ref
+                )
+
+            gap_component = 0.0
+            if overnight_gap is not None and np.isfinite(overnight_gap):
+                gap_component = min(0.10, abs(float(overnight_gap)))
+
+            range_component = 0.0
+            if intraday_range is not None and np.isfinite(intraday_range):
+                range_component = min(0.20, abs(float(intraday_range)))
+
+            stress = 1.0
+            stress += self.vol_spread_beta * vol_component
+            stress += self.gap_spread_beta * gap_component
+            stress += self.range_spread_beta * range_component
+
+            liquidity_scalar = float(np.clip(
+                np.sqrt(self.dollar_volume_ref / daily_dollar_volume),
+                0.70,
+                3.00,
+            ))
+
+            structural_mult, _ = self._compute_structural_multiplier(
+                break_probability=break_probability,
+                structure_uncertainty=structure_uncertainty,
+                drift_score=drift_score,
+                systemic_stress=systemic_stress,
+            )
+
+            spread_bps = (
+                spread_bps * stress * liquidity_scalar * structural_mult
+            )
+            impact_coeff = (
+                impact_coeff
+                * (1.0 + self.vol_impact_beta * max(0.0, stress - 1.0))
+                * liquidity_scalar
+                * structural_mult
+            )
+
+        # Event-window spread blowout
+        evt_mult = float(max(1.0, event_spread_multiplier))
+        spread_bps = spread_bps * evt_mult
+
+        impact_bps = float(impact_coeff * np.sqrt(max(0.0, participation)))
+        half_spread_bps = 0.5 * spread_bps
+
+        # One-way cost = half_spread + impact; round-trip = 2x
+        one_way_cost_bps = half_spread_bps + impact_bps
+        return float(2.0 * one_way_cost_bps)
+
     # ── Core Simulation ───────────────────────────────────────────────
 
     def simulate(

@@ -301,21 +301,16 @@ class TestCvGapHardBlock:
         )
 
 
-class TestRegime2Suppression:
-    """Verify regime 2 gating suppresses trades."""
+class TestRegimeTradePolicy:
+    """SPEC-E02: Verify per-regime trade gating via REGIME_TRADE_POLICY."""
 
-    def test_regime_2_suppression(self):
-        """Backtester should suppress entries when regime==2 and confidence > 0.5."""
-        from quant_engine.backtest.engine import Backtester
-
-        n_days = 100
+    @staticmethod
+    def _make_price_data(permno: str, n_days: int = 100, seed: int = 123):
         dates = pd.bdate_range("2023-01-02", periods=n_days, freq="B")
-        rng = np.random.RandomState(123)
-
-        # Create price data for one stock
+        rng = np.random.RandomState(seed)
         close = 100.0 * np.exp(np.cumsum(rng.normal(0.001, 0.01, n_days)))
         price_data = {
-            "10000": pd.DataFrame(
+            permno: pd.DataFrame(
                 {
                     "Open": close * (1 + rng.normal(0, 0.002, n_days)),
                     "High": close * 1.01,
@@ -326,86 +321,147 @@ class TestRegime2Suppression:
                 index=dates,
             )
         }
+        return dates, price_data
 
-        # Create predictions: ALL signals in regime 2 with confidence > 0.5
-        # These should be suppressed by the regime 2 gating logic
-        n_signals = 20
-        signal_dates = dates[10:10 + n_signals]
-        predictions = pd.DataFrame(
+    @staticmethod
+    def _make_predictions(permno, dates, regime, confidence, n_signals=5, offset=10):
+        signal_dates = dates[offset:offset + n_signals]
+        return pd.DataFrame(
             {
-                "predicted_return": np.full(n_signals, 0.02),  # above threshold
-                "confidence": np.full(n_signals, 0.8),  # above threshold AND > 0.5
-                "regime": np.full(n_signals, 2, dtype=int),  # regime 2
+                "predicted_return": np.full(n_signals, 0.02),
+                "confidence": np.full(n_signals, confidence),
+                "regime": np.full(n_signals, regime, dtype=int),
             },
             index=pd.MultiIndex.from_arrays(
-                [np.full(n_signals, "10000"), signal_dates],
+                [np.full(n_signals, permno), signal_dates],
                 names=["permno", "date"],
             ),
         )
 
-        backtester = Backtester(
-            entry_threshold=0.005,
-            confidence_threshold=0.6,
-            holding_days=5,
-            max_positions=10,
+    def test_regime_2_low_confidence_suppressed(self):
+        """Regime 2 (disabled, min_confidence=0.70): signals with confidence
+        below 0.70 should be suppressed."""
+        from quant_engine.backtest.engine import Backtester
+
+        dates, price_data = self._make_price_data("10000")
+        predictions = self._make_predictions(
+            "10000", dates, regime=2, confidence=0.65, n_signals=20,
         )
 
+        backtester = Backtester(
+            entry_threshold=0.005, confidence_threshold=0.6,
+            holding_days=5, max_positions=10,
+        )
         result = backtester.run(predictions, price_data, verbose=False)
 
-        # Regime 2 with confidence > 0.5 should be suppressed: zero trades
         assert result.total_trades == 0, (
-            f"Expected 0 trades (regime 2 suppressed), got {result.total_trades}"
+            f"Expected 0 trades (regime 2 suppressed, conf 0.65 < 0.70), "
+            f"got {result.total_trades}"
+        )
+
+    def test_regime_2_high_confidence_allowed(self):
+        """Regime 2 (disabled, min_confidence=0.70): signals with confidence
+        >= 0.70 should be allowed through (high-confidence override)."""
+        from quant_engine.backtest.engine import Backtester
+
+        dates, price_data = self._make_price_data("10000", seed=789)
+        predictions = self._make_predictions(
+            "10000", dates, regime=2, confidence=0.80, n_signals=5,
+        )
+
+        backtester = Backtester(
+            entry_threshold=0.005, confidence_threshold=0.6,
+            holding_days=5, max_positions=10,
+        )
+        result = backtester.run(predictions, price_data, verbose=False)
+
+        assert result.total_trades > 0, (
+            "Regime 2 signals with confidence >= 0.70 should be allowed "
+            "(high-confidence override), but got 0 trades"
         )
 
     def test_regime_0_not_suppressed(self):
-        """Regime 0 (trending bull) signals should NOT be suppressed."""
+        """Regime 0 (enabled, min_confidence=0.0): signals should never be
+        suppressed regardless of confidence."""
         from quant_engine.backtest.engine import Backtester
 
-        n_days = 100
-        dates = pd.bdate_range("2023-01-02", periods=n_days, freq="B")
-        rng = np.random.RandomState(456)
-
-        close = 100.0 * np.exp(np.cumsum(rng.normal(0.001, 0.01, n_days)))
-        price_data = {
-            "10001": pd.DataFrame(
-                {
-                    "Open": close * (1 + rng.normal(0, 0.002, n_days)),
-                    "High": close * 1.01,
-                    "Low": close * 0.99,
-                    "Close": close,
-                    "Volume": np.full(n_days, 1_000_000),
-                },
-                index=dates,
-            )
-        }
-
-        # Signals in regime 0 should pass through
-        n_signals = 5
-        signal_dates = dates[10:10 + n_signals]
-        predictions = pd.DataFrame(
-            {
-                "predicted_return": np.full(n_signals, 0.02),
-                "confidence": np.full(n_signals, 0.8),
-                "regime": np.full(n_signals, 0, dtype=int),
-            },
-            index=pd.MultiIndex.from_arrays(
-                [np.full(n_signals, "10001"), signal_dates],
-                names=["permno", "date"],
-            ),
+        dates, price_data = self._make_price_data("10001", seed=456)
+        predictions = self._make_predictions(
+            "10001", dates, regime=0, confidence=0.8, n_signals=5,
         )
 
         backtester = Backtester(
-            entry_threshold=0.005,
-            confidence_threshold=0.6,
-            holding_days=5,
-            max_positions=10,
+            entry_threshold=0.005, confidence_threshold=0.6,
+            holding_days=5, max_positions=10,
         )
-
         result = backtester.run(predictions, price_data, verbose=False)
 
-        # Regime 0 should NOT be suppressed
         assert result.total_trades > 0, (
             "Regime 0 signals should not be suppressed but got 0 trades"
+        )
+
+    def test_regime_3_below_min_confidence_suppressed(self):
+        """Regime 3 (enabled, min_confidence=0.60): signals with confidence
+        below 0.60 should be suppressed by the per-regime floor."""
+        from quant_engine.backtest.engine import Backtester
+
+        dates, price_data = self._make_price_data("10002", seed=999)
+        predictions = self._make_predictions(
+            "10002", dates, regime=3, confidence=0.55, n_signals=10,
+        )
+
+        # Use a LOW base confidence_threshold so signals pass the base
+        # filter but still fail the per-regime min_confidence for regime 3.
+        backtester = Backtester(
+            entry_threshold=0.005, confidence_threshold=0.50,
+            holding_days=5, max_positions=10,
+        )
+        result = backtester.run(predictions, price_data, verbose=False)
+
+        assert result.total_trades == 0, (
+            f"Expected 0 trades (regime 3 min_confidence=0.60, signal conf=0.55), "
+            f"got {result.total_trades}"
+        )
+
+    def test_regime_3_above_min_confidence_allowed(self):
+        """Regime 3 (enabled, min_confidence=0.60): signals meeting the
+        confidence floor should be allowed."""
+        from quant_engine.backtest.engine import Backtester
+
+        dates, price_data = self._make_price_data("10003", seed=111)
+        predictions = self._make_predictions(
+            "10003", dates, regime=3, confidence=0.75, n_signals=5,
+        )
+
+        backtester = Backtester(
+            entry_threshold=0.005, confidence_threshold=0.6,
+            holding_days=5, max_positions=10,
+        )
+        result = backtester.run(predictions, price_data, verbose=False)
+
+        assert result.total_trades > 0, (
+            "Regime 3 signals with confidence >= 0.60 should be allowed "
+            "but got 0 trades"
+        )
+
+    def test_unknown_regime_not_suppressed(self):
+        """Signals with an unknown regime ID should use the permissive
+        default policy (enabled=True, min_confidence=0.0)."""
+        from quant_engine.backtest.engine import Backtester
+
+        dates, price_data = self._make_price_data("10004", seed=222)
+        predictions = self._make_predictions(
+            "10004", dates, regime=99, confidence=0.8, n_signals=5,
+        )
+
+        backtester = Backtester(
+            entry_threshold=0.005, confidence_threshold=0.6,
+            holding_days=5, max_positions=10,
+        )
+        result = backtester.run(predictions, price_data, verbose=False)
+
+        assert result.total_trades > 0, (
+            "Unknown regime should use permissive default, but got 0 trades"
         )
 
 

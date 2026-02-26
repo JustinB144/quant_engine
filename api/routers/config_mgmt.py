@@ -40,7 +40,7 @@ def _build_config_status() -> Dict[str, Dict[str, Any]]:
             "jump_model_enabled": _annotated(cfg.REGIME_JUMP_MODEL_ENABLED, "active"),
             "hmm_states": _annotated(cfg.REGIME_HMM_STATES, "active"),
             "hmm_auto_select_states": _annotated(cfg.REGIME_HMM_AUTO_SELECT_STATES, "active"),
-            "regime_2_trade_enabled": _annotated(cfg.REGIME_2_TRADE_ENABLED, "active"),
+            "regime_trade_policy": _annotated(cfg.REGIME_TRADE_POLICY, "active"),
         },
         "risk": {
             "max_sector_exposure": _annotated(

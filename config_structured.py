@@ -125,6 +125,14 @@ class RegimeConfig:
     stop_multiplier: Dict[int, float] = field(
         default_factory=lambda: {0: 1.0, 1: 0.8, 2: 1.2, 3: 1.5}
     )
+    trade_policy: Dict[int, Dict[str, Any]] = field(
+        default_factory=lambda: {
+            0: {"enabled": True,  "min_confidence": 0.0},
+            1: {"enabled": True,  "min_confidence": 0.0},
+            2: {"enabled": False, "min_confidence": 0.70},
+            3: {"enabled": True,  "min_confidence": 0.60},
+        }
+    )
 
 
 @dataclass

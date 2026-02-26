@@ -35,7 +35,7 @@ from ..config import (
     ALMGREN_CHRISS_ENABLED, ALMGREN_CHRISS_ADV_THRESHOLD,
     ALMGREN_CHRISS_RISK_AVERSION,
     MAX_ANNUALIZED_TURNOVER,
-    ALMGREN_CHRISS_FALLBACK_VOL, REGIME_2_TRADE_ENABLED, REGIME_2_SUPPRESSION_MIN_CONFIDENCE,
+    ALMGREN_CHRISS_FALLBACK_VOL, REGIME_TRADE_POLICY,
     # Spec 06: structural state-aware costs
     EXEC_STRUCTURAL_STRESS_ENABLED,
     EXEC_BREAK_PROB_COST_MULT,
@@ -57,6 +57,9 @@ from ..config import (
     EXEC_CALIBRATION_SMOOTHING,
     EXEC_COST_IMPACT_COEFF_BY_MARKETCAP,
     EXEC_MARKETCAP_THRESHOLDS,
+    # SPEC-E01: edge-after-costs trade gating
+    EDGE_COST_GATE_ENABLED,
+    EDGE_COST_BUFFER_BASE_BPS,
 )
 
 logger = logging.getLogger(__name__)
@@ -827,11 +830,19 @@ class Backtester:
                 regime = int(row.get("regime", -1))
                 confidence = float(row.get("confidence", 0))
 
-                # Regime 2 (mean_reverting) trade gating: suppress entries
-                # when the model is systematically wrong in this regime.
-                # Regime 2 produces Sharpe -0.91 on 39% of trades — the model
-                # has no edge here and entries destroy aggregate performance.
-                if not REGIME_2_TRADE_ENABLED and regime == 2 and confidence > REGIME_2_SUPPRESSION_MIN_CONFIDENCE:
+                # SPEC-E02: Per-regime trade gating.  Each regime has an
+                # ``enabled`` flag and a ``min_confidence`` threshold.
+                #   • enabled=False → regime disabled; suppress ALL signals
+                #     unless confidence >= min_confidence (high-conf override).
+                #   • enabled=True  → regime allowed, but still enforce
+                #     min_confidence as an additional floor.
+                _policy = REGIME_TRADE_POLICY.get(
+                    regime, {"enabled": True, "min_confidence": 0.0},
+                )
+                if not _policy["enabled"]:
+                    if _policy["min_confidence"] <= 0 or confidence < _policy["min_confidence"]:
+                        continue
+                elif confidence < _policy["min_confidence"]:
                     continue
 
                 all_signals.append({
@@ -926,11 +937,61 @@ class Backtester:
                 if exit_idx >= len(close):
                     continue
 
+                # SPEC-E01: Edge-after-costs trade gate.
+                # Skip trades where predicted edge does not exceed expected
+                # round-trip cost plus an uncertainty-scaled buffer.
+                shock = self._shock_vectors.get((permno, dt))
+                if EDGE_COST_GATE_ENABLED:
+                    entry_vol = (
+                        float(ohlcv["Volume"].iloc[entry_idx])
+                        if "Volume" in ohlcv.columns else 0.0
+                    )
+                    entry_ref_price = float(ohlcv["Open"].iloc[entry_idx])
+                    context = self._execution_context(ohlcv=ohlcv, bar_idx=entry_idx)
+                    desired_notional = self.assumed_capital_usd * self.position_size_pct
+                    uncertainty = (
+                        shock.hmm_uncertainty
+                        if shock is not None and shock.hmm_uncertainty is not None
+                        else 0.0
+                    )
+
+                    expected_cost_bps = self.execution_model.estimate_cost(
+                        daily_volume=entry_vol,
+                        desired_notional=desired_notional,
+                        realized_vol=context["realized_vol"],
+                        structure_uncertainty=uncertainty,
+                        overnight_gap=context["overnight_gap"],
+                        intraday_range=context["intraday_range"],
+                        reference_price=entry_ref_price,
+                        break_probability=(
+                            shock.bocpd_changepoint_prob if shock else None
+                        ),
+                        drift_score=(
+                            shock.structural_features.get("drift_score")
+                            if shock else None
+                        ),
+                        systemic_stress=(
+                            shock.structural_features.get("systemic_stress")
+                            if shock else None
+                        ),
+                    )
+
+                    predicted_edge_bps = abs(float(signal["predicted_return"])) * 10000
+                    cost_buffer_bps = EDGE_COST_BUFFER_BASE_BPS * (1.0 + uncertainty)
+
+                    if predicted_edge_bps <= expected_cost_bps + cost_buffer_bps:
+                        logger.debug(
+                            "Edge-cost gate: skipping %s on %s — edge %.1f bps "
+                            "<= cost %.1f + buffer %.1f bps",
+                            permno, dt, predicted_edge_bps,
+                            expected_cost_bps, cost_buffer_bps,
+                        )
+                        continue
+
                 # SPEC-W03: Apply uncertainty gate to position size.
                 # When regime entropy is high, reduce position size to limit
                 # exposure during uncertain regime transitions.
                 adjusted_size = self.position_size_pct
-                shock = self._shock_vectors.get((permno, dt))
                 if shock is not None and shock.hmm_uncertainty is not None:
                     size_mult = self._uncertainty_gate.compute_size_multiplier(
                         shock.hmm_uncertainty,
@@ -1422,6 +1483,54 @@ class Backtester:
                 entry_price = float(ohlcv["Open"].iloc[entry_idx])
                 entry_date = close.index[entry_idx]
 
+                # SPEC-E01: Edge-after-costs trade gate (risk-managed mode).
+                shock = self._shock_vectors.get((ticker, dt))
+                if EDGE_COST_GATE_ENABLED:
+                    entry_vol = (
+                        float(ohlcv["Volume"].iloc[entry_idx])
+                        if "Volume" in ohlcv.columns else 0.0
+                    )
+                    context = self._execution_context(ohlcv=ohlcv, bar_idx=entry_idx)
+                    desired_notional = self.assumed_capital_usd * self.position_size_pct
+                    uncertainty = (
+                        shock.hmm_uncertainty
+                        if shock is not None and shock.hmm_uncertainty is not None
+                        else 0.0
+                    )
+
+                    expected_cost_bps = self.execution_model.estimate_cost(
+                        daily_volume=entry_vol,
+                        desired_notional=desired_notional,
+                        realized_vol=context["realized_vol"],
+                        structure_uncertainty=uncertainty,
+                        overnight_gap=context["overnight_gap"],
+                        intraday_range=context["intraday_range"],
+                        reference_price=entry_price,
+                        break_probability=(
+                            shock.bocpd_changepoint_prob if shock else None
+                        ),
+                        drift_score=(
+                            shock.structural_features.get("drift_score")
+                            if shock else None
+                        ),
+                        systemic_stress=(
+                            shock.structural_features.get("systemic_stress")
+                            if shock else None
+                        ),
+                    )
+
+                    predicted_edge_bps = abs(float(signal["predicted_return"])) * 10000
+                    cost_buffer_bps = EDGE_COST_BUFFER_BASE_BPS * (1.0 + uncertainty)
+
+                    if predicted_edge_bps <= expected_cost_bps + cost_buffer_bps:
+                        logger.debug(
+                            "Edge-cost gate (risk): skipping %s on %s — edge %.1f bps "
+                            "<= cost %.1f + buffer %.1f bps",
+                            ticker, dt, predicted_edge_bps,
+                            expected_cost_bps, cost_buffer_bps,
+                        )
+                        continue
+
                 # ── Dynamic position sizing ──
                 # Compute recent volatility and ATR
                 lookback_start = max(0, entry_idx - 20)
@@ -1472,7 +1581,7 @@ class Backtester:
                 # SPEC-W03: Apply uncertainty gate to position size.
                 # When regime entropy is high, reduce position size to limit
                 # exposure during uncertain regime transitions.
-                shock = self._shock_vectors.get((ticker, dt))
+                # (shock already looked up by SPEC-E01 gate above)
                 if shock is not None and shock.hmm_uncertainty is not None:
                     size_mult = self._uncertainty_gate.compute_size_multiplier(
                         shock.hmm_uncertainty,

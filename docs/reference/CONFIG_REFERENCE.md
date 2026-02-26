@@ -475,12 +475,13 @@ Notes:
 |---|---|---|---|---|
 | `FEATURE_MODE_DEFAULT` | `"core"` | `ACTIVE` | run_backtest.py, run_train.py, run_predict.py; "full" or "core" | 534 |
 
-## Regime Trade Gating
+## Regime Trade Gating (SPEC-E02)
 
 | Constant | Value (source) | Status | Notes | Line |
 |---|---|---|---|---|
-| `REGIME_2_TRADE_ENABLED` | `False` | `ACTIVE` | backtest/engine.py, api/routers/signals.py; suppress mean-revert regime entries (Sharpe -0.91) | 537 |
-| `REGIME_2_SUPPRESSION_MIN_CONFIDENCE` | `0.5` | `ACTIVE` | backtest/engine.py; only suppress when confidence exceeds this | 538 |
+| `REGIME_TRADE_POLICY` | `{0: {enabled: True, ...}, 1: ..., 2: ..., 3: ...}` | `ACTIVE` | backtest/engine.py, api/routers/signals.py; per-regime trade gating with configurable confidence thresholds | 550 |
+| `REGIME_2_TRADE_ENABLED` | `False` | `DEPRECATED` | Derived from REGIME_TRADE_POLICY[2]; kept for backward-compat | 561 |
+| `REGIME_2_SUPPRESSION_MIN_CONFIDENCE` | `0.70` | `DEPRECATED` | Derived from REGIME_TRADE_POLICY[2]; kept for backward-compat | 562 |
 
 ## Regime Strategy Allocation
 

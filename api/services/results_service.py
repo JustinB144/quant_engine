@@ -51,14 +51,14 @@ class ResultsService:
             else:
                 df["cs_zscore"] = 0.0
 
-        # Add regime_suppressed flag based on config
+        # Add regime_suppressed flag based on per-regime trade policy
         if "regime_suppressed" not in df.columns and "regime" in df.columns:
             try:
-                from quant_engine.config import REGIME_2_TRADE_ENABLED
-                regime_col = df["regime"]
-                # Regime can be int (2) or string ("mean_reverting")
-                is_regime_2 = regime_col.isin([2, "2", "mean_reverting"])
-                df["regime_suppressed"] = (~REGIME_2_TRADE_ENABLED) & is_regime_2
+                from quant_engine.config import REGIME_TRADE_POLICY
+                regime_col = pd.to_numeric(df["regime"], errors="coerce").fillna(-1).astype(int)
+                df["regime_suppressed"] = regime_col.map(
+                    lambda r: not REGIME_TRADE_POLICY.get(r, {"enabled": True})["enabled"]
+                )
             except (ImportError, AttributeError):
                 df["regime_suppressed"] = False
 

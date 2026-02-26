@@ -546,9 +546,26 @@ PAPER_KELLY_MAX_SIZE_MULTIPLIER = 1.50            # STATUS: ACTIVE — autopilot
 # ── Feature Profiles ────────────────────────────────────────────────────
 FEATURE_MODE_DEFAULT = "core"                     # STATUS: ACTIVE — run_backtest.py, run_train.py, run_predict.py; "full" or "core"
 
-# ── Regime Trade Gating ──────────────────────────────────────────────
-REGIME_2_TRADE_ENABLED = False                    # STATUS: ACTIVE — backtest/engine.py, api/routers/signals.py; suppress mean-revert regime entries (Sharpe -0.91)
-REGIME_2_SUPPRESSION_MIN_CONFIDENCE = 0.5         # STATUS: ACTIVE — backtest/engine.py; only suppress when confidence exceeds this
+# ── Regime Trade Gating (SPEC-E02) ───────────────────────────────────
+# Per-regime trade policy: each regime ID maps to an enabled flag and a
+# minimum confidence threshold.  When ``enabled`` is False, signals in
+# that regime are suppressed *unless* confidence >= ``min_confidence``.
+REGIME_TRADE_POLICY: Dict[int, Dict] = {         # STATUS: ACTIVE — backtest/engine.py, api/routers/signals.py
+    0: {"enabled": True,  "min_confidence": 0.0},  # trending_bull: always trade
+    1: {"enabled": True,  "min_confidence": 0.0},  # trending_bear: always trade
+    2: {"enabled": False, "min_confidence": 0.70},  # mean_reverting: suppress unless high conf
+    3: {"enabled": True,  "min_confidence": 0.60},  # high_volatility: trade only with confidence
+}
+
+# Deprecated aliases — kept for backward-compatibility with API layer
+# and any external scripts that reference the old names.  These are
+# derived from REGIME_TRADE_POLICY[2] and stay in sync.
+REGIME_2_TRADE_ENABLED = REGIME_TRADE_POLICY[2]["enabled"]          # STATUS: DEPRECATED — use REGIME_TRADE_POLICY
+REGIME_2_SUPPRESSION_MIN_CONFIDENCE = REGIME_TRADE_POLICY[2]["min_confidence"]  # STATUS: DEPRECATED — use REGIME_TRADE_POLICY
+
+# ── Edge-After-Costs Trade Gating (SPEC-E01) ────────────────────────
+EDGE_COST_GATE_ENABLED = True                    # STATUS: ACTIVE — backtest/engine.py; skip trades where predicted edge <= expected cost + buffer
+EDGE_COST_BUFFER_BASE_BPS = 5.0                  # STATUS: ACTIVE — backtest/engine.py; additional buffer beyond expected cost (scales with uncertainty)
 
 # ── Regime Strategy Allocation ──────────────────────────────────────
 REGIME_STRATEGY_ALLOCATION_ENABLED = True            # STATUS: ACTIVE — autopilot/strategy_allocator.py; adapt parameters by regime
