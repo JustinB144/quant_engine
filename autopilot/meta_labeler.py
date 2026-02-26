@@ -258,19 +258,17 @@ class MetaLabelingModel:
         X_train, X_val = X.iloc[:split_idx], X.iloc[split_idx:]
         y_train, y_val = y.iloc[:split_idx], y.iloc[split_idx:]
 
+        # XGBoost 2.0+ API: early_stopping_rounds is a constructor param,
+        # not a fit() param. eval_set is still passed to fit().
+        use_early_stopping = len(X_val) >= 10
+        if use_early_stopping:
+            xgb_params["early_stopping_rounds"] = 10
+
         model = XGBClassifier(**xgb_params)
 
         fit_params: Dict = {}
-        if len(X_val) >= 10:
+        if use_early_stopping:
             fit_params["eval_set"] = [(X_val.values, y_val.values)]
-            try:
-                from xgboost.callback import EarlyStopping
-
-                fit_params["callbacks"] = [
-                    EarlyStopping(rounds=10, save_best=True)
-                ]
-            except ImportError:
-                fit_params["early_stopping_rounds"] = 10
 
         model.fit(X_train.values, y_train.values, **fit_params)
 
@@ -403,6 +401,7 @@ class MetaLabelingModel:
         joblib.dump(state, filepath)
 
         # Update "current" pointer
+        self._model_dir.mkdir(parents=True, exist_ok=True)
         current_path = self._model_dir / "meta_labeler_current.joblib"
         joblib.dump(state, current_path)
 
