@@ -25,7 +25,7 @@ async def get_diagnostics() -> Dict:
     evidence, and recommended actions.
     """
     try:
-        from quant_engine.api.services.diagnostics import SystemDiagnostics
+        from ..services.diagnostics import SystemDiagnostics
 
         diag = SystemDiagnostics()
 

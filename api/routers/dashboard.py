@@ -52,7 +52,7 @@ async def dashboard_regime(cache: CacheManager = Depends(get_cache)) -> ApiRespo
 def _compute_returns_distribution() -> dict:
     """Build return histogram data with VaR/CVaR lines (sync)."""
     from quant_engine.config import RESULTS_DIR
-    from api.services.data_helpers import (
+    from ..services.data_helpers import (
         build_portfolio_returns,
         compute_returns_distribution,
         load_trades,
@@ -67,7 +67,7 @@ def _compute_returns_distribution() -> dict:
 def _compute_rolling_risk() -> dict:
     """Build rolling vol, Sharpe, drawdown time series (sync)."""
     from quant_engine.config import RESULTS_DIR
-    from api.services.data_helpers import (
+    from ..services.data_helpers import (
         build_portfolio_returns,
         compute_rolling_risk,
         load_trades,
@@ -86,7 +86,7 @@ def _compute_equity_with_benchmark() -> dict:
     import pandas as pd
 
     from quant_engine.config import DATA_CACHE_DIR, RESULTS_DIR
-    from api.services.data_helpers import (
+    from ..services.data_helpers import (
         build_equity_curves,
         build_portfolio_returns,
         load_benchmark_returns,
@@ -106,7 +106,7 @@ def _compute_attribution() -> dict:
     from pathlib import Path
 
     from quant_engine.config import DATA_CACHE_DIR, RESULTS_DIR
-    from api.services.data_helpers import (
+    from ..services.data_helpers import (
         build_portfolio_returns,
         compute_attribution,
         load_trades,

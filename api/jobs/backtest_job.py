@@ -9,7 +9,7 @@ def execute_backtest_job(
     progress_callback: Optional[Callable] = None,
 ) -> Dict[str, Any]:
     """Run a full backtest pipeline and return results dict."""
-    from quant_engine.api.orchestrator import PipelineOrchestrator
+    from ..orchestrator import PipelineOrchestrator
 
     orch = PipelineOrchestrator()
     state = orch.load_and_prepare(

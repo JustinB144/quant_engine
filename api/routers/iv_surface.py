@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/iv-surface", tags=["iv-surface"])
 def _compute_arb_free_svi() -> dict:
     """Build arb-free SVI surface from synthetic market data."""
     import numpy as np
-    from models.iv.models import ArbitrageFreeSVIBuilder, generate_synthetic_market_surface
+    from quant_engine.models.iv.models import ArbitrageFreeSVIBuilder, generate_synthetic_market_surface
 
     market = generate_synthetic_market_surface(S=100, r=0.05, q=0.01)
     builder = ArbitrageFreeSVIBuilder()

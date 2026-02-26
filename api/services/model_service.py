@@ -23,7 +23,7 @@ class ModelService:
     def get_model_health(self) -> Dict[str, Any]:
         """Compute model health from registry + trade data."""
         from quant_engine.config import MODEL_DIR, RESULTS_DIR
-        from api.services.data_helpers import compute_model_health, load_trades
+        from .data_helpers import compute_model_health, load_trades
 
         trades_path = RESULTS_DIR / "backtest_10d_trades.csv"
         trades = load_trades(trades_path)
@@ -37,7 +37,7 @@ class ModelService:
     def get_feature_importance(self) -> Dict[str, Any]:
         """Load feature importance from latest model meta."""
         from quant_engine.config import MODEL_DIR
-        from api.services.data_helpers import load_feature_importance
+        from .data_helpers import load_feature_importance
 
         global_imp, regime_heat = load_feature_importance(MODEL_DIR)
         result: Dict[str, Any] = {
@@ -53,7 +53,7 @@ class ModelService:
     def get_feature_correlations(self, top_n: int = 15) -> Dict[str, Any]:
         """Compute pairwise Pearson correlation between top features using regime importance vectors."""
         from quant_engine.config import MODEL_DIR
-        from api.services.data_helpers import load_feature_importance
+        from .data_helpers import load_feature_importance
 
         empty: Dict[str, Any] = {"feature_names": [], "correlations": [], "n_features": 0}
 

@@ -129,7 +129,7 @@ class HealthService:
 
     def get_detailed_health(self) -> Dict[str, Any]:
         """Full system health assessment."""
-        from api.services.data_helpers import collect_health_data
+        from .data_helpers import collect_health_data
 
         payload = collect_health_data()
         result: Dict[str, Any] = {
@@ -1874,7 +1874,7 @@ class HealthService:
         thresholds = {"entropy_pass": 0.5, "predictive_corr_pass": 0.2}
         try:
             from quant_engine.config import DATA_CACHE_DIR
-            from api.services.data_helpers import compute_regime_payload
+            from .data_helpers import compute_regime_payload
 
             regime = compute_regime_payload(Path(DATA_CACHE_DIR))
             if regime is None:

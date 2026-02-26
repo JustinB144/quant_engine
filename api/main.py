@@ -29,7 +29,7 @@ async def _retrain_monitor_loop() -> None:
     while True:
         await asyncio.sleep(_RETRAIN_CHECK_INTERVAL)
         try:
-            from api.services.backtest_service import BacktestService
+            from .services.backtest_service import BacktestService
             staleness = await asyncio.to_thread(BacktestService()._compute_model_staleness)
             if staleness.get("overdue"):
                 logger.warning(
