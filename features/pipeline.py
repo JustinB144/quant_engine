@@ -184,6 +184,36 @@ FEATURE_METADATA: Dict[str, Dict[str, str]] = {
     "CUSUM_50": {"type": "CAUSAL", "category": "regime"},
     "RegPersist_20": {"type": "CAUSAL", "category": "regime"},
 
+    # ── Structural: Spectral features (CAUSAL — rolling FFT) ────────
+    "SpectralHFE_252": {"type": "CAUSAL", "category": "spectral"},
+    "SpectralLFE_252": {"type": "CAUSAL", "category": "spectral"},
+    "SpectralEntropy_252": {"type": "CAUSAL", "category": "spectral"},
+    "SpectralDomFreq_252": {"type": "CAUSAL", "category": "spectral"},
+    "SpectralBW_252": {"type": "CAUSAL", "category": "spectral"},
+
+    # ── Structural: SSA features (CAUSAL — rolling SVD) ─────────────
+    "SSATrendStr_60": {"type": "CAUSAL", "category": "ssa"},
+    "SSAOscStr_60": {"type": "CAUSAL", "category": "ssa"},
+    "SSASingularEnt_60": {"type": "CAUSAL", "category": "ssa"},
+    "SSANoiseRatio_60": {"type": "CAUSAL", "category": "ssa"},
+
+    # ── Structural: Tail risk features (CAUSAL — rolling) ───────────
+    "JumpIntensity_20": {"type": "CAUSAL", "category": "tail_risk"},
+    "ExpectedShortfall_20": {"type": "CAUSAL", "category": "tail_risk"},
+    "TailVolOfVol_20": {"type": "CAUSAL", "category": "tail_risk"},
+    "SemiRelMod_20": {"type": "CAUSAL", "category": "tail_risk"},
+    "ExtremeRetPct_20": {"type": "CAUSAL", "category": "tail_risk"},
+
+    # ── Structural: Eigenvalue features (CAUSAL — cross-asset) ──────
+    "EigenConcentration_60": {"type": "CAUSAL", "category": "eigenvalue"},
+    "EffectiveRank_60": {"type": "CAUSAL", "category": "eigenvalue"},
+    "AvgCorrStress_60": {"type": "CAUSAL", "category": "eigenvalue"},
+    "ConditionNumber_60": {"type": "CAUSAL", "category": "eigenvalue"},
+
+    # ── Structural: Optimal Transport features (CAUSAL — rolling) ───
+    "WassersteinDiv_30": {"type": "CAUSAL", "category": "optimal_transport"},
+    "SinkhornDiv_30": {"type": "CAUSAL", "category": "optimal_transport"},
+
     # ── Raw OHLCV features (all CAUSAL) ──────────────────────────────
     "return_1d": {"type": "CAUSAL", "category": "returns"},
     "return_2d": {"type": "CAUSAL", "category": "returns"},
@@ -697,6 +727,135 @@ def compute_multiscale_features(df: pd.DataFrame) -> pd.DataFrame:
     return features
 
 
+def compute_structural_features(
+    df: pd.DataFrame,
+    verbose: bool = False,
+) -> pd.DataFrame:
+    """Compute structural features (spectral, SSA, tail risk, optimal transport).
+
+    These features capture structural market dynamics beyond classical
+    indicators: frequency-domain content, non-stationary decomposition,
+    tail risk, and distribution drift.
+
+    Eigenvalue features are NOT computed here — they require multi-asset
+    data and are computed in FeaturePipeline.compute_universe().
+
+    Args:
+        df: OHLCV DataFrame with DatetimeIndex.
+        verbose: Print progress.
+
+    Returns:
+        DataFrame with structural feature columns (same index as input).
+    """
+    from ..config import (
+        SPECTRAL_FFT_WINDOW, SPECTRAL_CUTOFF_PERIOD,
+        SSA_WINDOW, SSA_EMBED_DIM, SSA_N_SINGULAR,
+        JUMP_INTENSITY_WINDOW, JUMP_INTENSITY_THRESHOLD,
+        WASSERSTEIN_WINDOW, WASSERSTEIN_REF_WINDOW,
+        SINKHORN_EPSILON, SINKHORN_MAX_ITER,
+    )
+
+    features = pd.DataFrame(index=df.index)
+    close = df["Close"].values.astype(float)
+
+    # Log returns for tail risk and OT features
+    log_prices = np.log(np.maximum(close, 1e-10))
+    log_returns = np.diff(log_prices)
+
+    # ── Spectral features (FFT-based) ─────────────────────────────
+    if verbose:
+        print("    Computing spectral features...")
+    try:
+        from ..indicators.spectral import SpectralAnalyzer
+
+        spectral = SpectralAnalyzer(
+            fft_window=SPECTRAL_FFT_WINDOW,
+            cutoff_period=SPECTRAL_CUTOFF_PERIOD,
+        )
+        spec_results = spectral.compute_all(close)
+        features["SpectralHFE_252"] = spec_results["hf_energy"]
+        features["SpectralLFE_252"] = spec_results["lf_energy"]
+        features["SpectralEntropy_252"] = spec_results["spectral_entropy"]
+        features["SpectralDomFreq_252"] = spec_results["dominant_period"]
+        features["SpectralBW_252"] = spec_results["spectral_bandwidth"]
+    except Exception as e:
+        if verbose:
+            print(f"    WARNING: Spectral features failed: {e}")
+
+    # ── SSA features (SVD-based decomposition) ────────────────────
+    if verbose:
+        print("    Computing SSA features...")
+    try:
+        from ..indicators.ssa import SSADecomposer
+
+        ssa = SSADecomposer(
+            window=SSA_WINDOW,
+            embed_dim=SSA_EMBED_DIM,
+            n_singular=SSA_N_SINGULAR,
+        )
+        ssa_results = ssa.compute_all(close)
+        features["SSATrendStr_60"] = ssa_results["trend_strength"]
+        features["SSAOscStr_60"] = ssa_results["oscillatory_strength"]
+        features["SSASingularEnt_60"] = ssa_results["singular_entropy"]
+        features["SSANoiseRatio_60"] = ssa_results["noise_ratio"]
+    except Exception as e:
+        if verbose:
+            print(f"    WARNING: SSA features failed: {e}")
+
+    # ── Tail risk features (jump detection, CVaR, vol-of-vol) ─────
+    if verbose:
+        print("    Computing tail risk features...")
+    try:
+        from ..indicators.tail_risk import TailRiskAnalyzer
+
+        tail = TailRiskAnalyzer(
+            window=JUMP_INTENSITY_WINDOW,
+            jump_threshold=JUMP_INTENSITY_THRESHOLD,
+        )
+        tail_results = tail.compute_all(log_returns)
+
+        # Tail risk features have length = len(returns) = len(close) - 1.
+        # Pad with NaN at the front to align with close prices.
+        for key, col_name in [
+            ("jump_intensity", "JumpIntensity_20"),
+            ("expected_shortfall", "ExpectedShortfall_20"),
+            ("vol_of_vol", "TailVolOfVol_20"),
+            ("semi_relative_modulus", "SemiRelMod_20"),
+            ("extreme_return_pct", "ExtremeRetPct_20"),
+        ]:
+            vals = tail_results[key]
+            features[col_name] = np.concatenate([[np.nan], vals])
+    except Exception as e:
+        if verbose:
+            print(f"    WARNING: Tail risk features failed: {e}")
+
+    # ── Optimal Transport features (distribution drift) ───────────
+    if verbose:
+        print("    Computing optimal transport features...")
+    try:
+        from ..indicators.ot_divergence import OptimalTransportAnalyzer
+
+        ot = OptimalTransportAnalyzer(
+            window=WASSERSTEIN_WINDOW,
+            ref_window=WASSERSTEIN_REF_WINDOW,
+            epsilon=SINKHORN_EPSILON,
+            max_iter=SINKHORN_MAX_ITER,
+        )
+        ot_results = ot.compute_all(log_returns)
+
+        for key, col_name in [
+            ("wasserstein_distance", "WassersteinDiv_30"),
+            ("sinkhorn_divergence", "SinkhornDiv_30"),
+        ]:
+            vals = ot_results[key]
+            features[col_name] = np.concatenate([[np.nan], vals])
+    except Exception as e:
+        if verbose:
+            print(f"    WARNING: OT features failed: {e}")
+
+    return features
+
+
 def compute_interaction_features(
     features: pd.DataFrame,
     pairs: Optional[list] = None,
@@ -956,6 +1115,20 @@ class FeaturePipeline:
             wave_flow_feats = compute_wave_flow_decomposition(df)
             features = pd.concat([features, wave_flow_feats], axis=1)
 
+        # Structural features (spectral, SSA, tail risk, OT)
+        try:
+            from ..config import STRUCTURAL_FEATURES_ENABLED
+        except ImportError:
+            STRUCTURAL_FEATURES_ENABLED = False
+
+        if STRUCTURAL_FEATURES_ENABLED and not use_minimal:
+            if self.verbose:
+                print("  Computing structural features (spectral, SSA, tail, OT)...")
+            structural_feats = compute_structural_features(
+                df, verbose=self.verbose,
+            )
+            features = pd.concat([features, structural_feats], axis=1)
+
         # Replace infinities with NaN (ratio features, log(0), etc.)
         features = features.replace([np.inf, -np.inf], np.nan)
 
@@ -1147,6 +1320,66 @@ class FeaturePipeline:
             except (ImportError, ValueError, RuntimeError) as e:
                 if verbose:
                     print(f"  WARNING: Correlation regime features failed: {e}")
+
+        # Eigenvalue spectrum features (cross-asset structural)
+        try:
+            from ..config import STRUCTURAL_FEATURES_ENABLED, EIGEN_CONCENTRATION_WINDOW, EIGEN_MIN_ASSETS, EIGEN_REGULARIZATION
+        except ImportError:
+            STRUCTURAL_FEATURES_ENABLED = False
+            EIGEN_CONCENTRATION_WINDOW = 60
+            EIGEN_MIN_ASSETS = 5
+            EIGEN_REGULARIZATION = 0.01
+
+        if STRUCTURAL_FEATURES_ENABLED:
+            if verbose:
+                print("  Computing eigenvalue spectrum features (cross-asset)...")
+            try:
+                from ..indicators.eigenvalue import EigenvalueAnalyzer
+
+                # Build aligned returns arrays
+                eigen_returns = {}
+                # Find common date range across all assets
+                all_dates = None
+                for permno, ticker_df in data.items():
+                    if "Close" in ticker_df.columns:
+                        rets = ticker_df["Close"].pct_change().dropna()
+                        if all_dates is None:
+                            all_dates = rets.index
+                        else:
+                            all_dates = all_dates.intersection(rets.index)
+
+                if all_dates is not None and len(all_dates) > EIGEN_CONCENTRATION_WINDOW:
+                    for permno, ticker_df in data.items():
+                        if "Close" in ticker_df.columns:
+                            rets = ticker_df["Close"].pct_change()
+                            aligned = rets.reindex(all_dates).values
+                            if not np.all(np.isnan(aligned)):
+                                eigen_returns[str(permno)] = np.nan_to_num(aligned, nan=0.0)
+
+                    if len(eigen_returns) >= EIGEN_MIN_ASSETS:
+                        analyzer = EigenvalueAnalyzer(
+                            window=EIGEN_CONCENTRATION_WINDOW,
+                            min_assets=EIGEN_MIN_ASSETS,
+                            regularization=EIGEN_REGULARIZATION,
+                        )
+                        eigen_results = analyzer.compute_all(eigen_returns)
+
+                        # Build date-level DataFrame and broadcast to all assets
+                        eigen_df = pd.DataFrame({
+                            "EigenConcentration_60": eigen_results["eigenvalue_concentration"],
+                            "EffectiveRank_60": eigen_results["effective_rank"],
+                            "AvgCorrStress_60": eigen_results["avg_correlation_stress"],
+                            "ConditionNumber_60": eigen_results["condition_number"],
+                        }, index=all_dates)
+
+                        features = features.join(
+                            eigen_df,
+                            on=features.index.names[-1],
+                            how="left",
+                        )
+            except (ImportError, ValueError, RuntimeError) as e:
+                if verbose:
+                    print(f"  WARNING: Eigenvalue features failed: {e}")
 
         # Macro features (per-date, broadcast to all stocks)
         if self.include_research_factors:

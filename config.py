@@ -442,6 +442,36 @@ ALERT_HISTORY_FILE = RESULTS_DIR / "alerts_history.json"  # STATUS: ACTIVE — u
 LOG_LEVEL = "INFO"                                # STATUS: ACTIVE — api/main.py; "DEBUG", "INFO", "WARNING", "ERROR"
 LOG_FORMAT = "structured"                         # STATUS: ACTIVE — api/main.py; "structured" or "json"
 
+# ── Structural Features (Spec 02) ──────────────────────────────────
+# Master toggle — set False to disable all structural features and revert
+# to classical-only pipeline.  Individual families can also be disabled
+# independently via the per-family flags below.
+STRUCTURAL_FEATURES_ENABLED = True                # STATUS: ACTIVE — features/pipeline.py; master toggle for spectral/SSA/tail/eigen/OT
+
+# Spectral Features (FFT-based frequency decomposition)
+SPECTRAL_FFT_WINDOW = 252                         # STATUS: ACTIVE — indicators/spectral.py; rolling lookback for FFT (~1 year)
+SPECTRAL_CUTOFF_PERIOD = 20                       # STATUS: ACTIVE — indicators/spectral.py; HF/LF boundary in trading days
+
+# SSA Features (Singular Spectrum Analysis)
+SSA_WINDOW = 60                                   # STATUS: ACTIVE — indicators/ssa.py; rolling SSA lookback
+SSA_EMBED_DIM = 12                                # STATUS: ACTIVE — indicators/ssa.py; embedding dimension (< SSA_WINDOW)
+SSA_N_SINGULAR = 5                                # STATUS: ACTIVE — indicators/ssa.py; signal components (rest = noise)
+
+# Jump / Tail Risk Features
+JUMP_INTENSITY_WINDOW = 20                        # STATUS: ACTIVE — indicators/tail_risk.py; lookback for jump detection
+JUMP_INTENSITY_THRESHOLD = 2.5                    # STATUS: ACTIVE — indicators/tail_risk.py; sigma threshold for jumps
+
+# Eigenvalue Spectrum Features (cross-asset, computed in compute_universe)
+EIGEN_CONCENTRATION_WINDOW = 60                   # STATUS: ACTIVE — indicators/eigenvalue.py; rolling correlation window
+EIGEN_MIN_ASSETS = 5                              # STATUS: ACTIVE — indicators/eigenvalue.py; min assets for eigenvalue features
+EIGEN_REGULARIZATION = 0.01                       # STATUS: ACTIVE — indicators/eigenvalue.py; Tikhonov regularization
+
+# Optimal Transport Features (distribution drift)
+WASSERSTEIN_WINDOW = 30                           # STATUS: ACTIVE — indicators/ot_divergence.py; current distribution window
+WASSERSTEIN_REF_WINDOW = 60                       # STATUS: ACTIVE — indicators/ot_divergence.py; reference distribution window
+SINKHORN_EPSILON = 0.01                           # STATUS: ACTIVE — indicators/ot_divergence.py; entropic regularization
+SINKHORN_MAX_ITER = 100                           # STATUS: ACTIVE — indicators/ot_divergence.py; max Sinkhorn iterations
+
 
 # ── Config Validation ──────────────────────────────────────────────
 
