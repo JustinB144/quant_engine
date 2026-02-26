@@ -844,5 +844,253 @@ class TestIntegrationExecution(unittest.TestCase):
         self.assertGreater(details["total_bps"], 0.0)
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# SPEC-W02: Cost Calibrator Wiring into Backtest Engine
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class TestCostCalibratorWiring(unittest.TestCase):
+    """Test that CostCalibrator is wired into backtest execution."""
+
+    def test_different_segments_different_coefficients(self):
+        """Micro-cap impact coefficient should be higher than large-cap."""
+        calibrator = CostCalibrator(model_dir=None)
+        micro_coeff = calibrator.get_impact_coeff(100e6)   # micro
+        large_coeff = calibrator.get_impact_coeff(50e9)    # large
+        self.assertGreater(micro_coeff, large_coeff)
+        self.assertAlmostEqual(micro_coeff, 40.0)
+        self.assertAlmostEqual(large_coeff, 15.0)
+
+    def test_get_impact_coeff_by_segment(self):
+        """get_impact_coeff_by_segment should return segment coefficients."""
+        calibrator = CostCalibrator(model_dir=None)
+        self.assertAlmostEqual(calibrator.get_impact_coeff_by_segment("micro"), 40.0)
+        self.assertAlmostEqual(calibrator.get_impact_coeff_by_segment("small"), 30.0)
+        self.assertAlmostEqual(calibrator.get_impact_coeff_by_segment("mid"), 20.0)
+        self.assertAlmostEqual(calibrator.get_impact_coeff_by_segment("large"), 15.0)
+
+    def test_impact_override_micro_vs_large(self):
+        """Micro-cap override should produce more impact than large-cap."""
+        model = _make_model(impact_coefficient_bps=25.0)
+        micro_coeff = 40.0
+        large_coeff = 15.0
+
+        fill_micro = _calm_fill(model, impact_coeff_override=micro_coeff)
+        fill_large = _calm_fill(model, impact_coeff_override=large_coeff)
+
+        # Micro should have higher impact than large (buy side: higher fill)
+        self.assertGreater(fill_micro.impact_bps, fill_large.impact_bps)
+        self.assertGreater(fill_micro.fill_price, fill_large.fill_price)
+
+    def test_override_vs_flat_default(self):
+        """With override, impact should differ from the flat 25 bps default."""
+        model = _make_model(impact_coefficient_bps=25.0)
+        fill_default = _calm_fill(model)
+        fill_micro = _calm_fill(model, impact_coeff_override=40.0)
+        fill_large = _calm_fill(model, impact_coeff_override=15.0)
+
+        # Micro > default > large
+        self.assertGreater(fill_micro.fill_price, fill_default.fill_price)
+        self.assertLess(fill_large.fill_price, fill_default.fill_price)
+
+    def test_calibrator_record_trade_accumulates(self):
+        """record_trade should accumulate observations per segment."""
+        calibrator = CostCalibrator(
+            model_dir=None,
+            min_total_trades=5,
+            min_segment_trades=3,
+        )
+        # Record some large-cap trades
+        for i in range(5):
+            calibrator.record_trade(f"SYM_{i}", 50e9, 0.01, 5.0)
+        self.assertEqual(calibrator._total_trades, 5)
+        self.assertEqual(len(calibrator._trade_history["large"]), 5)
+
+    def test_calibrator_custom_coefficients(self):
+        """Custom default coefficients should override the hardcoded ones."""
+        custom = {"micro": 50.0, "small": 35.0, "mid": 25.0, "large": 10.0}
+        calibrator = CostCalibrator(
+            default_coefficients=custom,
+            model_dir=None,
+        )
+        self.assertAlmostEqual(calibrator.get_impact_coeff(100e6), 50.0)
+        self.assertAlmostEqual(calibrator.get_impact_coeff(50e9), 10.0)
+
+    def test_calibrator_custom_thresholds(self):
+        """Custom market cap thresholds should change segment boundaries."""
+        thresholds = {"micro": 500e6, "small": 5e9, "mid": 20e9}
+        calibrator = CostCalibrator(
+            marketcap_thresholds=thresholds,
+            model_dir=None,
+        )
+        # 400M is now micro (below 500M threshold)
+        self.assertEqual(calibrator.get_marketcap_segment(400e6), "micro")
+        # 3B is now small (500M - 5B)
+        self.assertEqual(calibrator.get_marketcap_segment(3e9), "small")
+
+    def test_sell_side_segment_override(self):
+        """Sell side should also use segment-specific impact coefficients."""
+        model = _make_model(impact_coefficient_bps=25.0)
+        fill_micro = model.simulate(
+            side="sell", reference_price=100.0, daily_volume=5_000_000.0,
+            desired_notional_usd=100_000.0, force_full=True,
+            realized_vol=0.12, impact_coeff_override=40.0,
+        )
+        fill_large = model.simulate(
+            side="sell", reference_price=100.0, daily_volume=5_000_000.0,
+            desired_notional_usd=100_000.0, force_full=True,
+            realized_vol=0.12, impact_coeff_override=15.0,
+        )
+        # Sell side: more impact → lower fill price
+        self.assertLess(fill_micro.fill_price, fill_large.fill_price)
+
+
+class TestMarketCapEstimation(unittest.TestCase):
+    """Test the _estimate_market_cap helper on synthetic OHLCV data."""
+
+    def _make_ohlcv(self, price, volume, n_bars=30):
+        """Create synthetic OHLCV DataFrame."""
+        dates = pd.bdate_range("2024-01-01", periods=n_bars)
+        return pd.DataFrame({
+            "Open": price,
+            "High": price * 1.01,
+            "Low": price * 0.99,
+            "Close": price,
+            "Volume": volume,
+        }, index=dates)
+
+    def test_large_cap_estimation(self):
+        """High price × high volume → large cap estimate."""
+        from quant_engine.backtest.engine import Backtester
+        # $200 stock, 10M shares/day → ADV ~$2B → market_cap ~$400B
+        ohlcv = self._make_ohlcv(200.0, 10_000_000.0)
+        mcap = Backtester._estimate_market_cap(ohlcv, 25)
+        self.assertGreater(mcap, 10e9)
+
+    def test_micro_cap_estimation(self):
+        """Low price × low volume → micro cap estimate."""
+        from quant_engine.backtest.engine import Backtester
+        # $5 stock, 50K shares/day → ADV ~$250K → market_cap ~$50M
+        ohlcv = self._make_ohlcv(5.0, 50_000.0)
+        mcap = Backtester._estimate_market_cap(ohlcv, 25)
+        self.assertLess(mcap, 300e6)
+
+    def test_no_volume_returns_zero(self):
+        """Zero volume should return 0 market cap."""
+        from quant_engine.backtest.engine import Backtester
+        ohlcv = self._make_ohlcv(100.0, 0.0)
+        mcap = Backtester._estimate_market_cap(ohlcv, 25)
+        self.assertEqual(mcap, 0.0)
+
+    def test_missing_volume_column(self):
+        """If no Volume column exists, should return 0."""
+        from quant_engine.backtest.engine import Backtester
+        dates = pd.bdate_range("2024-01-01", periods=30)
+        ohlcv = pd.DataFrame({
+            "Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0,
+        }, index=dates)
+        mcap = Backtester._estimate_market_cap(ohlcv, 25)
+        self.assertEqual(mcap, 0.0)
+
+    def test_early_bar_still_works(self):
+        """Early bar (bar_idx=0) should still produce a valid estimate."""
+        from quant_engine.backtest.engine import Backtester
+        ohlcv = self._make_ohlcv(100.0, 1_000_000.0)
+        mcap = Backtester._estimate_market_cap(ohlcv, 0)
+        self.assertGreater(mcap, 0.0)
+
+
+class TestCostCalibratorWithExecutionPipeline(unittest.TestCase):
+    """End-to-end test: calibrator → execution model → verify segment differentiation."""
+
+    def test_full_pipeline_segment_differentiation(self):
+        """Complete pipeline: calibrator feeds differentiated coefficients
+        to execution model, resulting in different costs per segment."""
+        model = _make_model()
+        calibrator = CostCalibrator(model_dir=None)
+
+        segments = {
+            "micro": 100e6,
+            "small": 500e6,
+            "mid": 5e9,
+            "large": 50e9,
+        }
+
+        fills = {}
+        for seg_name, mcap in segments.items():
+            coeff = calibrator.get_impact_coeff(mcap)
+            fill = model.simulate(
+                side="buy",
+                reference_price=100.0,
+                daily_volume=5_000_000.0,
+                desired_notional_usd=100_000.0,
+                force_full=True,
+                realized_vol=0.12,
+                overnight_gap=0.001,
+                intraday_range=0.01,
+                impact_coeff_override=coeff,
+            )
+            fills[seg_name] = fill
+
+        # Verify ordering: micro should have highest cost, large lowest
+        self.assertGreater(fills["micro"].impact_bps, fills["small"].impact_bps)
+        self.assertGreater(fills["small"].impact_bps, fills["mid"].impact_bps)
+        self.assertGreater(fills["mid"].impact_bps, fills["large"].impact_bps)
+
+    def test_record_and_calibrate_cycle(self):
+        """Simulate the record → calibrate cycle that happens during backtest.
+
+        Uses realistic participation rates and cost values that exceed
+        the half-spread threshold so calibration produces valid
+        coefficient observations.
+        """
+        calibrator = CostCalibrator(
+            model_dir=None,
+            min_total_trades=10,
+            min_segment_trades=5,
+            spread_bps=3.0,
+        )
+
+        # Record 15 large-cap trades with realistic participation and
+        # costs above the half-spread (1.5 bps) deduction threshold.
+        for i in range(15):
+            calibrator.record_trade(
+                symbol=f"AAPL_{i}",
+                market_cap=50e9,
+                participation_rate=0.01,    # 1% of daily volume
+                realized_cost_bps=5.0,      # 5 bps total cost
+            )
+
+        # Calibrate and verify coefficients updated
+        result = calibrator.calibrate()
+        self.assertIn("large", result)
+        self.assertGreater(result["large"]["trades_count"], 0)
+        # Observed coeff should be (5.0 - 1.5) / sqrt(0.01) = 3.5/0.1 = 35
+        self.assertGreater(result["large"]["observed_coeff"], 0)
+
+    def test_trade_dataclass_has_segment(self):
+        """Trade dataclass should have market_cap_segment field."""
+        from quant_engine.backtest.engine import Trade
+        trade = Trade(
+            ticker="TEST", entry_date="2024-01-01", exit_date="2024-01-10",
+            entry_price=100.0, exit_price=101.0,
+            predicted_return=0.01, actual_return=0.01, net_return=0.01,
+            regime=0, confidence=0.8, holding_days=10,
+            market_cap_segment="large",
+        )
+        self.assertEqual(trade.market_cap_segment, "large")
+
+    def test_trade_default_segment_empty(self):
+        """Trade should default to empty segment for backward compatibility."""
+        from quant_engine.backtest.engine import Trade
+        trade = Trade(
+            ticker="TEST", entry_date="2024-01-01", exit_date="2024-01-10",
+            entry_price=100.0, exit_price=101.0,
+            predicted_return=0.01, actual_return=0.01, net_return=0.01,
+            regime=0, confidence=0.8, holding_days=10,
+        )
+        self.assertEqual(trade.market_cap_segment, "")
+
+
 if __name__ == "__main__":
     unittest.main()
