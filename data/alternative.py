@@ -8,8 +8,10 @@ Provides a unified interface for ingesting non-price data sources:
   - Insider transactions (TFN via WRDS)
   - Institutional ownership changes (TFN s34 via WRDS)
 
-Each data method first attempts to pull from the WRDS provider. If WRDS is
-unavailable the method returns ``None`` so the pipeline degrades gracefully.
+Each data method first attempts to pull from the WRDS provider.  In
+**strict** mode (``strict=True``), a :class:`WRDSUnavailableError` is raised
+when WRDS cannot be reached.  In the default **graceful** mode the methods
+return ``None`` and log a warning so callers can degrade transparently.
 """
 
 from __future__ import annotations
@@ -24,28 +26,101 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Lazy-loaded WRDS provider singleton; avoids import-time DB connections.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Custom exception
+# ─────────────────────────────────────────────────────────────────────────────
+
+class WRDSUnavailableError(RuntimeError):
+    """Raised when WRDS is required but cannot be reached.
+
+    Possible causes:
+      - ``WRDS_USERNAME`` environment variable is not set.
+      - The ``wrds`` Python package is not installed.
+      - WRDS credentials in ``~/.pgpass`` are missing or invalid.
+      - The WRDS PostgreSQL server is unreachable.
+    """
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Lazy-loaded WRDS provider singleton
+# ─────────────────────────────────────────────────────────────────────────────
+
 _wrds_provider = None
+_wrds_import_error: Optional[str] = None
 
 
 def _get_wrds():
-    """Return the cached WRDSProvider singleton, or None."""
-    global _wrds_provider
+    """Return the cached WRDSProvider singleton, or ``None``.
+
+    On first call, attempts to import and instantiate the WRDS provider.
+    If the provider module cannot be imported due to a missing dependency
+    (e.g. the ``wrds`` package is not installed), returns ``None`` and caches
+    a human-readable reason in ``_wrds_import_error``.
+
+    Unexpected errors (syntax errors, broken internal imports, etc.) are
+    **not** swallowed — they propagate so that genuine bugs are visible
+    immediately rather than silently degrading the data pipeline.
+    """
+    global _wrds_provider, _wrds_import_error
+
     if _wrds_provider is not None:
         return _wrds_provider
-    try:
-        from data.wrds_provider import get_wrds_provider
-        _wrds_provider = get_wrds_provider()
-        return _wrds_provider
-    except ImportError:
-        pass
-    # Also try the fully-qualified import path used in some entry points
-    try:
-        from quant_engine.data.wrds_provider import get_wrds_provider
-        _wrds_provider = get_wrds_provider()
-        return _wrds_provider
-    except ImportError:
+    if _wrds_import_error is not None:
+        # We already failed once and cached the reason — don't retry.
         return None
+
+    import_paths = [
+        "data.wrds_provider",
+        "quant_engine.data.wrds_provider",
+    ]
+
+    last_error: Optional[Exception] = None
+    for module_path in import_paths:
+        try:
+            # Use __import__ to avoid triggering data/__init__.py when
+            # importing via the dotted path directly.
+            import importlib
+            mod = importlib.import_module(module_path)
+            factory = getattr(mod, "get_wrds_provider", None)
+            if factory is None:
+                raise ImportError(
+                    f"Module '{module_path}' has no 'get_wrds_provider' function"
+                )
+            _wrds_provider = factory()
+            if not _wrds_provider.available():
+                reason = (
+                    "WRDS provider loaded but is not available — "
+                    "check WRDS_USERNAME env var and ~/.pgpass credentials"
+                )
+                logger.warning("Alternative data: %s", reason)
+                _wrds_import_error = reason
+                _wrds_provider = None
+                return None
+            logger.info("Alternative data: WRDS provider connected successfully")
+            return _wrds_provider
+        except ImportError as exc:
+            last_error = exc
+            continue
+        except Exception as exc:
+            # Non-ImportError means something is genuinely broken inside
+            # wrds_provider.py (e.g. SyntaxError, AttributeError).
+            # Do NOT swallow — propagate immediately.
+            raise
+
+    # All import paths failed with ImportError — this is expected when the
+    # wrds package is not installed or the project layout doesn't support
+    # the import path.  Cache the reason so we don't retry every call.
+    reason = f"Could not import WRDS provider: {last_error}"
+    logger.warning("Alternative data: %s", reason)
+    _wrds_import_error = reason
+    return None
+
+
+def get_wrds_unavailable_reason() -> Optional[str]:
+    """Return a human-readable reason why WRDS is unavailable, or ``None``."""
+    _get_wrds()  # Ensure initialization has been attempted.
+    return _wrds_import_error
 
 
 class AlternativeDataProvider:
@@ -57,23 +132,58 @@ class AlternativeDataProvider:
     - Options flow (OptionMetrics opprcd via WRDS)
     - Insider transactions (TFN via WRDS)
     - Institutional ownership (TFN s34 via WRDS)
+
+    Parameters
+    ----------
+    cache_dir : Path, optional
+        Directory used for caching downloaded alternative data.  If
+        ``None``, caching is disabled.
+    strict : bool, optional
+        When ``True``, raise :class:`WRDSUnavailableError` immediately if
+        the WRDS provider cannot be initialised.  When ``False`` (the
+        default), each data method returns ``None`` and logs a warning so
+        the pipeline can degrade gracefully.
     """
 
-    def __init__(self, cache_dir: Optional[Path] = None):
-        """Initialise the provider.
-
-        Parameters
-        ----------
-        cache_dir : Path, optional
-            Directory used for caching downloaded alternative data.  If
-            ``None``, caching is disabled.
-        """
+    def __init__(
+        self,
+        cache_dir: Optional[Path] = None,
+        strict: bool = False,
+    ):
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
         if self.cache_dir is not None:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.strict = strict
         self._wrds = _get_wrds()
 
+        if self.strict and (self._wrds is None or not self._wrds.available()):
+            reason = get_wrds_unavailable_reason() or "unknown reason"
+            raise WRDSUnavailableError(
+                f"WRDS provider is required (strict=True) but unavailable: {reason}"
+            )
+
+    @property
+    def is_available(self) -> bool:
+        """Return ``True`` if the underlying WRDS connection is usable."""
+        return self._wrds is not None and self._wrds.available()
+
     # ── helpers ──────────────────────────────────────────────────────────
+
+    def _check_wrds(self, method_name: str) -> bool:
+        """Check WRDS availability; raise in strict mode, warn otherwise.
+
+        Returns ``True`` if WRDS is available, ``False`` if not (graceful mode).
+        """
+        if self._wrds is not None and self._wrds.available():
+            return True
+
+        reason = get_wrds_unavailable_reason() or "WRDS provider not initialised"
+        if self.strict:
+            raise WRDSUnavailableError(
+                f"{method_name}: WRDS required but unavailable — {reason}"
+            )
+        logger.warning("%s: WRDS unavailable — %s", method_name, reason)
+        return False
 
     def _resolve_permno(self, ticker: str, as_of: str = None) -> Optional[str]:
         """Resolve *ticker* to a CRSP PERMNO via the WRDS provider."""
@@ -115,8 +225,7 @@ class AlternativeDataProvider:
         -------
         pd.DataFrame or None
         """
-        if self._wrds is None or not self._wrds.available():
-            logger.debug("get_earnings_surprise(%s): WRDS unavailable", ticker)
+        if not self._check_wrds(f"get_earnings_surprise({ticker})"):
             return None
 
         try:
@@ -209,8 +318,7 @@ class AlternativeDataProvider:
         -------
         pd.DataFrame or None
         """
-        if self._wrds is None or not self._wrds.available():
-            logger.debug("get_options_flow(%s): WRDS unavailable", ticker)
+        if not self._check_wrds(f"get_options_flow({ticker})"):
             return None
 
         try:
@@ -288,8 +396,7 @@ class AlternativeDataProvider:
         -------
         pd.DataFrame or None
         """
-        if self._wrds is None or not self._wrds.available():
-            logger.debug("get_short_interest(%s): WRDS unavailable", ticker)
+        if not self._check_wrds(f"get_short_interest({ticker})"):
             return None
 
         try:
@@ -378,8 +485,7 @@ class AlternativeDataProvider:
         -------
         pd.DataFrame or None
         """
-        if self._wrds is None or not self._wrds.available():
-            logger.debug("get_insider_transactions(%s): WRDS unavailable", ticker)
+        if not self._check_wrds(f"get_insider_transactions({ticker})"):
             return None
 
         try:
@@ -502,8 +608,7 @@ class AlternativeDataProvider:
         -------
         pd.DataFrame or None
         """
-        if self._wrds is None or not self._wrds.available():
-            logger.debug("get_institutional_ownership(%s): WRDS unavailable", ticker)
+        if not self._check_wrds(f"get_institutional_ownership({ticker})"):
             return None
 
         try:
@@ -694,3 +799,104 @@ def compute_alternative_features(
     result.index.name = "date"
     result = result.sort_index()
     return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Module-level convenience functions
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Shared provider singleton for module-level convenience functions.
+_default_provider: Optional[AlternativeDataProvider] = None
+
+
+def _get_default_provider() -> AlternativeDataProvider:
+    """Return or create a module-level default provider (graceful mode)."""
+    global _default_provider
+    if _default_provider is None:
+        _default_provider = AlternativeDataProvider()
+    return _default_provider
+
+
+def get_earnings_surprise(
+    ticker: str,
+    lookback_days: int = 90,
+    as_of_date: Optional[datetime] = None,
+) -> Optional[pd.DataFrame]:
+    """Module-level convenience wrapper for earnings surprise data.
+
+    Delegates to :meth:`AlternativeDataProvider.get_earnings_surprise`.
+    Returns ``None`` if WRDS is unavailable.
+    """
+    return _get_default_provider().get_earnings_surprise(
+        ticker, lookback_days=lookback_days, as_of_date=as_of_date,
+    )
+
+
+def get_fundamentals(
+    ticker: str,
+    as_of_date: Optional[datetime] = None,
+) -> Optional[pd.DataFrame]:
+    """Module-level convenience wrapper for institutional ownership data.
+
+    Delegates to :meth:`AlternativeDataProvider.get_institutional_ownership`.
+    Returns ``None`` if WRDS is unavailable.
+    """
+    return _get_default_provider().get_institutional_ownership(
+        ticker, as_of_date=as_of_date,
+    )
+
+
+def get_short_interest(
+    ticker: str,
+    as_of_date: Optional[datetime] = None,
+) -> Optional[pd.DataFrame]:
+    """Module-level convenience wrapper for short interest data.
+
+    Delegates to :meth:`AlternativeDataProvider.get_short_interest`.
+    Returns ``None`` if WRDS is unavailable.
+    """
+    return _get_default_provider().get_short_interest(
+        ticker, as_of_date=as_of_date,
+    )
+
+
+def get_options_flow(
+    ticker: str,
+    as_of_date: Optional[datetime] = None,
+) -> Optional[pd.DataFrame]:
+    """Module-level convenience wrapper for options flow data.
+
+    Delegates to :meth:`AlternativeDataProvider.get_options_flow`.
+    Returns ``None`` if WRDS is unavailable.
+    """
+    return _get_default_provider().get_options_flow(
+        ticker, as_of_date=as_of_date,
+    )
+
+
+def get_insider_transactions(
+    ticker: str,
+    as_of_date: Optional[datetime] = None,
+) -> Optional[pd.DataFrame]:
+    """Module-level convenience wrapper for insider transaction data.
+
+    Delegates to :meth:`AlternativeDataProvider.get_insider_transactions`.
+    Returns ``None`` if WRDS is unavailable.
+    """
+    return _get_default_provider().get_insider_transactions(
+        ticker, as_of_date=as_of_date,
+    )
+
+
+def get_institutional_ownership(
+    ticker: str,
+    as_of_date: Optional[datetime] = None,
+) -> Optional[pd.DataFrame]:
+    """Module-level convenience wrapper for institutional ownership data.
+
+    Delegates to :meth:`AlternativeDataProvider.get_institutional_ownership`.
+    Returns ``None`` if WRDS is unavailable.
+    """
+    return _get_default_provider().get_institutional_ownership(
+        ticker, as_of_date=as_of_date,
+    )
