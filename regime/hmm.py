@@ -436,14 +436,71 @@ def select_hmm_states_bic(
 
 
 def build_hmm_observation_matrix(features: pd.DataFrame) -> pd.DataFrame:
-    """
-    Build an expanded observation matrix for regime inference.
+    """Build an expanded observation matrix for HMM regime inference.
 
-    Core features (4):
-        ret_1d, vol_20d, natr, trend
-    Extended features (7, with graceful fallback):
-        credit_spread_proxy, market_breadth, vix_rank, volume_regime,
-        momentum_20d, mean_reversion, cross_correlation
+    Constructs an 11-dimensional observation vector from available features.
+    Each feature is selected for its ability to distinguish market regimes
+    while maintaining causal validity (no look-ahead bias).
+
+    Feature Composition (11 features)
+    ----------------------------------
+    **Core features (4, always available from OHLCV):**
+
+    ====  ================  ========  ==========  ========================================
+    Idx   Feature           Window    Causality   Regime signal
+    ====  ================  ========  ==========  ========================================
+     0    ret_1d            1 bar     CAUSAL      Directional bias; positive/negative skew
+     1    vol_20d           20 bars   CAUSAL      Low vol = calm, high vol = stress
+     2    natr              14 bars   CAUSAL      Tight range = trend, wide range = noise
+     3    trend (SMASlope)  50 bars   CAUSAL      Positive = uptrend, negative = downtrend
+    ====  ================  ========  ==========  ========================================
+
+    **Extended features (up to 7, graceful fallback if unavailable):**
+
+    ====  =====================  ========  ==========  ========================================
+    Idx   Feature                Window    Causality   Regime signal
+    ====  =====================  ========  ==========  ========================================
+     4    credit_spread_proxy    252 bars  CAUSAL      GARCH/short-vol ratio; stress indicator
+     5    market_breadth         20 bars   CAUSAL      Fraction of recent returns > 0
+     6    vix_rank               252 bars  CAUSAL      Percentile rank of realized volatility
+     7    volume_regime          60 bars   CAUSAL      Z-score of volume vs trailing average
+     8    momentum_20d           20 bars   CAUSAL      20-day price momentum
+     9    mean_reversion         100 bars  CAUSAL      0.5 - Hurst exponent (positive = MR)
+    10    cross_correlation      20 bars   CAUSAL      Lagged return autocorrelation proxy
+    ====  =====================  ========  ==========  ========================================
+
+    **Regime interpretation by feature cluster:**
+
+    - **Trending Bull (regime 0):** Positive ret, low vol, positive SMA slope,
+      high breadth, low credit spread proxy, positive momentum
+    - **Trending Bear (regime 1):** Negative ret, moderate vol, negative SMA slope,
+      low breadth, rising credit spread proxy, negative momentum
+    - **Mean Reverting (regime 2):** Near-zero ret, low vol, flat SMA slope,
+      mixed breadth, low autocorrelation, high mean_reversion signal
+    - **High Volatility (regime 3):** Extreme ret, high vol, high NATR,
+      elevated VIX rank, volume spikes, high credit spread proxy
+
+    Parameters
+    ----------
+    features : pd.DataFrame
+        Computed features from the feature pipeline.  Must contain at minimum
+        ``return_1d``, ``return_vol_20d``, ``NATR_14``, ``SMASlope_50``.
+        Extended features are included when their source columns are present.
+
+    Returns
+    -------
+    pd.DataFrame
+        Standardized observation matrix (mean 0, std 1 per column).
+        Shape ``(n_bars, n_features)`` where ``n_features`` is 4–11
+        depending on feature availability.
+
+    Notes
+    -----
+    - All features are backward-looking (CAUSAL) — no future data used.
+    - Missing values are forward-filled, then backward-filled, then zeroed.
+    - Inf values are replaced with NaN before filling.
+    - Each column is z-scored (mean 0, std 1) for numerical stability.
+    - Zero-variance columns are replaced with constant 0.0.
     """
     obs = pd.DataFrame(index=features.index)
 

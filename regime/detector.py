@@ -1,10 +1,18 @@
 """
-Regime detector with two engines:
-1) rule-based thresholds (legacy, deterministic)
-2) probabilistic Gaussian HMM with sticky transitions + duration smoothing
+Regime detector with multiple engines and structural state layer.
+
+Engines:
+1) Rule-based thresholds (legacy, deterministic)
+2) Probabilistic Gaussian HMM with sticky transitions + duration smoothing
+3) Statistical Jump Model (PyPI or legacy)
+4) Ensemble (majority vote across methods)
+
+Structural State Layer (SPEC_03):
+- BOCPD (Bayesian Online Change-Point Detection) for real-time changepoint signals
+- ShockVector — unified, version-locked market state representation
 """
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import logging
 
@@ -27,6 +35,13 @@ from ..config import (
     REGIME_EXPECTED_CHANGES_PER_YEAR,
     REGIME_ENSEMBLE_ENABLED,
     REGIME_ENSEMBLE_CONSENSUS_THRESHOLD,
+    BOCPD_ENABLED,
+    BOCPD_HAZARD_LAMBDA,
+    BOCPD_HAZARD_FUNCTION,
+    BOCPD_RUNLENGTH_DEPTH,
+    BOCPD_CHANGEPOINT_THRESHOLD,
+    SHOCK_VECTOR_SCHEMA_VERSION,
+    SHOCK_VECTOR_INCLUDE_STRUCTURAL,
 )
 from .hmm import (
     GaussianHMM,
@@ -49,8 +64,10 @@ class RegimeOutput:
 
 
 class RegimeDetector:
-    """
-    Classifies market regime at each bar using either rules or HMM.
+    """Classifies market regime at each bar using rules, HMM, jump model, or ensemble.
+
+    Optionally runs BOCPD (Bayesian Online Change-Point Detection) in parallel
+    to provide real-time changepoint signals that complement the batch HMM.
     """
 
     def __init__(
@@ -65,8 +82,17 @@ class RegimeDetector:
         hmm_max_iter: int = REGIME_HMM_MAX_ITER,
         hmm_stickiness: float = REGIME_HMM_STICKINESS,
         min_duration: int = REGIME_MIN_DURATION,
+        enable_bocpd: bool = BOCPD_ENABLED,
     ):
-        """Initialize RegimeDetector."""
+        """Initialize RegimeDetector.
+
+        Parameters
+        ----------
+        method : str
+            Detection method: ``"hmm"``, ``"jump"``, ``"rule"``, or ``"ensemble"``.
+        enable_bocpd : bool
+            If True, initialize a BOCPD detector for online changepoint signals.
+        """
         self.method = method
         self.hurst_trend = hurst_trend_threshold
         self.hurst_mr = hurst_mr_threshold
@@ -78,6 +104,21 @@ class RegimeDetector:
         self.hmm_max_iter = hmm_max_iter
         self.hmm_stickiness = hmm_stickiness
         self.min_duration = min_duration
+
+        # BOCPD: online changepoint detection (SPEC_03).
+        self.enable_bocpd = enable_bocpd
+        self._bocpd = None
+        if enable_bocpd:
+            try:
+                from .bocpd import BOCPDDetector
+                self._bocpd = BOCPDDetector(
+                    hazard_lambda=BOCPD_HAZARD_LAMBDA,
+                    hazard_func=BOCPD_HAZARD_FUNCTION,
+                    max_runlength=BOCPD_RUNLENGTH_DEPTH,
+                )
+            except Exception as e:
+                logger.warning("Failed to initialize BOCPD: %s", e)
+                self.enable_bocpd = False
 
     def detect(self, features: pd.DataFrame) -> pd.Series:
         """detect."""
@@ -564,12 +605,191 @@ class RegimeDetector:
 
         return mapping
 
+    def detect_with_shock_context(
+        self,
+        features: pd.DataFrame,
+        ticker: str = "",
+    ) -> "ShockVector":
+        """Detect regime and produce a ShockVector with BOCPD signals.
+
+        Runs the standard regime detection pipeline plus optional BOCPD
+        changepoint detection on the return series.  Returns a single
+        ``ShockVector`` for the most recent bar.
+
+        Parameters
+        ----------
+        features : pd.DataFrame
+            Feature DataFrame for a single security (rows = bars).
+        ticker : str
+            Security identifier for the ShockVector.
+
+        Returns
+        -------
+        ShockVector
+            Unified market state representation for the last bar.
+        """
+        from .shock_vector import ShockVector, ShockVectorValidator
+
+        # Run standard regime detection.
+        regime_out = self.detect_full(features)
+
+        # BOCPD changepoint detection on return series.
+        bocpd_cp_prob = 0.0
+        bocpd_runlength = 0
+
+        if self.enable_bocpd and self._bocpd is not None:
+            returns = features.get(
+                "return_1d",
+                pd.Series(0.0, index=features.index),
+            ).fillna(0.0).values
+
+            if len(returns) >= 10:
+                try:
+                    batch_result = self._bocpd.batch_update(returns)
+                    bocpd_cp_prob = float(batch_result.changepoint_probs[-1])
+                    bocpd_runlength = int(batch_result.run_lengths[-1])
+                except Exception as e:
+                    logger.warning("BOCPD batch_update failed for %s: %s", ticker, e)
+
+        # Jump detection: flag if the most recent return is a 2.5-sigma event.
+        jump_detected = False
+        jump_magnitude = 0.0
+        ret_col = features.get("return_1d", pd.Series(0.0, index=features.index))
+        ret_vals = ret_col.dropna().values
+        if len(ret_vals) >= 20:
+            recent_ret = float(ret_vals[-1])
+            recent_vol = float(np.std(ret_vals[-20:]))
+            if recent_vol > 1e-10:
+                jump_detected = abs(recent_ret) > 2.5 * recent_vol
+                jump_magnitude = recent_ret
+
+        # Uncertainty from regime probabilities.
+        uncertainty_series = regime_out.uncertainty
+        hmm_uncertainty = 0.5
+        if uncertainty_series is not None and len(uncertainty_series) > 0:
+            hmm_uncertainty = float(uncertainty_series.iloc[-1])
+
+        # Structural features (include if available).
+        structural = {}
+        if SHOCK_VECTOR_INCLUDE_STRUCTURAL:
+            _structural_cols = {
+                "spectral_entropy": "SpectralEntropy_252",
+                "ssa_trend_strength": "SSATrendStr_60",
+                "jump_intensity": "JumpIntensity_20",
+                "eigenvalue_concentration": "EigenConcentration_60",
+            }
+            for key, col in _structural_cols.items():
+                if col in features.columns:
+                    val = features[col].iloc[-1]
+                    if np.isfinite(val):
+                        structural[key] = float(val)
+
+        sv = ShockVector(
+            schema_version=SHOCK_VECTOR_SCHEMA_VERSION,
+            timestamp=features.index[-1] if hasattr(features.index[-1], 'isoformat') else pd.Timestamp.now(),
+            ticker=ticker,
+            hmm_regime=int(regime_out.regime.iloc[-1]),
+            hmm_confidence=float(regime_out.confidence.iloc[-1]),
+            hmm_uncertainty=hmm_uncertainty,
+            bocpd_changepoint_prob=bocpd_cp_prob,
+            bocpd_runlength=bocpd_runlength,
+            jump_detected=jump_detected,
+            jump_magnitude=jump_magnitude,
+            structural_features=structural,
+            transition_matrix=regime_out.transition_matrix,
+            ensemble_model_type=regime_out.model_type,
+        )
+
+        is_valid, errors = ShockVectorValidator.validate(sv)
+        if not is_valid:
+            logger.error("Invalid ShockVector for %s: %s", ticker, errors)
+
+        return sv
+
+    def detect_batch_with_shock_context(
+        self,
+        features_by_id: Dict[str, pd.DataFrame],
+    ) -> Dict[str, "ShockVector"]:
+        """Detect regimes and produce ShockVectors for multiple securities.
+
+        Parameters
+        ----------
+        features_by_id : dict
+            Mapping from ticker/PERMNO to feature DataFrames.
+
+        Returns
+        -------
+        dict[str, ShockVector]
+            Mapping from ticker to ShockVector.
+        """
+        shock_vectors = {}
+        for ticker, features in features_by_id.items():
+            try:
+                sv = self.detect_with_shock_context(features, ticker=str(ticker))
+                shock_vectors[str(ticker)] = sv
+            except Exception as e:
+                logger.error("ShockVector generation failed for %s: %s", ticker, e)
+        return shock_vectors
+
     @staticmethod
     def _get_col(df: pd.DataFrame, col: str, default: float) -> pd.Series:
         """Internal helper for get col."""
         if col in df.columns:
             return df[col].fillna(default)
         return pd.Series(default, index=df.index)
+
+
+def validate_hmm_observation_features(features: pd.DataFrame) -> Tuple[bool, List[str]]:
+    """Validate that required HMM observation features are present and non-degenerate.
+
+    Checks the 4 core features (always required) and reports on the 7 extended
+    features (optional but recommended).
+
+    Parameters
+    ----------
+    features : pd.DataFrame
+        Computed features from the feature pipeline.
+
+    Returns
+    -------
+    tuple[bool, list[str]]
+        ``(is_valid, list_of_warnings)``.  ``is_valid`` is False only if
+        core features are missing.
+    """
+    core_required = {
+        "return_1d": "Core feature: 1-day return",
+        "return_vol_20d": "Core feature: 20-day realized volatility",
+        "NATR_14": "Core feature: Normalized Average True Range",
+        "SMASlope_50": "Core feature: 50-day SMA slope",
+    }
+    extended_optional = {
+        "GARCH_252": "Extended: GARCH volatility (for credit spread proxy)",
+        "Volume": "Extended: Volume (for volume regime z-score)",
+        "return_20d": "Extended: 20-day return (for momentum)",
+        "Hurst_100": "Extended: Hurst exponent (for mean reversion signal)",
+        "AutoCorr_20_1": "Extended: Autocorrelation (for cross-correlation proxy)",
+    }
+
+    warnings: List[str] = []
+    core_missing = []
+
+    for col, desc in core_required.items():
+        if col not in features.columns:
+            core_missing.append(col)
+            warnings.append(f"MISSING {desc}: '{col}' not in features")
+        else:
+            nan_pct = features[col].isna().mean()
+            if nan_pct > 0.10:
+                warnings.append(
+                    f"HIGH_NAN {desc}: '{col}' has {nan_pct:.1%} missing values"
+                )
+
+    for col, desc in extended_optional.items():
+        if col not in features.columns:
+            warnings.append(f"ABSENT {desc}: '{col}' not available (graceful fallback used)")
+
+    is_valid = len(core_missing) == 0
+    return is_valid, warnings
 
 
 def detect_regimes_batch(
