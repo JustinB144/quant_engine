@@ -12,10 +12,11 @@ Quarantine trigger: rejected_bars > 5% OR quality_score < 0.80
 
 import json
 import logging
+import shutil
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -118,15 +119,20 @@ def _get_trading_days(
     start_date: pd.Timestamp,
     end_date: pd.Timestamp,
 ) -> pd.DatetimeIndex:
-    """Get NYSE trading days in date range."""
+    """Get NYSE trading days in date range using pandas_market_calendars."""
     if _NYSE_CAL is not None:
         try:
-            return _NYSE_CAL.sessions_window(start_date, end_date)
-        except Exception as e:
-            logger.warning(f"Failed to use pandas_market_calendars: {e}. Using bdate_range.")
+            schedule = _NYSE_CAL.schedule(start_date=start_date, end_date=end_date)
+            if len(schedule) > 0:
+                return mcal.date_range(schedule, frequency="1D").normalize()
+            return pd.DatetimeIndex([])
+        except Exception as exc:
+            logger.warning(
+                "Failed to use pandas_market_calendars: %s. Using bdate_range.", exc
+            )
 
-    # Fallback to business day range
-    return pd.bdate_range(start=start_date, end=end_date, freq='B')
+    # Fallback to business day range (ignores holidays)
+    return pd.bdate_range(start=start_date, end=end_date)
 
 
 def _is_in_rth(timestamp: pd.Timestamp) -> bool:
@@ -356,29 +362,44 @@ def _check_extreme_bar_return(
 def _check_stale_price(df: pd.DataFrame) -> Tuple[CheckResult, pd.Index]:
     """
     Check 6: Close == prev_Close AND High == Low == Open == Close for 3+ consecutive bars.
-    Soft flag check.
+    Soft flag check — detects frozen/stale data feeds.
     """
+    if len(df) < 3:
+        return CheckResult(
+            check_name="stale_price",
+            passed=True,
+            message="Dataset too small to check stale prices",
+        ), pd.Index([])
+
     flagged_idx = []
 
-    # Identify flat bars (no intrabar movement)
-    flat = (df["High"] == df["Low"]) & (df["Open"] == df["Close"])
+    # Identify flat bars: all four prices identical within the bar
+    all_equal = (
+        (df["High"] == df["Low"])
+        & (df["Open"] == df["Close"])
+        & (df["High"] == df["Open"])
+    )
+    # Also require Close equals previous bar's Close (frozen feed)
+    same_as_prev = df["Close"] == df["Close"].shift(1)
+    stale = all_equal & same_as_prev
 
-    # Check for 3+ consecutive flat bars
-    flat_groups = (flat != flat.shift()).cumsum()
-    group_sizes = flat.groupby(flat_groups).sum()
-    stale_groups = group_sizes[group_sizes >= 3]
+    # Find runs of 3+ consecutive stale bars
+    stale_groups = (stale != stale.shift()).cumsum()
+    group_sizes = stale.groupby(stale_groups).sum()
+    stale_runs = group_sizes[group_sizes >= 3]
 
-    if len(stale_groups) > 0:
-        for group_id in stale_groups.index:
-            group_idx = flat[flat_groups == group_id].index
-            # Flag all but first of the group
-            flagged_idx.extend(group_idx[1:].tolist())
+    if len(stale_runs) > 0:
+        for group_id in stale_runs.index:
+            group_mask = stale_groups == group_id
+            group_idx = stale[group_mask].index
+            # Flag all bars in the stale run (the data is frozen)
+            flagged_idx.extend(group_idx.tolist())
 
     result = CheckResult(
         check_name="stale_price",
         passed=len(flagged_idx) == 0,
         flagged_count=len(flagged_idx),
-        message=f"Flagged {len(flagged_idx)} bars in 3+ consecutive stale bars sequences",
+        message=f"Flagged {len(flagged_idx)} bars in 3+ consecutive stale bar sequences",
     )
 
     return result, pd.Index(flagged_idx)
@@ -393,11 +414,11 @@ def _check_zero_volume_liquid(df: pd.DataFrame) -> Tuple[CheckResult, pd.Index]:
     """
     Check 7: Volume == 0 during RTH for typically liquid tickers.
     Flag if median daily volume > 1000 shares.
-    Soft flag check.
+    Soft flag check.  Vectorized for performance on large datasets.
     """
-    # Calculate daily volumes
     if not isinstance(df.index, pd.DatetimeIndex):
         try:
+            df = df.copy()
             df.index = pd.to_datetime(df.index)
         except Exception:
             return CheckResult(
@@ -409,21 +430,34 @@ def _check_zero_volume_liquid(df: pd.DataFrame) -> Tuple[CheckResult, pd.Index]:
     daily_volumes = df.groupby(df.index.date)["Volume"].sum()
     median_daily_volume = daily_volumes.median()
 
-    # If median daily volume <= 1000, skip this check
+    # If median daily volume <= 1000, this isn't a liquid name — skip
     if median_daily_volume <= 1000:
-        result = CheckResult(
+        return CheckResult(
             check_name="zero_volume_liquid",
             passed=True,
             message=f"Skipped: Median daily volume {median_daily_volume:.0f} <= 1000",
-        )
-        return result, pd.Index([])
+        ), pd.Index([])
 
-    # Flag zero-volume bars during RTH
-    flagged_idx = []
-    for idx, row in df.iterrows():
-        if row["Volume"] == 0:
-            if _is_in_rth(pd.Timestamp(idx)):
-                flagged_idx.append(idx)
+    # Vectorized: find zero-volume bars
+    zero_vol = df["Volume"] == 0
+    if zero_vol.sum() == 0:
+        return CheckResult(
+            check_name="zero_volume_liquid",
+            passed=True,
+            flagged_count=0,
+            message=f"No zero-volume bars (median daily volume: {median_daily_volume:.0f})",
+            details={"median_daily_volume": float(median_daily_volume)},
+        ), pd.Index([])
+
+    # Vectorized RTH time-of-day check (data should already be RTH-filtered
+    # by the pipeline, but verify anyway)
+    market_open = datetime.strptime(MARKET_OPEN, "%H:%M").time()
+    market_close = datetime.strptime(MARKET_CLOSE, "%H:%M").time()
+    times = df.index.time
+    in_rth = np.array([(market_open <= t < market_close) for t in times])
+
+    flagged_mask = zero_vol.values & in_rth
+    flagged_idx = df.index[flagged_mask]
 
     result = CheckResult(
         check_name="zero_volume_liquid",
@@ -436,7 +470,7 @@ def _check_zero_volume_liquid(df: pd.DataFrame) -> Tuple[CheckResult, pd.Index]:
         details={"median_daily_volume": float(median_daily_volume)},
     )
 
-    return result, pd.Index(flagged_idx)
+    return result, flagged_idx
 
 
 # ============================================================================
@@ -750,34 +784,125 @@ def quarantine_ticker(
     timeframe: str,
     cache_dir: Path,
     reason: str,
+    source_path: Optional[Path] = None,
 ) -> Path:
     """
-    Move bad data to quarantine directory.
+    Move bad data to quarantine directory and log the event.
+
+    Quarantined files are moved (not copied) to ``cache_dir/quarantine/``.
+    An append-only ``quarantine_log.json`` records every quarantine event
+    for audit purposes.
 
     Args:
-        ticker: Ticker symbol
-        timeframe: Timeframe (e.g., '1m', '5m')
-        cache_dir: Cache directory path
-        reason: Reason for quarantine
+        ticker: Ticker symbol.
+        timeframe: Timeframe (e.g., ``'1m'``, ``'5m'``).
+        cache_dir: Cache directory path (quarantine subdir created inside).
+        reason: Human-readable reason for quarantine.
+        source_path: Optional path to the data file to move into quarantine.
 
     Returns:
-        Path to quarantine directory
+        Path to the quarantine directory.
     """
     quarantine_dir = Path(cache_dir) / "quarantine"
     quarantine_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create ticker-specific quarantine file
-    qfile = quarantine_dir / f"{ticker}_{timeframe}_quarantined.txt"
+    now = datetime.now(timezone.utc)
 
-    with open(qfile, "w") as f:
-        f.write(f"Timestamp: {datetime.utcnow().isoformat()}\n")
-        f.write(f"Ticker: {ticker}\n")
-        f.write(f"Timeframe: {timeframe}\n")
-        f.write(f"Reason: {reason}\n")
+    # Move source file (and sidecars) to quarantine if provided
+    moved_files = []
+    if source_path is not None and Path(source_path).exists():
+        src = Path(source_path)
+        dest = quarantine_dir / src.name
+        try:
+            shutil.move(str(src), str(dest))
+            moved_files.append(str(dest))
+        except OSError as exc:
+            logger.error("Failed to move %s to quarantine: %s", src, exc)
 
-    logger.warning(f"Quarantined {ticker} {timeframe}: {reason}")
+        # Move associated sidecars (.meta.json, .quality.json)
+        for suffix in (".meta.json", ".quality.json"):
+            sidecar = src.with_suffix(suffix)
+            if sidecar.exists():
+                try:
+                    shutil.move(str(sidecar), str(quarantine_dir / sidecar.name))
+                    moved_files.append(str(quarantine_dir / sidecar.name))
+                except OSError as exc:
+                    logger.error("Failed to move sidecar %s: %s", sidecar, exc)
+
+    # Append to quarantine log (append-only, human-readable JSON-lines)
+    log_entry = {
+        "timestamp": now.isoformat(),
+        "ticker": ticker.upper(),
+        "timeframe": timeframe,
+        "reason": reason,
+        "moved_files": moved_files,
+    }
+
+    log_path = quarantine_dir / "quarantine_log.json"
+    _append_to_quarantine_log(log_path, log_entry)
+
+    logger.warning("Quarantined %s %s: %s", ticker, timeframe, reason)
 
     return quarantine_dir
+
+
+def _append_to_quarantine_log(log_path: Path, entry: dict) -> None:
+    """
+    Append an entry to the quarantine log.
+
+    The log is stored as a JSON array. On first write, the file is created
+    with an initial array. Subsequent writes append to the array.  This is
+    kept simple (read-all, append, write-all) because quarantine events are
+    rare and the log stays small.
+    """
+    log_path = Path(log_path)
+    entries: List[dict] = []
+
+    if log_path.exists():
+        try:
+            with open(log_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            if isinstance(raw, list):
+                entries = raw
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Could not read quarantine log, starting fresh: %s", exc)
+
+    entries.append(entry)
+
+    try:
+        with open(log_path, "w", encoding="utf-8") as f:
+            json.dump(entries, f, indent=2, default=str)
+    except OSError as exc:
+        logger.error("Failed to write quarantine log: %s", exc)
+
+
+def list_quarantined(cache_dir: Path) -> List[Dict[str, object]]:
+    """
+    Return the current quarantine inventory.
+
+    Reads the append-only ``quarantine_log.json`` and returns the list of
+    all quarantine events, most recent first.
+
+    Args:
+        cache_dir: Cache directory containing the ``quarantine/`` subdirectory.
+
+    Returns:
+        List of quarantine log entries (dicts), newest first.
+        Empty list if no quarantines have occurred.
+    """
+    log_path = Path(cache_dir) / "quarantine" / "quarantine_log.json"
+    if not log_path.exists():
+        return []
+
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            entries = json.load(f)
+        if isinstance(entries, list):
+            return list(reversed(entries))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Could not read quarantine log: %s", exc)
+
+    return []
 
 
 # ============================================================================
@@ -785,47 +910,66 @@ def quarantine_ticker(
 # ============================================================================
 
 
-def write_quality_report(path: Path, report: IntradayQualityReport) -> None:
-    """Write quality report to JSON sidecar file."""
+class _NumpyEncoder(json.JSONEncoder):
+    """JSON encoder that handles numpy types and pandas Timestamps."""
+
+    def default(self, obj):
+        if isinstance(obj, (np.bool_,)):
+            return bool(obj)
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, pd.Timestamp):
+            return obj.isoformat()
+        return super().default(obj)
+
+
+def write_quality_report(
+    path: Path,
+    report: Union[IntradayQualityReport, dict],
+) -> None:
+    """
+    Write quality report to JSON sidecar file.
+
+    Accepts either an ``IntradayQualityReport`` dataclass or a plain dict.
+    When a dataclass is provided, its ``CheckResult`` members are serialized
+    to dicts automatically.
+
+    Args:
+        path: Destination ``.quality.json`` path.
+        report: Quality report (dataclass or dict).
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    report_dict = asdict(report)
-    # Convert CheckResult dataclasses to dicts
-    report_dict["checks"] = [asdict(c) for c in report.checks]
+    if isinstance(report, dict):
+        report_dict = report
+    else:
+        report_dict = asdict(report)
+        # Convert CheckResult dataclasses to dicts
+        report_dict["checks"] = [asdict(c) for c in report.checks]
 
-    # numpy types (np.bool_, np.int64, np.float64) aren't JSON serializable
-    # by default, so we use a custom encoder.
-    class _NumpyEncoder(json.JSONEncoder):
-        def default(self, obj):
-            if isinstance(obj, (np.bool_,)):
-                return bool(obj)
-            if isinstance(obj, (np.integer,)):
-                return int(obj)
-            if isinstance(obj, (np.floating,)):
-                return float(obj)
-            if isinstance(obj, np.ndarray):
-                return obj.tolist()
-            return super().default(obj)
-
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(report_dict, f, indent=2, cls=_NumpyEncoder)
 
-    logger.info(f"Wrote quality report to {path}")
+    logger.info("Wrote quality report to %s", path)
 
 
-def read_quality_report(path: Path) -> IntradayQualityReport:
-    """Read quality report from JSON sidecar file."""
-    with open(path, "r") as f:
+def read_quality_report(path: Path) -> dict:
+    """
+    Read quality report from JSON sidecar file.
+
+    Returns:
+        Report as a plain dict (keys match the ``IntradayQualityReport`` fields).
+        Callers that need a dataclass can reconstruct via
+        ``IntradayQualityReport(**data)`` after popping ``checks``.
+    """
+    with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
-
-    # Reconstruct CheckResult objects
-    checks = [CheckResult(**c) for c in data.pop("checks", [])]
-
-    report = IntradayQualityReport(**data)
-    report.checks = checks
-
-    return report
+    return data
 
 
 # ============================================================================
@@ -872,7 +1016,7 @@ def validate_intraday_bars(
         ticker=ticker,
         timeframe=timeframe,
         source=source,
-        timestamp=datetime.utcnow().isoformat(),
+        timestamp=datetime.now(timezone.utc).isoformat(),
         total_bars_input=len(df),
         date_range=date_range,
     )

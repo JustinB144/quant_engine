@@ -600,11 +600,13 @@ class CrossSourceValidator:
                     if isinstance(ibkr_row, pd.DataFrame):
                         ibkr_row = ibkr_row.iloc[0]
 
-                    # Create new row
-                    new_row = pd.Series(dtype=corrected_df.dtypes)
-                    for col in ["Open", "High", "Low", "Close", "Volume"]:
-                        if col in corrected_df.columns and col in ibkr_row.index:
-                            new_row[col] = ibkr_row[col]
+                    # Create new row matching the DataFrame's column dtypes
+                    new_row = pd.Series(
+                        {col: ibkr_row[col]
+                         for col in ["Open", "High", "Low", "Close", "Volume"]
+                         if col in corrected_df.columns and col in ibkr_row.index},
+                        dtype=float,
+                    )
 
                     # Insert at correct position
                     corrected_df = pd.concat([
