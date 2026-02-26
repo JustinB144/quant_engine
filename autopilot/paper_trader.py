@@ -376,9 +376,16 @@ class PaperTrader:
         ticker: str,
         as_of: pd.Timestamp,
         price_data: Dict[str, pd.DataFrame],
+        signal_uncertainty: Optional[float] = None,
+        regime_entropy: Optional[float] = None,
+        drift_score: Optional[float] = None,
     ) -> float:
         """
-        Compute entry size percentage. Uses bounded fractional-Kelly when enabled.
+        Compute entry size percentage using the unified PositionSizer.
+
+        Delegates sizing to the persistent PositionSizer instance for
+        consistency with all budget constraints, uncertainty scaling, and
+        regime-conditional blend weights.
         """
         base = float(max(0.001, base_position_size_pct))
         if not self.use_kelly_sizing:
@@ -387,32 +394,65 @@ class PaperTrader:
         min_size = max(0.001, base * self.kelly_min_mult)
         max_size = max(min_size, min(0.25, base * self.kelly_max_mult))
 
-        trade_stats = self._historical_trade_stats(state, strategy_id)
         market = self._market_risk_stats(ticker, as_of, price_data)
         if market is None:
             return base
 
-        sizer = PositionSizer(
-            max_position_pct=max_size,
-            min_position_pct=min_size,
-            kelly_fraction=self.kelly_fraction,
-        )
-        ps = sizer.size_position(
+        # Build kelly_history from recent trade returns
+        all_trades = state.get("trades", [])
+        strat_trades = [t for t in all_trades if str(t.get("strategy_id")) == str(strategy_id)]
+        trades = strat_trades if len(strat_trades) >= 20 else all_trades
+        trades = trades[-self.kelly_lookback_trades:]
+        kelly_history = []
+        for t in trades:
+            r = self._trade_return(t)
+            if r is not None and np.isfinite(r):
+                kelly_history.append(float(r))
+
+        # Compute current equity and existing positions
+        current_equity = self._mark_to_market(state, as_of, price_data)
+        current_positions: Dict[str, float] = {}
+        for existing_pos in state.get("positions", []):
+            pos_id = self._position_id(existing_pos)
+            pos_px = self._current_price(pos_id, as_of, price_data)
+            if pos_px is not None:
+                current_positions[pos_id] = float(existing_pos["shares"]) * pos_px
+
+        # Configure persistent sizer bounds for this call
+        self._persistent_sizer.max_position = max_size
+        self._persistent_sizer.min_position = min_size
+        self._persistent_sizer.kelly_frac = self.kelly_fraction
+
+        dd_ratio = float(self._dd_controller.update(0.0).current_drawdown) if hasattr(self, '_dd_controller') else 0.0
+        # Use the last actual dd status rather than re-updating
+        if hasattr(self._dd_controller, 'current_equity') and hasattr(self._dd_controller, 'peak_equity'):
+            peak = self._dd_controller.peak_equity
+            curr = self._dd_controller.current_equity
+            if peak > 1e-12:
+                dd_ratio = (curr - peak) / peak
+
+        sized = self._persistent_sizer.size_position_paper_trader(
             ticker=ticker,
-            win_rate=float(trade_stats[0]),
-            avg_win=float(trade_stats[1]),
-            avg_loss=float(trade_stats[2]),
-            realized_vol=float(market["realized_vol"]),
+            kelly_history=kelly_history,
             atr=float(market["atr"]),
+            realized_vol=float(market["realized_vol"]),
             price=float(market["price"]),
-            holding_days=max(1, int(max_holding_days)),
+            regime_state=self._dd_controller.state.value.upper() if hasattr(self._dd_controller, 'state') else "NORMAL",
+            dd_ratio=dd_ratio,
             confidence=float(np.clip(confidence, 0.0, 1.0)),
+            holding_days=max(1, int(max_holding_days)),
             n_current_positions=len(state.get("positions", [])),
             max_positions=self.max_total_positions,
+            portfolio_equity=max(current_equity, 1.0),
+            current_positions=current_positions,
+            signal_uncertainty=signal_uncertainty,
+            regime_entropy=regime_entropy,
+            drift_score=drift_score,
         )
 
+        # Apply regime risk multiplier
         regime_mult = float(REGIME_RISK_MULTIPLIER.get(int(regime), 1.0))
-        sized = float(ps.final_size) * regime_mult
+        sized = float(sized) * regime_mult
         return float(np.clip(sized, 0.001, max_size))
 
     def run_cycle(
@@ -699,6 +739,11 @@ class PaperTrader:
                                 or pred_confidence <= eff_confidence_threshold):
                             continue
 
+                    # Extract uncertainty inputs if present in prediction row
+                    sig_unc = float(row.get("signal_uncertainty", np.nan))
+                    reg_ent = float(row.get("regime_entropy", np.nan))
+                    drft_sc = float(row.get("drift_score", np.nan))
+
                     position_size_pct = self._position_size_pct(
                         state=state,
                         strategy_id=sid,
@@ -709,6 +754,9 @@ class PaperTrader:
                         ticker=permno,
                         as_of=as_of,
                         price_data=price_data,
+                        signal_uncertainty=sig_unc if np.isfinite(sig_unc) else None,
+                        regime_entropy=reg_ent if np.isfinite(reg_ent) else None,
+                        drift_score=drft_sc if np.isfinite(drft_sc) else None,
                     )
 
                     # ── Confidence-weighted position sizing ──
