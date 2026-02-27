@@ -23,6 +23,10 @@ Usage:
     python3 -u scripts/alpaca_intraday_download.py --years 10               # 10 years of history
     python3 -u scripts/alpaca_intraday_download.py --validate-ibkr          # cross-check with IBKR
     python3 -u scripts/alpaca_intraday_download.py --dry-run                # survey only
+    python3 -u scripts/alpaca_intraday_download.py --source alphavantage    # use AV as primary
+    python3 -u scripts/alpaca_intraday_download.py --quarantine-report      # show quarantine log
+    python3 -u scripts/alpaca_intraday_download.py --revalidate             # re-validate existing
+    python3 -u scripts/alpaca_intraday_download.py --skip-validation        # skip IBKR validation
 """
 
 import argparse
@@ -118,6 +122,37 @@ except Exception as _qe:
     _QUALITY_MODULES_AVAILABLE = False
     print(f"  WARNING: Quality modules not importable ({_qe}). "
           f"Falling back to basic checks.")
+
+# ── Import provider classes (Spec 11 T5) ────────────────────────────────────
+_AlpacaProvider = None
+_AlphaVantageProvider = None
+_list_quarantined = None
+try:
+    _prov_path = _QE_ROOT / "data" / "providers"
+    if (_prov_path / "alpaca_provider.py").exists():
+        _ap_spec = _ilu.spec_from_file_location(
+            "alpaca_provider", _prov_path / "alpaca_provider.py"
+        )
+        _ap_mod = _ilu.module_from_spec(_ap_spec)
+        _ap_spec.loader.exec_module(_ap_mod)
+        _AlpacaProvider = _ap_mod.AlpacaProvider
+
+    if (_prov_path / "alpha_vantage_provider.py").exists():
+        _av_spec = _ilu.spec_from_file_location(
+            "alpha_vantage_provider", _prov_path / "alpha_vantage_provider.py"
+        )
+        _av_mod = _ilu.module_from_spec(_av_spec)
+        _av_mod.requests = __import__("requests")
+        _av_spec.loader.exec_module(_av_mod)
+        _AlphaVantageProvider = _av_mod.AlphaVantageProvider
+except Exception:
+    pass
+
+try:
+    if _QUALITY_MODULES_AVAILABLE:
+        _list_quarantined = _iq_mod.list_quarantined
+except Exception:
+    pass
 
 # ── Timeframe configuration ──────────────────────────────────────────────────
 # Alpaca TimeFrame strings
@@ -345,6 +380,115 @@ def download_alpaca_chunked(
             print(f" [filtered {dropped} ext-hrs bars]", end="", flush=True)
 
     return combined if len(combined) > 0 else None
+
+
+# ── Provider-based download with fallback cascade (Spec 11 T5) ───────────
+
+def download_with_fallback(
+    ticker: str,
+    timeframe: str,
+    target_days: int,
+    source: str = "alpaca",
+    fallback_source: Optional[str] = None,
+    alpaca_provider=None,
+    av_provider=None,
+    ib=None,
+    rate_limiter: Optional["RateLimiter"] = None,
+    pace: float = 0.35,
+    alpaca_client=None,
+) -> Tuple[Optional[pd.DataFrame], str]:
+    """
+    Download intraday data with provider fallback cascade.
+
+    Tries the primary source first, then falls back to secondary/tertiary
+    sources if the primary fails.
+
+    Returns:
+        (DataFrame or None, source_name used)
+    """
+    source_order = [source]
+    if fallback_source and fallback_source != source:
+        source_order.append(fallback_source)
+    # Add remaining sources as tertiary
+    all_sources = ["alpaca", "alphavantage", "ibkr"]
+    for s in all_sources:
+        if s not in source_order:
+            source_order.append(s)
+
+    from datetime import datetime as _dt_cls
+    end_year = _dt_cls.now().year
+    start_year = end_year - int(target_days / 365) - 1
+
+    for src in source_order:
+        df = None
+        try:
+            if src == "alpaca":
+                if alpaca_provider is not None:
+                    df = alpaca_provider.fetch_range(ticker, timeframe, target_days)
+                elif alpaca_client is not None:
+                    df = download_alpaca_chunked(
+                        alpaca_client, ticker, timeframe, target_days,
+                        pace=pace, rate_limiter=rate_limiter,
+                    )
+            elif src == "alphavantage":
+                if av_provider is not None:
+                    df = av_provider.fetch_range(
+                        ticker, timeframe,
+                        start_year=start_year, end_year=end_year,
+                    )
+            elif src == "ibkr":
+                if ib is not None and ib.isConnected():
+                    df = _download_ibkr_full(ib, ticker, timeframe, target_days)
+        except Exception as e:
+            print(f" [{src} failed: {e}]", end="", flush=True)
+            continue
+
+        if df is not None and len(df) > 0:
+            return df, src
+
+    return None, "none"
+
+
+def _download_ibkr_full(ib, ticker: str, timeframe: str, target_days: int) -> Optional[pd.DataFrame]:
+    """Download full history from IBKR as tertiary fallback."""
+    try:
+        from ib_insync import Stock, util
+        import datetime as _dt
+
+        contract = Stock(ticker, "SMART", "USD")
+        ib.qualifyContracts(contract)
+
+        # Map timeframe to IBKR duration/barSize
+        ibkr_bar_map = {
+            "1m": "1 min", "5m": "5 mins", "15m": "15 mins",
+            "30m": "30 mins", "1h": "1 hour", "4h": "4 hours",
+        }
+        bar_size = ibkr_bar_map.get(timeframe, "1 hour")
+        duration = f"{min(target_days, 365)} D"
+
+        bars = ib.reqHistoricalData(
+            contract, endDateTime="",
+            durationStr=duration, barSizeSetting=bar_size,
+            whatToShow="TRADES", useRTH=True,
+        )
+        if not bars:
+            return None
+
+        df = util.df(bars)
+        if df is None or len(df) == 0:
+            return None
+
+        df = df.rename(columns={
+            "open": "Open", "high": "High", "low": "Low",
+            "close": "Close", "volume": "Volume", "date": "Date",
+        })
+        if "Date" in df.columns:
+            df.index = pd.to_datetime(df["Date"])
+            df = df.drop(columns=["Date"], errors="ignore")
+        df = df[["Open", "High", "Low", "Close", "Volume"]]
+        return df
+    except Exception:
+        return None
 
 
 # ── IBKR Cross-Source Validation ─────────────────────────────────────────────
@@ -583,24 +727,81 @@ def main():
         "--ibkr-client-id", type=int, default=22,
         help="IBKR client ID for validation/gap-fill (default: 22, distinct from main downloader)",
     )
+    # ── New CLI flags (Spec 11 T5) ──
+    parser.add_argument(
+        "--source", choices=["alpaca", "alphavantage", "ibkr"], default="alpaca",
+        help="Primary download source (default: alpaca)",
+    )
+    parser.add_argument(
+        "--fallback-source", choices=["alpaca", "alphavantage", "ibkr"], default=None,
+        help="Secondary fallback source if primary fails (default: next in cascade)",
+    )
+    parser.add_argument(
+        "--skip-validation", action="store_true",
+        help="Skip IBKR cross-validation (NOT recommended for production)",
+    )
+    parser.add_argument(
+        "--quarantine-report", action="store_true",
+        help="Print quarantine summary and exit (no downloads)",
+    )
+    parser.add_argument(
+        "--revalidate", action="store_true",
+        help="Re-run validation pipeline on existing cache files (no new downloads)",
+    )
+    parser.add_argument(
+        "--tolerance", type=float, default=None,
+        help="Override close price tolerance %% for IBKR validation (default: config value)",
+    )
     args = parser.parse_args()
+
+    # ── Quarantine report mode (Spec 11 T5) ──
+    if args.quarantine_report:
+        cache_dir = DATA_CACHE_DIR
+        if _list_quarantined is not None:
+            entries = _list_quarantined(cache_dir)
+            if not entries:
+                print("  No quarantined tickers.")
+            else:
+                print(f"  Quarantine log ({len(entries)} entries):\n")
+                for e in entries[:50]:
+                    print(f"    {e.get('ticker', '?'):>6s} "
+                          f"{e.get('timeframe', '?'):>4s}  "
+                          f"{e.get('reason', '?')[:60]}  "
+                          f"({e.get('timestamp', '?')})")
+                if len(entries) > 50:
+                    print(f"    ... and {len(entries) - 50} more")
+        else:
+            qdir = cache_dir / "quarantine"
+            if qdir.exists():
+                files = list(qdir.glob("*.parquet"))
+                print(f"  Quarantine dir: {qdir} ({len(files)} files)")
+                for f in files[:20]:
+                    print(f"    {f.name}")
+            else:
+                print("  No quarantine directory found.")
+        return
 
     # Resolve API credentials
     api_key = args.api_key or os.environ.get("ALPACA_API_KEY", "")
     api_secret = args.api_secret or os.environ.get("ALPACA_API_SECRET", "")
+    av_api_key = os.environ.get("ALPHA_VANTAGE_API_KEY", "")
 
     all_timeframes = ["1m", "5m", "15m", "30m", "1h", "4h"]
     timeframes = args.timeframes or all_timeframes
     tickers = [t.upper() for t in (args.tickers or UNIVERSE_INTRADAY)]
 
-    # Allow --dry-run without API keys (survey only)
-    if not api_key or not api_secret:
-        if not args.dry_run:
-            print("\n  ERROR: Alpaca API credentials required.")
-            print("  Set ALPACA_API_KEY and ALPACA_API_SECRET environment variables,")
-            print("  or use --api-key and --api-secret flags.")
-            print("  Sign up free at: https://app.alpaca.markets/signup")
-            sys.exit(1)
+    # Allow --dry-run / --revalidate without API keys
+    needs_download = not args.dry_run and not args.revalidate
+    if needs_download and args.source == "alpaca" and (not api_key or not api_secret):
+        print("\n  ERROR: Alpaca API credentials required.")
+        print("  Set ALPACA_API_KEY and ALPACA_API_SECRET environment variables,")
+        print("  or use --api-key and --api-secret flags.")
+        print("  Sign up free at: https://app.alpaca.markets/signup")
+        sys.exit(1)
+    if needs_download and args.source == "alphavantage" and not av_api_key:
+        print("\n  ERROR: Alpha Vantage API key required.")
+        print("  Set ALPHA_VANTAGE_API_KEY environment variable.")
+        sys.exit(1)
 
     print("=" * 70)
     print("  HYBRID INTRADAY DOWNLOADER — Alpaca + IBKR")
@@ -620,9 +821,17 @@ def main():
         print(f"  Workers:      {workers} concurrent (shared 190 req/min limiter)")
     else:
         print(f"  Pacing:       {args.pace:.2f}s between requests ({60 / max(args.pace, 0.01):.0f} req/min)")
-    print(f"  Primary:      Alpaca Markets (free tier)")
-    if args.validate_ibkr:
-        print(f"  Validation:   IBKR @ {args.ibkr_host}:{args.ibkr_port}")
+    print(f"  Primary:      {args.source}")
+    if args.fallback_source:
+        print(f"  Fallback:     {args.fallback_source}")
+    validate_ibkr = args.validate_ibkr and not args.skip_validation
+    close_tolerance = args.tolerance or getattr(_cfg, 'INTRADAY_CLOSE_TOLERANCE_PCT', 0.15)
+    if validate_ibkr:
+        print(f"  Validation:   IBKR @ {args.ibkr_host}:{args.ibkr_port} (tolerance={close_tolerance}%)")
+    if args.skip_validation:
+        print(f"  Validation:   SKIPPED (--skip-validation)")
+    if args.revalidate:
+        print(f"  Mode:         REVALIDATE (re-run QC on existing files)")
 
     # Survey
     survey = survey_intraday(cache_dir, tickers, timeframes)
@@ -650,13 +859,38 @@ def main():
         print("\n  [DRY RUN] No downloads performed.")
         return
 
-    # Build Alpaca client
-    client = _build_alpaca_client(api_key, api_secret)
-    print(f"\n  Alpaca client initialized")
+    # ── Build provider instances (Spec 11 T5) ──
+    alpaca_provider = None
+    av_provider = None
+    client = None
 
-    # Connect IBKR if needed
+    if api_key and api_secret:
+        if _AlpacaProvider is not None:
+            try:
+                alpaca_provider = _AlpacaProvider(api_key, api_secret, pace=args.pace)
+                print(f"\n  Alpaca provider initialized")
+            except Exception as e:
+                print(f"\n  Alpaca provider failed ({e}), falling back to inline client")
+        if alpaca_provider is None:
+            client = _build_alpaca_client(api_key, api_secret)
+            print(f"\n  Alpaca client initialized (inline)")
+
+    if av_api_key and _AlphaVantageProvider is not None:
+        try:
+            av_provider = _AlphaVantageProvider(av_api_key)
+            print(f"  Alpha Vantage provider initialized")
+        except Exception as e:
+            print(f"  Alpha Vantage provider failed: {e}")
+
+    # Connect IBKR if needed (for validation or as source/fallback)
     ib = None
-    if args.validate_ibkr:
+    need_ibkr = (
+        validate_ibkr
+        or args.source == "ibkr"
+        or args.fallback_source == "ibkr"
+        or args.revalidate
+    )
+    if need_ibkr:
         try:
             from ib_insync import IB
             ib = IB()
@@ -665,6 +899,39 @@ def main():
         except Exception as e:
             print(f"  IBKR connection failed: {e} — skipping validation/gap-fill")
             ib = None
+
+    # ── Revalidate mode (Spec 11 T5): re-run QC on existing files ──
+    if args.revalidate:
+        print(f"\n  REVALIDATE mode: re-running quality checks on existing files")
+        reval_ok = 0
+        reval_fail = 0
+        for tf in timeframes:
+            tf_word = TF_SUFFIX[tf]
+            for f in cache_dir.glob(f"*_{tf_word}_*.parquet"):
+                ticker_part = f.stem.split(f"_{tf_word}_")[0]
+                if tickers and ticker_part.upper() not in [t.upper() for t in tickers]:
+                    continue
+                try:
+                    df = pd.read_parquet(f)
+                    df = _normalize_ohlcv_columns(df)
+                    if not isinstance(df.index, pd.DatetimeIndex):
+                        df.index = pd.DatetimeIndex(pd.to_datetime(df.index, errors="coerce"))
+                    df, qc = quality_check(df, ticker_part, tf, "revalidate")
+                    status = "PASS" if qc["pass"] else f"FAIL ({qc['quality_score']:.2f})"
+                    if qc.get("quarantine"):
+                        status = f"QUARANTINE: {qc.get('quarantine_reason', '')}"
+                    print(f"    {ticker_part:>6s} {tf}: {status} ({len(df)} bars)")
+                    if qc["pass"]:
+                        reval_ok += 1
+                    else:
+                        reval_fail += 1
+                except Exception as e:
+                    print(f"    {ticker_part:>6s} {tf}: ERROR ({e})")
+                    reval_fail += 1
+        print(f"\n  Revalidation complete: {reval_ok} passed, {reval_fail} failed")
+        if ib and ib.isConnected():
+            ib.disconnect()
+        return
 
     total_success = 0
     total_failed = 0
@@ -686,18 +953,29 @@ def main():
         label = f"  [{index}/{total}]"
         parts = []  # Collect output parts, print at end
 
-        # ── Step 1: Download from Alpaca ──
-        df = download_alpaca_chunked(
-            client, ticker, tf, target_days,
-            pace=args.pace, rate_limiter=rate_limiter,
+        # ── Step 1: Download with fallback cascade (Spec 11 T5) ──
+        df, source = download_with_fallback(
+            ticker=ticker,
+            timeframe=tf,
+            target_days=target_days,
+            source=args.source,
+            fallback_source=args.fallback_source,
+            alpaca_provider=alpaca_provider,
+            av_provider=av_provider,
+            ib=ib,
+            rate_limiter=rate_limiter,
+            pace=args.pace,
+            alpaca_client=client,
         )
 
         if df is None or len(df) == 0:
             with print_lock:
-                print(f"{label} {ticker}... NO DATA")
+                print(f"{label} {ticker}... NO DATA (all sources failed)")
             return {"success": False}
 
-        source = "alpaca"
+        if source != args.source:
+            parts.append(f"[fallback:{source}]")
+
         val_report_dict = None
 
         # ── Step 2: Quality check (13-point gate) ──
@@ -718,19 +996,45 @@ def main():
                                  qc.get("quarantine_reason", "quality gate"))
             source = "alpaca:quarantined"
 
-        # ── Step 3: IBKR cross-validation (if enabled, sequential only) ──
-        if args.validate_ibkr and ib and ib.isConnected():
+        # ── Step 3: IBKR cross-validation (Spec 11 T5: default on, --skip-validation to disable) ──
+        if validate_ibkr and ib and ib.isConnected():
             df, val = validate_with_ibkr(ib, ticker, tf, df)
             val_report_dict = val
             if val["bars_replaced"] > 0 or val["bars_inserted"] > 0:
-                source = "alpaca+ibkr"
+                source = f"{source}+ibkr"
             if not val["valid"]:
                 parts.append(f"[IBKR: {val['price_mismatches']} mismatches/{val['checked_bars']} checked, "
                              f"rate={val['mismatch_rate']:.1%}, "
                              f"replaced={val['bars_replaced']}, inserted={val['bars_inserted']}]")
+
+                # High mismatch rate: full IBKR re-download (Spec 11 T5)
+                max_mismatch = getattr(_cfg, 'INTRADAY_MAX_MISMATCH_RATE_PCT', 5.0) / 100.0
+                if val["mismatch_rate"] > max_mismatch and ib and ib.isConnected():
+                    ibkr_df = _download_ibkr_full(ib, ticker, tf, target_days)
+                    if ibkr_df is not None and len(ibkr_df) > 0:
+                        df = ibkr_df
+                        source = "ibkr:full_redownload"
+                        parts.append(f"[IBKR re-download: {len(df)} bars]")
+
             elif val["checked_bars"] > 0:
                 parts.append(f"[IBKR OK: {val['checked_bars']} bars, "
                              f"replaced={val['bars_replaced']}, inserted={val['bars_inserted']}]")
+
+        # ── Step 3b: Second quality gate after replacements (Spec 11 T5) ──
+        if val_report_dict and (val_report_dict.get("bars_replaced", 0) > 0
+                                or val_report_dict.get("bars_inserted", 0) > 0
+                                or source.startswith("ibkr:full")):
+            df, qc2 = quality_check(df, ticker, tf, source)
+            if not qc2["pass"]:
+                issue_summary2 = ', '.join(qc2['issues'][:2])
+                parts.append(f"[QC2 {qc2['quality_score']:.2f}: {issue_summary2}]")
+            if qc2.get("quarantine"):
+                parts.append(f"[QC2 QUARANTINED]")
+                if _QUALITY_MODULES_AVAILABLE:
+                    quarantine_dir = getattr(_cfg, 'INTRADAY_QUARANTINE_DIR',
+                                            DATA_CACHE_DIR / "quarantine")
+                    quarantine_ticker(ticker, tf, quarantine_dir,
+                                     f"post-replacement: {qc2.get('quarantine_reason', 'quality gate')}")
 
         # ── Step 4: Save ──
         try:
@@ -830,7 +1134,7 @@ def main():
         tf_failed = 0
 
         # Use concurrent workers when IBKR validation is off (IBKR is single-threaded)
-        effective_workers = 1 if (args.validate_ibkr and ib and ib.isConnected()) else workers
+        effective_workers = 1 if (validate_ibkr and ib and ib.isConnected()) else workers
 
         if effective_workers > 1:
             with ThreadPoolExecutor(max_workers=effective_workers) as executor:
@@ -887,7 +1191,7 @@ def main():
     print(f"  Success:          {total_success}")
     print(f"  Failed:           {total_failed}")
     print(f"  Quality issues:   {total_quality_issues}")
-    if args.validate_ibkr:
+    if validate_ibkr:
         print(f"  IBKR corrections: {total_ibkr_fills} bars replaced/inserted")
         print(f"  IBKR mismatches:  {total_ibkr_discrepancies} tickers flagged")
     print(f"  Elapsed:          {elapsed / 60:.1f} minutes")

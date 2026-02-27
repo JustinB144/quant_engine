@@ -359,6 +359,19 @@ class MetaLabelingModel:
         else:
             confidence = proba[:, 0]
 
+        # DEBUG: log feature importance for current prediction batch
+        if self.feature_importance_ and logger.isEnabledFor(logging.DEBUG):
+            top3 = sorted(
+                self.feature_importance_.items(),
+                key=lambda kv: kv[1],
+                reverse=True,
+            )[:3]
+            logger.debug(
+                "Meta-labeler predict: n=%d, top3_importance=%s",
+                len(meta_features),
+                [(k, f"{v:.3f}") for k, v in top3],
+            )
+
         return pd.Series(
             confidence, index=meta_features.index, name="meta_confidence"
         )

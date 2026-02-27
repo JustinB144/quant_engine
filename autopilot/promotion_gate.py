@@ -1,10 +1,13 @@
 """
 Promotion gate for deciding whether a discovered strategy is deployable.
 """
+import logging
 from dataclasses import dataclass, asdict
 from typing import Dict, List, Optional
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from ..backtest.engine import BacktestResult
 from ..config import (
@@ -345,6 +348,13 @@ class PromotionGate:
             fold_consistency = self._compute_fold_consistency(fold_metrics)
             score += self.weight_fold_consistency * fold_consistency
             metrics["fold_consistency"] = fold_consistency
+            logger.info(
+                "Fold consistency: %.3f (n_folds=%d, weight=%.2f, bonus=%.3f)",
+                fold_consistency,
+                len(fold_metrics),
+                self.weight_fold_consistency,
+                self.weight_fold_consistency * fold_consistency,
+            )
 
         return PromotionDecision(
             candidate=candidate,

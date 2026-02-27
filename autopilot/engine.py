@@ -671,6 +671,8 @@ class AutopilotEngine:
         n_before_ml = 0
         n_after_ml = 0
         ml_confidence_stats: Optional[Dict[str, float]] = None
+        n_before_topk_final = n_before_topk
+        n_after_topk_final = n_after_topk
         if (
             META_LABELING_ENABLED
             and self.meta_labeler.is_trained
@@ -684,11 +686,32 @@ class AutopilotEngine:
                 predictions = ml_preds
                 n_after_ml = int((predictions["predicted_return"].abs() > 1e-8).sum())
                 ml_confidence_stats = ml_stats
+                filtered_pct = (
+                    100.0 * (n_before_ml - n_after_ml) / n_before_ml
+                    if n_before_ml > 0
+                    else 0.0
+                )
                 self._log(
                     f"    Meta-labeling filter: "
-                    f"signals {n_before_ml} -> {n_after_ml}, "
-                    f"median_conf={ml_stats.get('p50', 0):.3f}"
+                    f"signals {n_before_ml} -> {n_after_ml} "
+                    f"({filtered_pct:.1f}% filtered), "
+                    f"conf min={ml_stats.get('min', 0):.3f} "
+                    f"p10={ml_stats.get('p10', 0):.3f} "
+                    f"p50={ml_stats.get('p50', 0):.3f} "
+                    f"p90={ml_stats.get('p90', 0):.3f} "
+                    f"max={ml_stats.get('max', 0):.3f}"
                 )
+                # DEBUG: top-3 signal z-scores before/after (Spec 04 T7)
+                if "cs_zscore" in predictions.columns:
+                    active_mask = predictions["predicted_return"].abs() > 1e-8
+                    top3 = (
+                        predictions.loc[active_mask, "cs_zscore"]
+                        .nlargest(3)
+                    )
+                    logger.debug(
+                        "Top-3 signal z-scores after filtering: %s",
+                        [(f"{idx}", f"{v:.3f}") for idx, v in top3.items()],
+                    )
             except Exception as exc:
                 # Fail-open: if meta-labeling errors, skip filtering
                 logger.warning(
@@ -924,6 +947,11 @@ class AutopilotEngine:
                 contract_metrics["cpcv_mean_corr"] = float(cpcv_result.mean_test_corr)
             decisions.append(self.gate.evaluate(c, result, contract_metrics=contract_metrics))
 
+        # Store meta-labeling stats for cycle report (Spec 04 T7)
+        self._last_ml_confidence_stats = ml_confidence_stats
+        self._last_topk_counts = (n_before_topk_final, n_after_topk_final)
+        self._last_ml_counts = (n_before_ml, n_after_ml)
+
         return decisions
 
     # ── Regime stats update (SPEC-P01) ────────────────────────────────
@@ -1152,6 +1180,13 @@ class AutopilotEngine:
             return False
 
         try:
+            logger.debug(
+                "Meta-labeler retrain: %d samples, %d permnos",
+                len(combined_signals),
+                combined_signals.index.get_level_values(0).nunique()
+                if hasattr(combined_signals.index, "get_level_values")
+                else 1,
+            )
             meta_feats = MetaLabelingModel.build_meta_features(
                 signals=combined_signals,
                 returns=combined_returns,
@@ -1161,13 +1196,52 @@ class AutopilotEngine:
                 signals=combined_signals,
                 actuals=combined_actuals,
             )
+
+            # Capture old model accuracy before retraining (Spec 04 T6)
+            old_val_acc = None
+            old_importance = None
+            if self.meta_labeler.is_trained:
+                try:
+                    old_conf = self.meta_labeler.predict_confidence(meta_feats)
+                    old_preds = (old_conf >= META_LABELING_CONFIDENCE_THRESHOLD).astype(int)
+                    aligned = labels.reindex(old_preds.index)
+                    valid_mask = aligned.notna()
+                    if valid_mask.sum() > 0:
+                        old_val_acc = float(
+                            (old_preds[valid_mask] == aligned[valid_mask]).mean()
+                        )
+                    old_importance = dict(self.meta_labeler.feature_importance_ or {})
+                except Exception:
+                    pass  # old model evaluation failed; proceed with retrain
+
             metrics = self.meta_labeler.train(meta_feats, labels)
             self.meta_labeler.save()
+
+            # Log old vs new comparison (Spec 04 T6)
+            acc_delta = ""
+            if old_val_acc is not None:
+                new_val_acc = metrics.get("val_accuracy", 0)
+                acc_delta = (
+                    f", old_acc={old_val_acc:.3f}, "
+                    f"delta={new_val_acc - old_val_acc:+.3f}"
+                )
+            imp_delta = ""
+            if old_importance and self.meta_labeler.feature_importance_:
+                new_imp = self.meta_labeler.feature_importance_
+                changed = [
+                    f"{k}: {old_importance.get(k, 0):.3f}->{v:.3f}"
+                    for k, v in sorted(
+                        new_imp.items(), key=lambda x: x[1], reverse=True
+                    )[:3]
+                ]
+                imp_delta = f", top3_imp=[{', '.join(changed)}]"
+
             self._log(
                 f"  Meta-labeler retrained: "
                 f"n={metrics.get('n_samples', 0):.0f}, "
                 f"train_acc={metrics.get('train_accuracy', 0):.3f}, "
                 f"val_acc={metrics.get('val_accuracy', 0):.3f}"
+                f"{acc_delta}{imp_delta}"
             )
             return True
         except (RuntimeError, ValueError, ImportError) as exc:
@@ -1714,6 +1788,32 @@ class AutopilotEngine:
             "meta_labeling_retrained": meta_retrained,
             "signal_topk_quantile": SIGNAL_TOPK_QUANTILE,
         }
+
+        # Structured meta-labeling stats for analysis (Spec 04 T7)
+        ml_stats = getattr(self, "_last_ml_confidence_stats", None)
+        topk_counts = getattr(self, "_last_topk_counts", (0, 0))
+        ml_counts = getattr(self, "_last_ml_counts", (0, 0))
+        if META_LABELING_ENABLED:
+            report["meta_labeling_stats"] = {
+                "candidates_before_topk": topk_counts[0],
+                "candidates_after_topk": topk_counts[1],
+                "candidates_before_meta_labeling": ml_counts[0],
+                "candidates_after_meta_labeling": ml_counts[1],
+                "meta_labeling_confidences": ml_stats,
+            }
+            # Fold consistency summary from decisions
+            fc_scores = [
+                d.metrics.get("fold_consistency", 0.0)
+                for d in decisions
+                if "fold_consistency" in d.metrics
+            ]
+            if fc_scores:
+                report["meta_labeling_stats"]["fold_consistency_scores"] = {
+                    "mean": float(np.mean(fc_scores)),
+                    "std": float(np.std(fc_scores)),
+                    "min": float(min(fc_scores)),
+                    "max": float(max(fc_scores)),
+                }
 
         with open(self.report_path, "w") as f:
             json.dump(report, f, indent=2, default=str)
