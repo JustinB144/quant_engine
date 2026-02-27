@@ -264,6 +264,11 @@ class HealthConfig:
     cvar_threshold: float = -0.05
     ir_threshold: float = 0.5
 
+    # Ensemble disagreement tracking (SPEC-H02)
+    ensemble_disagreement_lookback: int = 20
+    ensemble_disagreement_warn_threshold: float = 0.015
+    ensemble_disagreement_critical_threshold: float = 0.03
+
 
 @dataclass
 class PaperTradingConfig:

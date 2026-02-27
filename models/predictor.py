@@ -243,6 +243,8 @@ class EnsemblePredictor:
         # ── Regime-specific predictions ──
         regime_pred = np.full(n, np.nan)
         blend_alpha = np.zeros(n)
+        # Collect individual member predictions for disagreement monitoring (SPEC-H02)
+        member_preds: dict[str, np.ndarray] = {"global": global_pred.copy()}
 
         if regime_probabilities is not None:
             # Mixture-of-experts blend across all regime models.
@@ -261,6 +263,9 @@ class EnsemblePredictor:
                 pred = model.predict(X_regime_scaled)
                 r_clip = 3 * self.regime_target_stds.get(code, self.global_target_std)
                 pred = np.clip(pred, -r_clip, r_clip)
+
+                # Store per-regime prediction for disagreement tracking (SPEC-H02)
+                member_preds[f"regime_{code}"] = pred.copy()
 
                 p_col = f"regime_prob_{code}"
                 if p_col in rp.columns:
@@ -295,6 +300,11 @@ class EnsemblePredictor:
                 r_clip = 3 * self.regime_target_stds.get(code, self.global_target_std)
                 pred = np.clip(pred, -r_clip, r_clip)
 
+                # Store per-regime prediction for disagreement tracking (SPEC-H02)
+                full_pred = np.full(n, np.nan)
+                full_pred[mask] = pred
+                member_preds[f"regime_{code}"] = full_pred
+
                 regime_pred[mask] = pred
                 reliability = self.regime_reliability.get(code, 0)
                 blend_alpha[mask] = regime_confidence[mask].values * reliability
@@ -302,6 +312,23 @@ class EnsemblePredictor:
         result["regime_prediction"] = regime_pred
         result["blend_alpha"] = blend_alpha
         result["regime"] = regimes.values
+
+        # ── Ensemble disagreement (SPEC-H02) ──
+        # Compute per-row std across all member predictions that are available.
+        # High disagreement indicates ensemble uncertainty.
+        if len(member_preds) >= 2:
+            pred_matrix = np.column_stack(list(member_preds.values()))
+            # Count finite values per row
+            finite_mask = np.isfinite(pred_matrix)
+            finite_count = finite_mask.sum(axis=1)
+            # Compute std only where >= 2 members have predictions
+            row_std = np.full(n, np.nan)
+            valid_rows = finite_count >= 2
+            if valid_rows.any():
+                row_std[valid_rows] = np.nanstd(pred_matrix[valid_rows], axis=1)
+            result["ensemble_disagreement"] = row_std
+        else:
+            result["ensemble_disagreement"] = np.full(n, 0.0)
 
         # ── Blended prediction ──
         # Where regime model exists: blend; otherwise: global only
@@ -389,6 +416,11 @@ class EnsemblePredictor:
         regime_2_mask = regime_vals == 2
         result["regime_suppressed"] = regime_2_mask
         result.loc[regime_2_mask, "confidence"] = 0.0
+
+        # Attach member predictions as DataFrame metadata for disagreement
+        # tracking (SPEC-H02).  Callers can access via result.attrs.
+        result.attrs["member_predictions"] = member_preds
+        result.attrs["n_ensemble_members"] = len(member_preds)
 
         return result
 

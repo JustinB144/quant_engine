@@ -1390,7 +1390,7 @@ assert LABEL_HORIZONS and all(h > 0 for h in LABEL_HORIZONS), "Invalid label hor
 
 ---
 
-## SPEC-H02: Add ensemble disagreement monitoring [MEDIUM]
+## SPEC-H02: Add ensemble disagreement monitoring [MEDIUM] ✅ COMPLETE
 
 **STATUS**: The ensemble predictor combines XGBoost, LightGBM, and regime-specific models. No monitoring of when members disagree.
 
@@ -1402,6 +1402,14 @@ disagreement = np.std([model_1_pred, model_2_pred, model_3_pred])
 Track this in health service. High disagreement = high uncertainty = signal unreliable.
 
 **FILES**: `models/predictor.py`, `api/services/health_service.py`
+
+**IMPLEMENTATION**:
+- `models/predictor.py`: Captures individual member predictions (global + regime models) and computes per-row `ensemble_disagreement` (std across members). Stored in result DataFrame and attrs.
+- `api/services/health_service.py`: Added SQLite-backed `disagreement_tracking.db` with `save_disagreement_snapshot()` / `get_disagreement_history()`. Enhanced `_check_ensemble_disagreement()` with rolling mean, trend detection, and tiered scoring (90/70/45/20). Falls back to static holdout_corr analysis when no tracking data.
+- `autopilot/engine.py`: Wired `_save_disagreement_to_health_tracking()` after prediction loop, following IC tracking pattern.
+- `config.py`: Added `ENSEMBLE_DISAGREEMENT_LOOKBACK=20`, `ENSEMBLE_DISAGREEMENT_WARN_THRESHOLD=0.015`, `ENSEMBLE_DISAGREEMENT_CRITICAL_THRESHOLD=0.03`.
+- `config_structured.py`: Added corresponding fields to `HealthConfig`.
+- 39 tests in `tests/test_health_ensemble_disagreement.py` covering storage, health checks, fallback, integration, predictor output, autopilot saving, and config.
 
 ---
 

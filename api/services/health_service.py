@@ -23,6 +23,20 @@ SPEC-H01 additions:
     - IC tracking across autopilot cycles (rolling mean + trend)
     - IC history persistence in SQLite (ic_tracking.db)
     - WARNING if rolling IC mean < 0.01, CRITICAL if IC < 0
+
+SPEC-H02 additions:
+    - Real-time ensemble disagreement monitoring (std of member predictions)
+    - Disagreement history persistence in SQLite (disagreement_tracking.db)
+    - Rolling mean disagreement with trend detection
+    - WARNING if mean disagreement > 0.015, CRITICAL if > 0.03
+    - Static holdout_corr fallback when no tracking data exists
+
+SPEC-H03 additions:
+    - Execution quality monitoring via cost surprise tracking
+    - Paper trade fill quality persistence in SQLite (exec_quality.db)
+    - Rolling cost surprise distribution (actual - predicted cost in bps)
+    - WARNING if mean cost surprise > 2 bps (model underestimates costs)
+    - CRITICAL if mean cost surprise > 5 bps
 """
 from __future__ import annotations
 
@@ -306,6 +320,7 @@ class HealthService:
         exec_checks = [
             self._check_execution_quality(),
             self._check_signal_profitability(),
+            self._check_cost_surprise(),
         ]
         for c in exec_checks:
             c.severity = "standard"
@@ -562,61 +577,224 @@ class HealthService:
             return _unavailable(name, domain, f"Error: {e}")
 
     def _check_ensemble_disagreement(self) -> HealthCheckResult:
-        """Check if ensemble regime models have informative and consistent quality."""
+        """Track ensemble member prediction disagreement over time (SPEC-H02).
+
+        Primary: reads from the disagreement_history database populated by
+        the autopilot engine after each prediction cycle.  Computes rolling
+        mean and trend of ensemble disagreement (std of member predictions).
+
+        Fallback: if no tracking history exists, falls back to static model
+        metadata analysis (holdout_corr spread across regime models).
+
+        Score mapping:
+            mean_disagreement <= low_thresh  -> 90 (PASS, ensemble aligned)
+            mean_disagreement <= warn_thresh -> 70 (PASS, moderate)
+            mean_disagreement <= crit_thresh -> 45 (WARN, high disagreement)
+            mean_disagreement >  crit_thresh -> 20 (FAIL, critical)
+        """
         domain = "signal_quality"
         name = "ensemble_disagreement"
         methodology = (
-            "Load regime model holdout_corr values from model metadata. "
-            "Check average quality (>0.02) and spread (<0.20) to ensure "
-            "ensemble members are both useful and consistent."
+            "Track per-prediction ensemble member disagreement (std of global "
+            "and regime model predictions) over time.  Low disagreement means "
+            "ensemble members agree on direction/magnitude.  High disagreement "
+            "indicates signal unreliability and increased uncertainty.  Falls "
+            "back to static holdout_corr analysis when no tracking data exists."
         )
-        thresholds = {"avg_corr_pass": 0.02, "spread_pass": 0.20}
+
         try:
-            from quant_engine.config import MODEL_DIR
-            meta_files = sorted(Path(MODEL_DIR).rglob("*_meta.json"), reverse=True)
-            if not meta_files:
-                return _unavailable(name, domain, "No model metadata found")
+            from quant_engine.config import (
+                ENSEMBLE_DISAGREEMENT_LOOKBACK,
+                ENSEMBLE_DISAGREEMENT_WARN_THRESHOLD,
+                ENSEMBLE_DISAGREEMENT_CRITICAL_THRESHOLD,
+            )
+        except ImportError:
+            ENSEMBLE_DISAGREEMENT_LOOKBACK = 20
+            ENSEMBLE_DISAGREEMENT_WARN_THRESHOLD = 0.015
+            ENSEMBLE_DISAGREEMENT_CRITICAL_THRESHOLD = 0.03
 
-            with open(meta_files[0], "r") as f:
-                meta = json.load(f)
+        low_threshold = ENSEMBLE_DISAGREEMENT_WARN_THRESHOLD * 0.5
+        thresholds = {
+            "low": round(low_threshold, 4),
+            "warn": ENSEMBLE_DISAGREEMENT_WARN_THRESHOLD,
+            "critical": ENSEMBLE_DISAGREEMENT_CRITICAL_THRESHOLD,
+        }
 
-            regime_models = meta.get("regime_models", {})
-            if not regime_models:
+        try:
+            # Primary: read from disagreement history database
+            history = self.get_disagreement_history(
+                limit=ENSEMBLE_DISAGREEMENT_LOOKBACK,
+            )
+            disagreement_values = [
+                h["mean_disagreement"] for h in history
+                if h["mean_disagreement"] is not None
+            ]
+
+            if disagreement_values:
+                d_arr = np.array(disagreement_values, dtype=float)
+                rolling_mean = float(np.mean(d_arr))
+                d_std = float(np.std(d_arr)) if len(d_arr) > 1 else 0.0
+
+                # Trend detection via linear regression
+                trend_label = "unknown"
+                trend_slope = 0.0
+                if len(d_arr) >= 3:
+                    x = np.arange(len(d_arr), dtype=float)
+                    coeffs = np.polyfit(x, d_arr, 1)
+                    trend_slope = float(coeffs[0])
+                    if trend_slope > 0.0005:
+                        trend_label = "increasing"
+                    elif trend_slope < -0.0005:
+                        trend_label = "decreasing"
+                    else:
+                        trend_label = "stable"
+
+                latest_pct_high = (
+                    history[-1].get("pct_high_disagreement", 0.0)
+                    if history else 0.0
+                )
+
+                raw = {
+                    "rolling_mean_disagreement": round(rolling_mean, 6),
+                    "disagreement_std": round(d_std, 6),
+                    "n_snapshots": len(disagreement_values),
+                    "trend": trend_label,
+                    "trend_slope": round(trend_slope, 6),
+                    "latest_disagreement": round(float(d_arr[-1]), 6),
+                    "latest_pct_high": round(float(latest_pct_high), 4),
+                    "n_members": history[-1].get("n_members", 0) if history else 0,
+                    "member_names": history[-1].get("member_names", []) if history else [],
+                    "disagreement_values": [round(float(v), 6) for v in d_arr],
+                }
+
+                # Scoring: lower disagreement is better
+                if rolling_mean <= low_threshold:
+                    return HealthCheckResult(
+                        name=name, domain=domain, score=90.0, status="PASS",
+                        explanation=(
+                            f"Ensemble well-aligned: mean disagreement="
+                            f"{rolling_mean:.4f} over {len(disagreement_values)} "
+                            f"cycles (trend: {trend_label})"
+                        ),
+                        methodology=methodology, raw_metrics=raw,
+                        thresholds=thresholds, raw_value=rolling_mean,
+                    )
+                if rolling_mean <= ENSEMBLE_DISAGREEMENT_WARN_THRESHOLD:
+                    return HealthCheckResult(
+                        name=name, domain=domain, score=70.0, status="PASS",
+                        explanation=(
+                            f"Moderate ensemble disagreement: mean="
+                            f"{rolling_mean:.4f} over {len(disagreement_values)} "
+                            f"cycles (trend: {trend_label})"
+                        ),
+                        methodology=methodology, raw_metrics=raw,
+                        thresholds=thresholds, raw_value=rolling_mean,
+                    )
+                if rolling_mean <= ENSEMBLE_DISAGREEMENT_CRITICAL_THRESHOLD:
+                    return HealthCheckResult(
+                        name=name, domain=domain, score=45.0, status="WARN",
+                        explanation=(
+                            f"High ensemble disagreement: mean="
+                            f"{rolling_mean:.4f} > {ENSEMBLE_DISAGREEMENT_WARN_THRESHOLD} "
+                            f"over {len(disagreement_values)} cycles "
+                            f"(trend: {trend_label}) — signal may be unreliable"
+                        ),
+                        methodology=methodology, raw_metrics=raw,
+                        thresholds=thresholds, raw_value=rolling_mean,
+                    )
                 return HealthCheckResult(
-                    name=name, domain=domain, score=60.0, status="WARN",
-                    explanation="Only global model — no regime ensemble",
-                    methodology=methodology, data_available=True)
+                    name=name, domain=domain, score=20.0, status="FAIL",
+                    explanation=(
+                        f"CRITICAL ensemble disagreement: mean="
+                        f"{rolling_mean:.4f} > {ENSEMBLE_DISAGREEMENT_CRITICAL_THRESHOLD} "
+                        f"over {len(disagreement_values)} cycles "
+                        f"(trend: {trend_label}) — ensemble unreliable"
+                    ),
+                    methodology=methodology, raw_metrics=raw,
+                    thresholds=thresholds, severity="critical",
+                    raw_value=rolling_mean,
+                )
 
-            holdout_corrs = [float(v.get("holdout_corr", 0)) for v in regime_models.values()
-                            if "holdout_corr" in v]
-            if not holdout_corrs:
-                return _unavailable(name, domain, "No holdout correlations for regime models")
-
-            spread = float(max(holdout_corrs) - min(holdout_corrs))
-            avg = float(np.mean(holdout_corrs))
-            raw = {"avg_holdout_corr": round(avg, 4), "spread": round(spread, 4),
-                   "n_regime_models": len(holdout_corrs),
-                   "per_regime": {k: round(float(v.get("holdout_corr", 0)), 4)
-                                  for k, v in regime_models.items()}}
-
-            if avg > 0.02 and spread < 0.20:
-                return HealthCheckResult(
-                    name=name, domain=domain, score=85.0, status="PASS",
-                    explanation=f"Ensemble consistent (spread={spread:.3f}, avg={avg:.3f})",
-                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
-            if avg > 0:
-                return HealthCheckResult(
-                    name=name, domain=domain, score=55.0, status="WARN",
-                    explanation=f"Ensemble divergent (spread={spread:.3f}, avg={avg:.3f})",
-                    methodology=methodology, raw_metrics=raw, thresholds=thresholds)
-            return HealthCheckResult(
-                name=name, domain=domain, score=25.0, status="FAIL",
-                explanation=f"Ensemble poor quality (avg holdout_corr={avg:.3f})",
-                methodology=methodology, raw_metrics=raw, thresholds=thresholds)
+            # Fallback: static model metadata analysis
+            return self._check_ensemble_disagreement_static_fallback(
+                name, domain, methodology, thresholds,
+            )
 
         except Exception as e:
             logger.warning("Health check '%s' failed: %s", name, e)
             return _unavailable(name, domain, f"Error: {e}")
+
+    def _check_ensemble_disagreement_static_fallback(
+        self,
+        name: str,
+        domain: str,
+        methodology: str,
+        thresholds: Dict[str, Any],
+    ) -> HealthCheckResult:
+        """Fallback: analyze static holdout_corr from model metadata.
+
+        Used when no prediction-level disagreement tracking data exists.
+        """
+        from quant_engine.config import MODEL_DIR
+        meta_files = sorted(Path(MODEL_DIR).rglob("*_meta.json"), reverse=True)
+        if not meta_files:
+            return _unavailable(name, domain, "No model metadata or tracking history found")
+
+        with open(meta_files[0], "r") as f:
+            meta = json.load(f)
+
+        regime_models = meta.get("regime_models", {})
+        if not regime_models:
+            return HealthCheckResult(
+                name=name, domain=domain, score=60.0, status="WARN",
+                explanation="Only global model — no regime ensemble to compare",
+                methodology=methodology + " (static fallback — no tracking data)",
+                data_available=True,
+            )
+
+        holdout_corrs = [
+            float(v.get("holdout_corr", 0)) for v in regime_models.values()
+            if "holdout_corr" in v
+        ]
+        if not holdout_corrs:
+            return _unavailable(
+                name, domain,
+                "No holdout correlations or tracking history",
+            )
+
+        spread = float(max(holdout_corrs) - min(holdout_corrs))
+        avg = float(np.mean(holdout_corrs))
+        raw = {
+            "avg_holdout_corr": round(avg, 4),
+            "spread": round(spread, 4),
+            "n_regime_models": len(holdout_corrs),
+            "per_regime": {
+                k: round(float(v.get("holdout_corr", 0)), 4)
+                for k, v in regime_models.items()
+            },
+            "source": "static_fallback",
+        }
+
+        if avg > 0.02 and spread < 0.20:
+            return HealthCheckResult(
+                name=name, domain=domain, score=85.0, status="PASS",
+                explanation=f"Ensemble consistent (spread={spread:.3f}, avg={avg:.3f}) [static]",
+                methodology=methodology + " (static fallback — no tracking data)",
+                raw_metrics=raw, thresholds=thresholds,
+            )
+        if avg > 0:
+            return HealthCheckResult(
+                name=name, domain=domain, score=55.0, status="WARN",
+                explanation=f"Ensemble divergent (spread={spread:.3f}, avg={avg:.3f}) [static]",
+                methodology=methodology + " (static fallback — no tracking data)",
+                raw_metrics=raw, thresholds=thresholds,
+            )
+        return HealthCheckResult(
+            name=name, domain=domain, score=25.0, status="FAIL",
+            explanation=f"Ensemble poor quality (avg holdout_corr={avg:.3f}) [static]",
+            methodology=methodology + " (static fallback — no tracking data)",
+            raw_metrics=raw, thresholds=thresholds,
+        )
 
     # ── Information Ratio Check (Spec 09) ─────────────────────────────────
 
@@ -2304,3 +2482,448 @@ class HealthService:
             return max(ic_values) if ic_values else None
         except Exception:
             return None
+
+    # ── Ensemble Disagreement Tracking (SPEC-H02) ─────────────────────
+
+    _DISAGREEMENT_DB_PATH: Optional[Path] = None
+    _MAX_DISAGREEMENT_SNAPSHOTS = 200  # Retain up to 200 prediction cycle records
+
+    @classmethod
+    def _get_disagreement_db_path(cls) -> Path:
+        """Return the path to the disagreement tracking SQLite database."""
+        if cls._DISAGREEMENT_DB_PATH is None:
+            from quant_engine.config import RESULTS_DIR
+            cls._DISAGREEMENT_DB_PATH = Path(RESULTS_DIR) / "disagreement_tracking.db"
+        return cls._DISAGREEMENT_DB_PATH
+
+    @classmethod
+    def _ensure_disagreement_table(cls) -> None:
+        """Create disagreement_history table if it doesn't exist."""
+        import sqlite3
+        db_path = cls._get_disagreement_db_path()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS disagreement_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    mean_disagreement REAL NOT NULL,
+                    max_disagreement REAL,
+                    n_members INTEGER,
+                    n_assets INTEGER,
+                    pct_high_disagreement REAL,
+                    member_names TEXT
+                )
+            """)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def save_disagreement_snapshot(
+        self,
+        mean_disagreement: float,
+        max_disagreement: Optional[float] = None,
+        n_members: int = 0,
+        n_assets: int = 0,
+        pct_high_disagreement: float = 0.0,
+        member_names: Optional[List[str]] = None,
+    ) -> None:
+        """Save ensemble disagreement metrics from a prediction cycle.
+
+        Called after EnsemblePredictor.predict() to track disagreement
+        across ensemble members over time.
+
+        Parameters
+        ----------
+        mean_disagreement : float
+            Mean std of predictions across ensemble members (per-row, then averaged).
+        max_disagreement : float, optional
+            Maximum per-row disagreement observed.
+        n_members : int
+            Number of ensemble members that produced predictions.
+        n_assets : int
+            Number of assets predicted in this cycle.
+        pct_high_disagreement : float
+            Fraction of rows where disagreement exceeds the warning threshold.
+        member_names : list of str, optional
+            Names of ensemble members (e.g. ["global", "regime_0", "regime_1"]).
+        """
+        import sqlite3
+        try:
+            self._ensure_disagreement_table()
+            db_path = self._get_disagreement_db_path()
+            conn = sqlite3.connect(str(db_path))
+            try:
+                timestamp = datetime.now(timezone.utc).isoformat()
+                names_str = json.dumps(member_names) if member_names else "[]"
+                conn.execute(
+                    "INSERT INTO disagreement_history "
+                    "(timestamp, mean_disagreement, max_disagreement, n_members, "
+                    "n_assets, pct_high_disagreement, member_names) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (timestamp, mean_disagreement, max_disagreement,
+                     n_members, n_assets, pct_high_disagreement, names_str),
+                )
+                # Prune old entries
+                conn.execute(
+                    "DELETE FROM disagreement_history WHERE id NOT IN "
+                    "(SELECT id FROM disagreement_history ORDER BY id DESC LIMIT ?)",
+                    (self._MAX_DISAGREEMENT_SNAPSHOTS,),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning("Failed to save disagreement snapshot: %s", e)
+
+    def get_disagreement_history(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """Retrieve recent disagreement snapshots for tracking and health checks.
+
+        Parameters
+        ----------
+        limit : int
+            Maximum number of recent snapshots to return.
+
+        Returns
+        -------
+        List of dicts, each with: timestamp, mean_disagreement,
+        max_disagreement, n_members, n_assets, pct_high_disagreement,
+        member_names.  Ordered chronologically (oldest first).
+        """
+        import sqlite3
+        try:
+            self._ensure_disagreement_table()
+            db_path = self._get_disagreement_db_path()
+            conn = sqlite3.connect(str(db_path))
+            try:
+                cursor = conn.execute(
+                    "SELECT timestamp, mean_disagreement, max_disagreement, "
+                    "n_members, n_assets, pct_high_disagreement, member_names "
+                    "FROM disagreement_history ORDER BY id DESC LIMIT ?",
+                    (limit,),
+                )
+                rows = cursor.fetchall()
+                history = []
+                for (ts, mean_d, max_d, n_mem, n_a,
+                     pct_high, names_str) in reversed(rows):
+                    try:
+                        member_names_list = json.loads(names_str) if names_str else []
+                    except (json.JSONDecodeError, TypeError):
+                        member_names_list = []
+                    history.append({
+                        "timestamp": ts,
+                        "mean_disagreement": mean_d,
+                        "max_disagreement": max_d,
+                        "n_members": n_mem,
+                        "n_assets": n_a,
+                        "pct_high_disagreement": pct_high,
+                        "member_names": member_names_list,
+                    })
+                return history
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning("Failed to load disagreement history: %s", e)
+            return []
+
+    # ── Execution Quality Monitoring (SPEC-H03) ───────────────────────
+
+    _EXEC_QUALITY_DB_PATH: Optional[Path] = None
+    _MAX_EXEC_QUALITY_RECORDS = 500  # Retain up to 500 fill quality records
+
+    @classmethod
+    def _get_exec_quality_db_path(cls) -> Path:
+        """Return the path to the execution quality SQLite database."""
+        if cls._EXEC_QUALITY_DB_PATH is None:
+            from quant_engine.config import RESULTS_DIR
+            cls._EXEC_QUALITY_DB_PATH = Path(RESULTS_DIR) / "exec_quality.db"
+        return cls._EXEC_QUALITY_DB_PATH
+
+    @classmethod
+    def _ensure_exec_quality_table(cls) -> None:
+        """Create exec_quality table if it doesn't exist."""
+        import sqlite3
+        db_path = cls._get_exec_quality_db_path()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS exec_quality (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    predicted_cost_bps REAL NOT NULL,
+                    actual_cost_bps REAL NOT NULL,
+                    cost_surprise_bps REAL NOT NULL,
+                    fill_ratio REAL,
+                    participation_rate REAL,
+                    regime INTEGER
+                )
+            """)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def save_execution_quality_fill(
+        self,
+        symbol: str,
+        side: str,
+        predicted_cost_bps: float,
+        actual_cost_bps: float,
+        fill_ratio: Optional[float] = None,
+        participation_rate: Optional[float] = None,
+        regime: Optional[int] = None,
+    ) -> None:
+        """Save a paper-trade fill's execution quality to the tracking database.
+
+        Called by the paper trader after each fill to accumulate
+        predicted-vs-actual cost data for health monitoring.
+
+        Parameters
+        ----------
+        symbol : str
+            Ticker or PERMNO identifier.
+        side : str
+            "buy" or "sell".
+        predicted_cost_bps : float
+            Model-predicted total execution cost in basis points.
+        actual_cost_bps : float
+            Realized execution cost in basis points.
+        fill_ratio : float, optional
+            Fraction of desired notional filled (0-1).
+        participation_rate : float, optional
+            Fraction of daily volume executed.
+        regime : int, optional
+            Market regime code at time of fill.
+        """
+        import sqlite3
+        try:
+            self._ensure_exec_quality_table()
+            db_path = self._get_exec_quality_db_path()
+            cost_surprise = float(actual_cost_bps) - float(predicted_cost_bps)
+            conn = sqlite3.connect(str(db_path))
+            try:
+                timestamp = datetime.now(timezone.utc).isoformat()
+                conn.execute(
+                    "INSERT INTO exec_quality "
+                    "(timestamp, symbol, side, predicted_cost_bps, actual_cost_bps, "
+                    "cost_surprise_bps, fill_ratio, participation_rate, regime) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        timestamp,
+                        str(symbol),
+                        str(side),
+                        float(predicted_cost_bps),
+                        float(actual_cost_bps),
+                        cost_surprise,
+                        float(fill_ratio) if fill_ratio is not None else None,
+                        float(participation_rate) if participation_rate is not None else None,
+                        int(regime) if regime is not None else None,
+                    ),
+                )
+                # Prune old entries
+                conn.execute(
+                    "DELETE FROM exec_quality WHERE id NOT IN "
+                    "(SELECT id FROM exec_quality ORDER BY id DESC LIMIT ?)",
+                    (self._MAX_EXEC_QUALITY_RECORDS,),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning("Failed to save execution quality fill: %s", e)
+
+    def get_execution_quality_history(
+        self, limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Retrieve recent execution quality fill records.
+
+        Parameters
+        ----------
+        limit : int
+            Maximum number of recent records to return.
+
+        Returns
+        -------
+        List of dicts, each with: timestamp, symbol, side,
+        predicted_cost_bps, actual_cost_bps, cost_surprise_bps,
+        fill_ratio, participation_rate, regime.
+        Ordered chronologically (oldest first).
+        """
+        import sqlite3
+        try:
+            self._ensure_exec_quality_table()
+            db_path = self._get_exec_quality_db_path()
+            conn = sqlite3.connect(str(db_path))
+            try:
+                cursor = conn.execute(
+                    "SELECT timestamp, symbol, side, predicted_cost_bps, "
+                    "actual_cost_bps, cost_surprise_bps, fill_ratio, "
+                    "participation_rate, regime "
+                    "FROM exec_quality ORDER BY id DESC LIMIT ?",
+                    (limit,),
+                )
+                rows = cursor.fetchall()
+                history = []
+                for (ts, sym, side, pred, actual, surprise,
+                     fill_r, part_r, reg) in reversed(rows):
+                    history.append({
+                        "timestamp": ts,
+                        "symbol": sym,
+                        "side": side,
+                        "predicted_cost_bps": pred,
+                        "actual_cost_bps": actual,
+                        "cost_surprise_bps": surprise,
+                        "fill_ratio": fill_r,
+                        "participation_rate": part_r,
+                        "regime": reg,
+                    })
+                return history
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning("Failed to load execution quality history: %s", e)
+            return []
+
+    def _check_cost_surprise(self) -> HealthCheckResult:
+        """Track rolling cost surprise across paper-trade fills (SPEC-H03).
+
+        Retrieves last N paper-trade fills, computes cost surprise
+        (actual_cost_bps - predicted_cost_bps), and flags:
+            - WARNING if mean cost surprise > 2 bps (model underestimates)
+            - CRITICAL (FAIL) if mean cost surprise > 5 bps
+
+        Negative cost surprise means the model is conservative (overestimates
+        costs), which is acceptable behavior.
+
+        Score mapping:
+            surprise <= 0     → 90 (model conservative or accurate)
+            surprise <= warn  → 70 (slight underestimation, acceptable)
+            surprise <= crit  → 40 (meaningful underestimation — WARNING)
+            surprise >  crit  → 15 (severe underestimation — CRITICAL)
+        """
+        domain = "execution_quality"
+        name = "cost_surprise"
+        methodology = (
+            "Retrieve recent paper-trade fills and compute cost surprise "
+            "(actual_cost_bps - predicted_cost_bps) for each fill.  "
+            "Positive surprise means the execution cost model underestimated "
+            "costs.  Track rolling mean and linear trend.  Alert if "
+            "systematically positive, indicating the model is too optimistic "
+            "about execution costs."
+        )
+        try:
+            from quant_engine.config import (
+                EXEC_QUALITY_LOOKBACK,
+                EXEC_QUALITY_WARN_SURPRISE_BPS,
+                EXEC_QUALITY_CRITICAL_SURPRISE_BPS,
+            )
+        except ImportError:
+            EXEC_QUALITY_LOOKBACK = 50
+            EXEC_QUALITY_WARN_SURPRISE_BPS = 2.0
+            EXEC_QUALITY_CRITICAL_SURPRISE_BPS = 5.0
+
+        thresholds = {
+            "warn_surprise_bps": EXEC_QUALITY_WARN_SURPRISE_BPS,
+            "critical_surprise_bps": EXEC_QUALITY_CRITICAL_SURPRISE_BPS,
+        }
+
+        try:
+            history = self.get_execution_quality_history(
+                limit=EXEC_QUALITY_LOOKBACK,
+            )
+            surprises = [
+                h["cost_surprise_bps"]
+                for h in history
+                if h["cost_surprise_bps"] is not None
+            ]
+
+            if not surprises:
+                return _unavailable(
+                    name, domain,
+                    "No execution quality data — run paper trades to collect "
+                    "predicted-vs-actual fill costs",
+                )
+
+            arr = np.array(surprises, dtype=float)
+            mean_surprise = float(np.mean(arr))
+            median_surprise = float(np.median(arr))
+            std_surprise = float(np.std(arr)) if len(arr) > 1 else 0.0
+            pct_underestimated = float(np.mean(arr > 0))
+
+            # Trend detection via linear regression
+            trend_label = "unknown"
+            trend_slope = 0.0
+            if len(arr) >= 3:
+                x = np.arange(len(arr), dtype=float)
+                coeffs = np.polyfit(x, arr, 1)
+                trend_slope = float(coeffs[0])
+                if trend_slope > 0.05:
+                    trend_label = "worsening"
+                elif trend_slope < -0.05:
+                    trend_label = "improving"
+                else:
+                    trend_label = "stable"
+
+            raw = {
+                "mean_surprise_bps": round(mean_surprise, 3),
+                "median_surprise_bps": round(median_surprise, 3),
+                "std_surprise_bps": round(std_surprise, 3),
+                "pct_underestimated": round(pct_underestimated, 3),
+                "n_fills": len(surprises),
+                "trend": trend_label,
+                "trend_slope_bps_per_fill": round(trend_slope, 4),
+                "latest_surprise_bps": round(float(arr[-1]), 3),
+            }
+
+            # Scoring
+            if mean_surprise <= 0:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=90.0, status="PASS",
+                    explanation=(
+                        f"Cost model conservative: mean surprise="
+                        f"{mean_surprise:+.2f} bps over {len(surprises)} fills "
+                        f"(trend: {trend_label})"
+                    ),
+                    methodology=methodology, raw_metrics=raw,
+                    thresholds=thresholds, raw_value=mean_surprise,
+                )
+            if mean_surprise <= EXEC_QUALITY_WARN_SURPRISE_BPS:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=70.0, status="PASS",
+                    explanation=(
+                        f"Slight cost underestimation: mean surprise="
+                        f"{mean_surprise:+.2f} bps over {len(surprises)} fills "
+                        f"(trend: {trend_label})"
+                    ),
+                    methodology=methodology, raw_metrics=raw,
+                    thresholds=thresholds, raw_value=mean_surprise,
+                )
+            if mean_surprise <= EXEC_QUALITY_CRITICAL_SURPRISE_BPS:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=40.0, status="WARN",
+                    explanation=(
+                        f"Model underestimates costs: mean surprise="
+                        f"{mean_surprise:+.2f} bps > {EXEC_QUALITY_WARN_SURPRISE_BPS} "
+                        f"over {len(surprises)} fills (trend: {trend_label})"
+                    ),
+                    methodology=methodology, raw_metrics=raw,
+                    thresholds=thresholds, raw_value=mean_surprise,
+                )
+            return HealthCheckResult(
+                name=name, domain=domain, score=15.0, status="FAIL",
+                explanation=(
+                    f"CRITICAL: Severe cost underestimation: mean surprise="
+                    f"{mean_surprise:+.2f} bps > {EXEC_QUALITY_CRITICAL_SURPRISE_BPS} "
+                    f"over {len(surprises)} fills (trend: {trend_label})"
+                ),
+                methodology=methodology, raw_metrics=raw,
+                thresholds=thresholds, severity="critical",
+                raw_value=mean_surprise,
+            )
+
+        except Exception as e:
+            logger.warning("Health check '%s' failed: %s", name, e)
+            return _unavailable(name, domain, f"Error: {e}")

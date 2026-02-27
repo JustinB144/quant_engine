@@ -344,6 +344,10 @@ class AutopilotEngine:
         detector = RegimeDetector()
         all_preds = []
         latest_rows = []
+        # Collect per-asset disagreement for health tracking (SPEC-H02)
+        disagreement_values = []
+        last_member_names: list = []
+        last_n_members = 0
 
         for permno in data:
             if permno not in available_permnos:
@@ -366,8 +370,23 @@ class AutopilotEngine:
             latest["date"] = str(feats.index[-1].date()) if hasattr(feats.index[-1], "date") else str(feats.index[-1])
             latest_rows.append(latest)
 
+            # Capture per-asset ensemble disagreement (SPEC-H02)
+            if "ensemble_disagreement" in preds.columns:
+                d_vals = preds["ensemble_disagreement"].dropna()
+                if len(d_vals) > 0:
+                    disagreement_values.append(float(d_vals.iloc[-1]))
+            member_preds = preds.attrs.get("member_predictions", {})
+            if member_preds:
+                last_member_names = sorted(member_preds.keys())
+                last_n_members = len(member_preds)
+
         if not all_preds:
             raise RuntimeError("No predictions generated in autopilot cycle")
+
+        # ── Save ensemble disagreement to health tracking (SPEC-H02) ──
+        self._save_disagreement_to_health_tracking(
+            disagreement_values, last_n_members, last_member_names,
+        )
 
         history_preds = pd.concat(all_preds).sort_index()
         latest_preds = pd.DataFrame(latest_rows)
@@ -1758,3 +1777,51 @@ class AutopilotEngine:
             self._log(f"  IC tracking: saved ic_mean={best_ic:.4f} to health DB")
         except Exception as e:
             logger.warning("Failed to save IC to health tracking: %s", e)
+
+    def _save_disagreement_to_health_tracking(
+        self,
+        disagreement_values: list,
+        n_members: int,
+        member_names: list,
+    ) -> None:
+        """Persist ensemble disagreement metrics to the health tracking database.
+
+        Aggregates per-asset latest-row disagreement values and saves a
+        summary snapshot via HealthService.save_disagreement_snapshot().
+        This enables the ensemble disagreement health check (SPEC-H02)
+        to monitor prediction consistency across autopilot cycles.
+        """
+        try:
+            if not disagreement_values:
+                self._log("  Disagreement tracking: no values from this cycle (skipping)")
+                return
+
+            import numpy as _np
+            d_arr = _np.array(disagreement_values, dtype=float)
+            mean_d = float(_np.mean(d_arr))
+            max_d = float(_np.max(d_arr))
+
+            # Compute fraction of assets with high disagreement
+            try:
+                from ..config import ENSEMBLE_DISAGREEMENT_WARN_THRESHOLD
+            except ImportError:
+                ENSEMBLE_DISAGREEMENT_WARN_THRESHOLD = 0.015
+            pct_high = float((d_arr > ENSEMBLE_DISAGREEMENT_WARN_THRESHOLD).mean())
+
+            from ..api.services.health_service import HealthService
+            svc = HealthService()
+            svc.save_disagreement_snapshot(
+                mean_disagreement=mean_d,
+                max_disagreement=max_d,
+                n_members=n_members,
+                n_assets=len(disagreement_values),
+                pct_high_disagreement=pct_high,
+                member_names=member_names,
+            )
+            self._log(
+                f"  Disagreement tracking: saved mean={mean_d:.4f} "
+                f"(max={max_d:.4f}, {n_members} members, "
+                f"{len(disagreement_values)} assets) to health DB"
+            )
+        except Exception as e:
+            logger.warning("Failed to save disagreement to health tracking: %s", e)

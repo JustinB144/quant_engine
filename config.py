@@ -666,6 +666,16 @@ IC_TRACKING_LOOKBACK = 20                         # STATUS: ACTIVE — health_se
 IC_TRACKING_WARN_THRESHOLD = 0.01                 # STATUS: ACTIVE — health_service.py; WARNING if rolling IC mean < this
 IC_TRACKING_CRITICAL_THRESHOLD = 0.0              # STATUS: ACTIVE — health_service.py; CRITICAL if rolling IC mean < this
 
+# Execution quality monitoring (SPEC-H03)
+EXEC_QUALITY_LOOKBACK = 50                        # STATUS: ACTIVE — health_service.py; number of recent fills to analyze
+EXEC_QUALITY_WARN_SURPRISE_BPS = 2.0              # STATUS: ACTIVE — health_service.py; WARN if mean cost surprise > this (model underestimates)
+EXEC_QUALITY_CRITICAL_SURPRISE_BPS = 5.0          # STATUS: ACTIVE — health_service.py; FAIL if mean cost surprise > this
+
+# Ensemble disagreement tracking for health system (SPEC-H02)
+ENSEMBLE_DISAGREEMENT_LOOKBACK = 20                # STATUS: ACTIVE — health_service.py; number of recent snapshots to consider
+ENSEMBLE_DISAGREEMENT_WARN_THRESHOLD = 0.015       # STATUS: ACTIVE — health_service.py; WARNING if mean disagreement > this
+ENSEMBLE_DISAGREEMENT_CRITICAL_THRESHOLD = 0.03    # STATUS: ACTIVE — health_service.py; CRITICAL if mean disagreement > this
+
 # Decile spread
 EVAL_DECILE_SPREAD_MIN = 0.005                    # STATUS: ACTIVE — evaluation/metrics.py; minimum expected spread for a good predictor
 
