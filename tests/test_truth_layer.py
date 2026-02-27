@@ -22,14 +22,24 @@ import pytest
 
 
 def _make_ohlcv(n: int = 500, seed: int = 42, zero_vol_frac: float = 0.0) -> pd.DataFrame:
-    """Generate synthetic OHLCV data for testing."""
+    """Generate synthetic OHLCV data for testing.
+
+    Ensures proper OHLCV ordering: High >= max(Open, Close) and
+    Low <= min(Open, Close) on every bar.
+    """
     rng = np.random.default_rng(seed)
     dates = pd.bdate_range("2022-01-03", periods=n)
     close = 100.0 + np.cumsum(rng.normal(0.0005, 0.015, n))
     close = np.maximum(close, 1.0)
-    high = close * (1 + rng.uniform(0, 0.015, n))
-    low = close * (1 - rng.uniform(0, 0.015, n))
     opn = close * (1 + rng.normal(0, 0.003, n))
+    opn = np.maximum(opn, 1.0)
+
+    # Ensure High >= max(Open, Close) and Low <= min(Open, Close)
+    bar_max = np.maximum(opn, close)
+    bar_min = np.minimum(opn, close)
+    high = bar_max * (1 + rng.uniform(0, 0.015, n))
+    low = bar_min * (1 - rng.uniform(0, 0.015, n))
+
     vol = rng.integers(500_000, 5_000_000, n).astype(float)
 
     # Inject zero volume if requested
@@ -869,3 +879,211 @@ class TestConfigIntegration:
 
         issues = validate_config()
         assert isinstance(issues, list)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# D02: Feature Causality Enforcement at Runtime (Predictor)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestPredictorCausalityEnforcement:
+    """Tests for SPEC-D02: runtime causality enforcement in EnsemblePredictor.
+
+    Verifies that RESEARCH_ONLY features are blocked from reaching
+    live predictions when TRUTH_LAYER_ENFORCE_CAUSALITY is True.
+    """
+
+    @staticmethod
+    def _make_mock_predictor():
+        """Create an EnsemblePredictor with mocked internals (no disk artifacts)."""
+        from unittest.mock import MagicMock
+        from quant_engine.models.predictor import EnsemblePredictor
+
+        # Bypass __init__ which requires model files on disk
+        predictor = object.__new__(EnsemblePredictor)
+
+        # Set minimum required attributes for predict()
+        predictor.horizon = 10
+        predictor.global_features = ["RSI_14", "MACD_12_26", "ATR_14"]
+        predictor.global_medians = {"RSI_14": 50.0, "MACD_12_26": 0.0, "ATR_14": 1.0}
+        predictor.global_target_std = 0.10
+        predictor.meta = {
+            "global_features": predictor.global_features,
+            "global_holdout_corr": 0.1,
+            "global_cv_corr": 0.1,
+        }
+
+        # Mock the global model and scaler
+        mock_model = MagicMock()
+        mock_model.predict.return_value = np.array([0.01, 0.02, -0.01])
+        predictor.global_model = mock_model
+
+        mock_scaler = MagicMock()
+        mock_scaler.transform.return_value = np.zeros((3, 3))
+        predictor.global_scaler = mock_scaler
+
+        # No regime models (simplest case)
+        predictor.regime_models = {}
+        predictor.regime_scalers = {}
+        predictor.regime_features = {}
+        predictor.regime_reliability = {}
+        predictor.regime_medians = {}
+        predictor.regime_target_stds = {}
+
+        # No calibrator or conformal predictor
+        predictor.calibrator = None
+        predictor.conformal = None
+
+        return predictor
+
+    @staticmethod
+    def _make_features(n: int = 3, extra_columns: dict = None):
+        """Create a minimal features DataFrame with causal columns."""
+        rng = np.random.default_rng(42)
+        idx = pd.bdate_range("2025-01-02", periods=n)
+        data = {
+            "RSI_14": rng.uniform(20, 80, n),
+            "MACD_12_26": rng.normal(0, 1, n),
+            "ATR_14": rng.uniform(0.5, 2.0, n),
+        }
+        if extra_columns:
+            data.update(extra_columns)
+        return pd.DataFrame(data, index=idx)
+
+    def test_causal_features_pass(self):
+        """CAUSAL-only features should pass causality check."""
+        predictor = self._make_mock_predictor()
+        features = self._make_features()
+        regimes = pd.Series([0, 0, 1], index=features.index)
+        confidence = pd.Series([0.8, 0.7, 0.6], index=features.index)
+
+        # Should not raise
+        result = predictor.predict(features, regimes, confidence)
+        assert "predicted_return" in result.columns
+        assert len(result) == 3
+
+    def test_research_only_features_raise(self):
+        """RESEARCH_ONLY features should raise ValueError."""
+        predictor = self._make_mock_predictor()
+        features = self._make_features(extra_columns={
+            "relative_mom_10": [0.1, 0.2, 0.3],
+        })
+        regimes = pd.Series([0, 0, 1], index=features.index)
+        confidence = pd.Series([0.8, 0.7, 0.6], index=features.index)
+
+        with pytest.raises(ValueError, match="RESEARCH_ONLY features in prediction"):
+            predictor.predict(features, regimes, confidence)
+
+    def test_multiple_research_only_features_raise(self):
+        """Multiple RESEARCH_ONLY features should all be reported in error."""
+        predictor = self._make_mock_predictor()
+        features = self._make_features(extra_columns={
+            "relative_mom_10": [0.1, 0.2, 0.3],
+            "relative_mom_20": [0.05, 0.15, 0.25],
+            "relative_mom_60": [0.02, 0.08, 0.12],
+        })
+        regimes = pd.Series([0, 0, 1], index=features.index)
+        confidence = pd.Series([0.8, 0.7, 0.6], index=features.index)
+
+        with pytest.raises(ValueError, match="RESEARCH_ONLY features in prediction") as exc_info:
+            predictor.predict(features, regimes, confidence)
+
+        error_msg = str(exc_info.value)
+        assert "relative_mom_10" in error_msg
+        assert "relative_mom_20" in error_msg
+        assert "relative_mom_60" in error_msg
+
+    def test_end_of_day_features_pass(self):
+        """END_OF_DAY features should NOT be blocked (safe for daily predictions)."""
+        predictor = self._make_mock_predictor()
+        features = self._make_features(extra_columns={
+            "intraday_vol_ratio": [1.2, 0.8, 1.1],
+        })
+        regimes = pd.Series([0, 0, 1], index=features.index)
+        confidence = pd.Series([0.8, 0.7, 0.6], index=features.index)
+
+        # Should not raise — END_OF_DAY features are acceptable for daily-close predictions
+        result = predictor.predict(features, regimes, confidence)
+        assert "predicted_return" in result.columns
+
+    def test_unlisted_features_pass(self):
+        """Features not in FEATURE_METADATA should default to CAUSAL and pass."""
+        predictor = self._make_mock_predictor()
+        features = self._make_features(extra_columns={
+            "some_custom_feature": [1.0, 2.0, 3.0],
+        })
+        regimes = pd.Series([0, 0, 1], index=features.index)
+        confidence = pd.Series([0.8, 0.7, 0.6], index=features.index)
+
+        # Should not raise — unlisted features default to CAUSAL
+        result = predictor.predict(features, regimes, confidence)
+        assert "predicted_return" in result.columns
+
+    def test_interaction_features_pass(self):
+        """Interaction features (X_ prefix) should default to CAUSAL and pass."""
+        predictor = self._make_mock_predictor()
+        features = self._make_features(extra_columns={
+            "X_RSI_14_ATR_14": [0.5, 0.6, 0.7],
+        })
+        regimes = pd.Series([0, 0, 1], index=features.index)
+        confidence = pd.Series([0.8, 0.7, 0.6], index=features.index)
+
+        result = predictor.predict(features, regimes, confidence)
+        assert "predicted_return" in result.columns
+
+    def test_enforcement_disabled_allows_research_only(self):
+        """When TRUTH_LAYER_ENFORCE_CAUSALITY is False, RESEARCH_ONLY features should pass."""
+        predictor = self._make_mock_predictor()
+        features = self._make_features(extra_columns={
+            "relative_mom_10": [0.1, 0.2, 0.3],
+        })
+        regimes = pd.Series([0, 0, 1], index=features.index)
+        confidence = pd.Series([0.8, 0.7, 0.6], index=features.index)
+
+        with patch("quant_engine.models.predictor.TRUTH_LAYER_ENFORCE_CAUSALITY", False):
+            # Should not raise when enforcement is disabled
+            result = predictor.predict(features, regimes, confidence)
+            assert "predicted_return" in result.columns
+
+    def test_predict_single_inherits_enforcement(self):
+        """predict_single() calls predict() so it should also enforce causality."""
+        predictor = self._make_mock_predictor()
+        # predict_single wraps a Series into a DataFrame and calls predict
+        features_series = pd.Series({
+            "RSI_14": 55.0,
+            "MACD_12_26": 0.5,
+            "ATR_14": 1.2,
+            "relative_mom_10": 0.15,  # RESEARCH_ONLY
+        }, name=pd.Timestamp("2025-01-02"))
+
+        with pytest.raises(ValueError, match="RESEARCH_ONLY features in prediction"):
+            predictor.predict_single(
+                features=features_series,
+                regime=0,
+                regime_confidence=0.8,
+            )
+
+    def test_error_message_suggests_production_mode(self):
+        """Error message should guide user to use production_mode or filter features."""
+        predictor = self._make_mock_predictor()
+        features = self._make_features(extra_columns={
+            "relative_mom_10": [0.1, 0.2, 0.3],
+        })
+        regimes = pd.Series([0, 0, 1], index=features.index)
+        confidence = pd.Series([0.8, 0.7, 0.6], index=features.index)
+
+        with pytest.raises(ValueError, match="production_mode=True"):
+            predictor.predict(features, regimes, confidence)
+
+    def test_mixed_causal_and_research_features_caught(self):
+        """Even one RESEARCH_ONLY among many CAUSAL features should be caught."""
+        predictor = self._make_mock_predictor()
+        # Many causal features + one research feature
+        extra = {f"causal_feat_{i}": [float(i)] * 3 for i in range(20)}
+        extra["relative_mom_60"] = [0.1, 0.2, 0.3]
+        features = self._make_features(extra_columns=extra)
+        regimes = pd.Series([0, 0, 1], index=features.index)
+        confidence = pd.Series([0.8, 0.7, 0.6], index=features.index)
+
+        with pytest.raises(ValueError, match="relative_mom_60"):
+            predictor.predict(features, regimes, confidence)

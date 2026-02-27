@@ -7,7 +7,9 @@ Anti-leakage measures:
     - Median imputation (matching trainer, not fillna(0))
     - Prediction clipping to ±3*target_std (prevents unrealistic outliers)
     - Uses joblib for safe deserialization (matching trainer)
+    - Feature causality enforcement (blocks RESEARCH_ONLY features at runtime)
 """
+import logging
 import json
 from pathlib import Path
 from typing import Optional, Dict
@@ -16,10 +18,13 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from ..config import MODEL_DIR, REGIME_NAMES
+from ..config import MODEL_DIR, REGIME_NAMES, TRUTH_LAYER_ENFORCE_CAUSALITY
+from ..features.pipeline import get_feature_type
 from .conformal import ConformalPredictor
 from .governance import ModelGovernance
 from .versioning import ModelRegistry
+
+logger = logging.getLogger(__name__)
 
 
 def _prepare_features(
@@ -204,6 +209,23 @@ class EnsemblePredictor:
                 regime: regime label
                 blend_alpha: weight given to regime model
         """
+        # ── Feature causality enforcement ──
+        # Block RESEARCH_ONLY features from reaching live predictions.
+        # These features may use future or cross-sectional data that is
+        # unavailable at prediction time.
+        if TRUTH_LAYER_ENFORCE_CAUSALITY:
+            research_only = {
+                col for col in features.columns
+                if get_feature_type(col) == "RESEARCH_ONLY"
+            }
+            if research_only:
+                raise ValueError(
+                    f"RESEARCH_ONLY features in prediction: {sorted(research_only)}. "
+                    f"These features may contain future data and cannot be used "
+                    f"for live predictions. Use production_mode=True in "
+                    f"FeaturePipeline or filter them before calling predict()."
+                )
+
         n = len(features)
         result = pd.DataFrame(index=features.index)
 
