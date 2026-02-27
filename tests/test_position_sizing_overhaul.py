@@ -185,42 +185,49 @@ class TestPerRegimeBayesian:
 # ---------------------------------------------------------------------------
 
 class TestRegimeStatsUpdate:
-    """T4: Regime stats updated from trade DataFrame with regime column."""
+    """T4: Regime stats updated from trade DataFrame with regime column.
+
+    SPEC-P01: MIN_REGIME_TRADES_FOR_STATS = 30 — tests use 40 trades
+    per regime to exceed the threshold.
+    """
 
     def test_update_from_trade_df(self):
         """Stats for trending_bull should reflect trade data."""
         ps = PositionSizer()
+        # 40 trades: 32 wins + 8 losses → win_rate = 0.80
+        returns = [0.03, 0.02, -0.01, 0.04, 0.01,
+                   0.02, -0.02, 0.03, 0.01, 0.02] * 4
         trades = pd.DataFrame({
-            "net_return": [0.03, 0.02, -0.01, 0.04, 0.01,
-                           0.02, -0.02, 0.03, 0.01, 0.02],
-            "regime": [0] * 10,
+            "net_return": returns,
+            "regime": [0] * 40,
         })
-        ps.update_regime_stats(trades)
+        ps.update_regime_stats(trades, persist=False)
         stats = ps.regime_stats["trending_bull"]
-        assert stats["n_trades"] == 10
+        assert stats["n_trades"] == 40
         assert stats["win_rate"] == pytest.approx(0.8, abs=0.01)
 
     def test_too_few_trades_keeps_defaults(self):
-        """Regimes with <5 trades should keep their default stats."""
+        """Regimes with < MIN_REGIME_TRADES_FOR_STATS trades keep defaults."""
         ps = PositionSizer()
         default_wr = ps.regime_stats["high_volatility"]["win_rate"]
+        # Only 10 trades — below the 30-trade threshold
         trades = pd.DataFrame({
-            "net_return": [0.01, -0.01, 0.02],
-            "regime": [3, 3, 3],
+            "net_return": [0.01, -0.01, 0.02] * 3 + [0.01],
+            "regime": [3] * 10,
         })
-        ps.update_regime_stats(trades)
+        ps.update_regime_stats(trades, persist=False)
         assert ps.regime_stats["high_volatility"]["win_rate"] == default_wr
 
     def test_multiple_regimes_updated(self):
         """Multiple regimes in one call are all updated."""
         ps = PositionSizer()
         trades = pd.DataFrame({
-            "net_return": [0.02] * 10 + [-0.01] * 10,
-            "regime": [0] * 10 + [1] * 10,
+            "net_return": [0.02] * 35 + [-0.01] * 35,
+            "regime": [0] * 35 + [1] * 35,
         })
-        ps.update_regime_stats(trades)
-        assert ps.regime_stats["trending_bull"]["n_trades"] == 10
-        assert ps.regime_stats["trending_bear"]["n_trades"] == 10
+        ps.update_regime_stats(trades, persist=False)
+        assert ps.regime_stats["trending_bull"]["n_trades"] == 35
+        assert ps.regime_stats["trending_bear"]["n_trades"] == 35
         assert ps.regime_stats["trending_bull"]["win_rate"] == 1.0
         assert ps.regime_stats["trending_bear"]["win_rate"] == 0.0
 
