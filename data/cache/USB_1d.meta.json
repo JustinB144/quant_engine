@@ -1,10 +1,11 @@
 {
-  "end_date": "2026-02-20",
+  "end_date": "2024-12-31",
   "format": "parquet",
-  "n_bars": 5032,
-  "saved_at_utc": "2026-02-22T20:55:33.575438+00:00",
-  "source": "wrds+ibkr",
-  "start_date": "2006-02-21",
+  "n_bars": 4781,
+  "permno": "66157",
+  "saved_at_utc": "2026-02-27T00:02:23.967646+00:00",
+  "source": "wrds_delisting",
+  "start_date": "2006-01-03",
   "ticker": "USB",
-  "timeframe": "daily"
+  "years_requested": 20
 }

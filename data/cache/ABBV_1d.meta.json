@@ -1,10 +1,11 @@
 {
-  "end_date": "2026-02-20",
+  "end_date": "2024-12-31",
   "format": "parquet",
-  "n_bars": 3319,
-  "saved_at_utc": "2026-02-22T20:56:54.403684+00:00",
-  "source": "ibkr",
-  "start_date": "2012-12-10",
+  "n_bars": 3020,
+  "permno": "13721",
+  "saved_at_utc": "2026-02-27T00:02:15.716054+00:00",
+  "source": "wrds_delisting",
+  "start_date": "2013-01-02",
   "ticker": "ABBV",
-  "timeframe": "daily"
+  "years_requested": 20
 }

@@ -1,10 +1,14 @@
 {
-  "end_date": "2026-02-20",
+  "end_date": "2016-09-02",
   "format": "parquet",
-  "n_bars": 5032,
-  "saved_at_utc": "2026-02-22T20:54:42.983613+00:00",
-  "source": "wrds+ibkr",
-  "start_date": "2006-02-21",
+  "is_terminal": true,
+  "n_bars": 2687,
+  "permno": "42534",
+  "saved_at_utc": "2026-02-27T00:02:19.277876+00:00",
+  "source": "wrds_delisting",
+  "start_date": "2006-01-03",
+  "terminal_date": "2016-09-02",
+  "terminal_reason": "delisted",
   "ticker": "JCI",
-  "timeframe": "daily"
+  "years_requested": 20
 }

@@ -1,10 +1,11 @@
 {
-  "end_date": "2026-02-20",
+  "end_date": "2024-12-31",
   "format": "parquet",
-  "n_bars": 1364,
-  "saved_at_utc": "2026-02-22T20:56:44.338643+00:00",
-  "source": "ibkr",
+  "n_bars": 1080,
+  "permno": "19654",
+  "saved_at_utc": "2026-02-27T00:02:21.883774+00:00",
+  "source": "wrds_delisting",
   "start_date": "2020-09-16",
   "ticker": "SNOW",
-  "timeframe": "daily"
+  "years_requested": 20
 }

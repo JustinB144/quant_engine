@@ -1,10 +1,11 @@
 {
-  "end_date": "2026-02-20",
+  "end_date": "2024-12-31",
   "format": "parquet",
-  "n_bars": 5027,
-  "saved_at_utc": "2026-02-22T20:57:24.358348+00:00",
-  "source": "ibkr",
-  "start_date": "2006-02-27",
+  "n_bars": 4781,
+  "permno": "43449",
+  "saved_at_utc": "2026-02-27T00:02:21.941095+00:00",
+  "source": "wrds_delisting",
+  "start_date": "2006-01-03",
   "ticker": "MCD",
-  "timeframe": "daily"
+  "years_requested": 20
 }

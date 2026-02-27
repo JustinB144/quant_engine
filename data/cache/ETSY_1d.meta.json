@@ -1,10 +1,11 @@
 {
-  "end_date": "2026-02-20",
+  "end_date": "2024-12-31",
   "format": "parquet",
-  "n_bars": 2729,
-  "saved_at_utc": "2026-02-22T20:59:24.326988+00:00",
-  "source": "ibkr",
+  "n_bars": 2445,
+  "permno": "15291",
+  "saved_at_utc": "2026-02-27T00:02:19.224924+00:00",
+  "source": "wrds_delisting",
   "start_date": "2015-04-16",
   "ticker": "ETSY",
-  "timeframe": "daily"
+  "years_requested": 20
 }

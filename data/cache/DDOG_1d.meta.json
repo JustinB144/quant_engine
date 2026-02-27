@@ -1,10 +1,11 @@
 {
-  "end_date": "2026-02-20",
+  "end_date": "2024-12-31",
   "format": "parquet",
-  "n_bars": 1614,
-  "saved_at_utc": "2026-02-22T20:56:24.166073+00:00",
-  "source": "ibkr",
+  "n_bars": 1330,
+  "permno": "18911",
+  "saved_at_utc": "2026-02-27T00:02:15.741389+00:00",
+  "source": "wrds_delisting",
   "start_date": "2019-09-19",
   "ticker": "DDOG",
-  "timeframe": "daily"
+  "years_requested": 20
 }

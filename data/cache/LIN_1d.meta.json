@@ -1,10 +1,11 @@
 {
-  "end_date": "2026-02-20",
+  "end_date": "2024-12-31",
   "format": "parquet",
-  "n_bars": 2187,
-  "saved_at_utc": "2026-02-22T20:54:48.773764+00:00",
-  "source": "wrds+ibkr",
-  "start_date": "2013-07-31",
+  "n_bars": 1551,
+  "permno": "18143",
+  "saved_at_utc": "2026-02-27T00:02:19.221475+00:00",
+  "source": "wrds_delisting",
+  "start_date": "2018-10-31",
   "ticker": "LIN",
-  "timeframe": "daily"
+  "years_requested": 20
 }

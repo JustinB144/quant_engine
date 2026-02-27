@@ -1,10 +1,11 @@
 {
-  "end_date": "2026-02-20",
+  "end_date": "2024-12-31",
   "format": "parquet",
-  "n_bars": 1108,
-  "saved_at_utc": "2026-02-22T20:58:48.161517+00:00",
-  "source": "ibkr",
+  "n_bars": 824,
+  "permno": "21896",
+  "saved_at_utc": "2026-02-27T00:02:23.924542+00:00",
+  "source": "wrds_delisting",
   "start_date": "2021-09-22",
   "ticker": "TOST",
-  "timeframe": "daily"
+  "years_requested": 20
 }

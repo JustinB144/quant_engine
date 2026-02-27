@@ -1,8 +1,8 @@
 # Quant Trading Engine - Implementation Specs Index
 
 **Last Updated:** 2026-02-26
-**Total Specs:** 10
-**Status:** 6 Complete (SPEC 1–6) + 4 New Complete (SPEC 7–10)
+**Total Specs:** 12
+**Status:** 6 Complete (SPEC 1–6) + 4 New Complete (SPEC 7–10) + 2 Draft (SPEC 11–12)
 
 ---
 
@@ -33,6 +33,13 @@
 | **9** | Health System (NEW) | ✓ Complete | 100h | Information Ratio, survivorship bias, health feedback |
 | **10** | Regime Detection (NEW) | ✓ Complete | 130h | Ensemble voting, uncertainty integration, online updates |
 
+### Data Quality & Tooling (SPEC 11–12)
+
+| Spec | Title | Status | Effort | Focus |
+|------|-------|--------|--------|-------|
+| **11** | Intraday Data Integrity | Draft | 45h | Multi-source intraday validation, quarantine, IBKR truth checks |
+| **12** | Automated Documentation System | Draft | 60h | Source-derived doc generation, drift checks, pre-commit/CI enforcement |
+
 ---
 
 ## Quick Navigation
@@ -58,6 +65,7 @@
 **Core Infrastructure:**
 - [SPEC 1: Foundational Hardening](./SPEC_01_FOUNDATIONAL_HARDENING.md) - Logging, versioning
 - [SPEC 3: Structural State Layer](./SPEC_03_STRUCTURAL_STATE_LAYER.md) - Anomaly detection
+- [SPEC 12: Automated Documentation System](./SPEC_12_AUTODOC_SYSTEM.md) - Auto-generated docs + drift enforcement
 
 ### By Implementation Order
 

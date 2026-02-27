@@ -1,10 +1,11 @@
 {
-  "end_date": "2026-02-20",
+  "end_date": "2024-12-31",
   "format": "parquet",
-  "n_bars": 3416,
-  "saved_at_utc": "2026-02-22T20:56:48.208810+00:00",
-  "source": "ibkr",
+  "n_bars": 3132,
+  "permno": "13511",
+  "saved_at_utc": "2026-02-27T00:02:21.878129+00:00",
+  "source": "wrds_delisting",
   "start_date": "2012-07-20",
   "ticker": "PANW",
-  "timeframe": "daily"
+  "years_requested": 20
 }

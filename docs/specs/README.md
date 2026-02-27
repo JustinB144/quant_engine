@@ -105,3 +105,12 @@ Each spec follows the [SPEC_TEMPLATE.md](../SPEC_TEMPLATE.md) format:
 - Never modify files not listed in the task
 - If a task's verification fails, fix before moving on
 - If implementation notes conflict with actual code, the actual code wins (update the spec)
+
+---
+
+## Additional Current-Repo Specs (2026-02-26)
+
+These newer specs are authored against the current `quant_engine` repository layout (FastAPI + React/Vite, source-derived docs, local scripts) and use `SPEC_XX_*.md` naming.
+
+- [SPEC 11: Intraday Data Integrity](./SPEC_11_INTRADAY_DATA_INTEGRITY.md)
+- [SPEC 12: Automated Documentation System](./SPEC_12_AUTODOC_SYSTEM.md)

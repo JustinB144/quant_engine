@@ -1,10 +1,11 @@
 {
-  "end_date": "2026-02-20",
+  "end_date": "2024-12-31",
   "format": "parquet",
-  "n_bars": 4292,
-  "saved_at_utc": "2026-02-22T20:54:58.281276+00:00",
-  "source": "wrds+ibkr",
-  "start_date": "2006-02-21",
+  "n_bars": 3521,
+  "permno": "22779",
+  "saved_at_utc": "2026-02-27T00:02:21.914842+00:00",
+  "source": "wrds_delisting",
+  "start_date": "2011-01-04",
   "ticker": "MSI",
-  "timeframe": "daily"
+  "years_requested": 20
 }

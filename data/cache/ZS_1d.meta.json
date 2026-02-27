@@ -1,10 +1,11 @@
 {
-  "end_date": "2026-02-20",
+  "end_date": "2024-12-31",
   "format": "parquet",
-  "n_bars": 1994,
-  "saved_at_utc": "2026-02-22T20:56:43.392192+00:00",
-  "source": "ibkr",
+  "n_bars": 1710,
+  "permno": "17341",
+  "saved_at_utc": "2026-02-27T00:02:23.920824+00:00",
+  "source": "wrds_delisting",
   "start_date": "2018-03-16",
   "ticker": "ZS",
-  "timeframe": "daily"
+  "years_requested": 20
 }

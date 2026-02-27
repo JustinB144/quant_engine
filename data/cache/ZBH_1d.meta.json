@@ -1,10 +1,11 @@
 {
-  "end_date": "2026-02-20",
+  "end_date": "2024-12-31",
   "format": "parquet",
-  "n_bars": 2678,
-  "saved_at_utc": "2026-02-22T20:55:41.202839+00:00",
-  "source": "wrds+ibkr",
+  "n_bars": 2394,
+  "permno": "89070",
+  "saved_at_utc": "2026-02-27T00:02:23.993213+00:00",
+  "source": "wrds_delisting",
   "start_date": "2015-06-29",
   "ticker": "ZBH",
-  "timeframe": "daily"
+  "years_requested": 20
 }

@@ -480,15 +480,20 @@ class WRDSProvider:
             return {}
 
         # CRSP price is negative when it's a bid-ask midpoint (no trade) — take abs.
-        # Use .loc[:, col] assignments and .copy() for pandas 3.0 CoW compatibility.
+        # .copy() gives us an owned frame so direct column assignment is CoW-safe.
         df = df.copy()
-        df.loc[:, 'prc'] = df['prc'].abs()
-        df.loc[:, 'openprc'] = pd.to_numeric(df['openprc'], errors='coerce').abs()
-        df.loc[:, 'askhi'] = pd.to_numeric(df['askhi'], errors='coerce').abs()
-        df.loc[:, 'bidlo'] = pd.to_numeric(df['bidlo'], errors='coerce').abs()
-        df.loc[:, 'date'] = pd.to_datetime(df['date'])
-        df.loc[:, 'ret'] = pd.to_numeric(df['ret'], errors='coerce')
-        df.loc[:, 'vol'] = pd.to_numeric(df['vol'], errors='coerce')
+        # Direct column assignment (df['col'] = ...) replaces the column and its
+        # dtype entirely, which is necessary when WRDS returns Arrow-backed string
+        # columns.  .loc[:, col] tries to fit values into the *existing* dtype and
+        # raises TypeError on dtype mismatch (e.g. DatetimeArray → ArrowString).
+        # Since we already called df.copy() above, direct assignment is CoW-safe.
+        df['prc'] = pd.to_numeric(df['prc'], errors='coerce').abs()
+        df['openprc'] = pd.to_numeric(df['openprc'], errors='coerce').abs()
+        df['askhi'] = pd.to_numeric(df['askhi'], errors='coerce').abs()
+        df['bidlo'] = pd.to_numeric(df['bidlo'], errors='coerce').abs()
+        df['date'] = pd.to_datetime(df['date'])
+        df['ret'] = pd.to_numeric(df['ret'], errors='coerce')
+        df['vol'] = pd.to_numeric(df['vol'], errors='coerce')
 
         result: Dict[str, pd.DataFrame] = {}
         for permno, group in df.groupby('permno'):
