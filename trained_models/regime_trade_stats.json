@@ -1,0 +1,26 @@
+{
+  "trending_bull": {
+    "win_rate": 0.8,
+    "avg_win": 0.023999999999999997,
+    "avg_loss": -0.008999999999999998,
+    "n_trades": 60
+  },
+  "trending_bear": {
+    "win_rate": 0.45,
+    "avg_win": 0.02,
+    "avg_loss": -0.025,
+    "n_trades": 0
+  },
+  "mean_reverting": {
+    "win_rate": 0.5,
+    "avg_win": 0.02,
+    "avg_loss": -0.02,
+    "n_trades": 0
+  },
+  "high_volatility": {
+    "win_rate": 0.42,
+    "avg_win": 0.04,
+    "avg_loss": -0.035,
+    "n_trades": 0
+  }
+}

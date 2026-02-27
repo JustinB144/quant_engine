@@ -637,6 +637,17 @@ class DelistingHandler:
 
         Keeps full history even after delisting.
         """
+        def _sql_value(value):
+            """Convert pandas/numpy NA values to sqlite-safe Python values."""
+            if pd.isna(value):
+                return None
+            if hasattr(value, "item"):
+                try:
+                    return value.item()
+                except (ValueError, TypeError):
+                    return value
+            return value
+
         with sqlite3.connect(self.db_path) as conn:
             for idx, row in prices.iterrows():
                 date_str = idx.strftime('%Y-%m-%d') if hasattr(idx, 'strftime') else str(idx)
@@ -647,11 +658,11 @@ class DelistingHandler:
                 """, (
                     symbol,
                     date_str,
-                    row.get('Open', row.get('open')),
-                    row.get('High', row.get('high')),
-                    row.get('Low', row.get('low')),
-                    row.get('Close', row.get('close')),
-                    row.get('Volume', row.get('volume'))
+                    _sql_value(row.get('Open', row.get('open'))),
+                    _sql_value(row.get('High', row.get('high'))),
+                    _sql_value(row.get('Low', row.get('low'))),
+                    _sql_value(row.get('Close', row.get('close'))),
+                    _sql_value(row.get('Volume', row.get('volume')))
                 ))
             conn.commit()
 

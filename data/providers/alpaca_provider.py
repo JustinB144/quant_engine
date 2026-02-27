@@ -38,14 +38,15 @@ _ALPACA_TIMEFRAMES = {
     "4h": ("4", "Hour"),
 }
 
-# Max calendar days per Alpaca request to stay under the ~10,000 bar limit
+# Max calendar days per Alpaca request to stay under the ~10,000 bar limit.
+# Calendar days include weekends/holidays (no bars), so effective trading days ≈ 70%.
 _CHUNK_DAYS = {
-    "1m": 3,       # ~390 bars/day * 3 = ~1170
-    "5m": 15,      # ~78 bars/day * 15 = ~1170
-    "15m": 45,     # ~26 bars/day * 45 = ~1170
-    "30m": 90,     # ~13 bars/day * 90 = ~1170
-    "1h": 180,     # ~7 bars/day * 180 = ~1260
-    "4h": 365,     # ~2 bars/day * 365 = ~730
+    "1m": 14,      # ~10 trading days * 390 bars = ~3,900 bars
+    "5m": 45,      # ~32 trading days * 78 bars = ~2,500 bars
+    "15m": 120,    # ~85 trading days * 26 bars = ~2,200 bars
+    "30m": 180,    # ~127 trading days * 13 bars = ~1,650 bars
+    "1h": 365,     # ~252 trading days * 7 bars = ~1,764 bars
+    "4h": 730,     # ~504 trading days * 2 bars = ~1,008 bars
 }
 
 # Maximum consecutive empty/failed chunks before giving up on a ticker

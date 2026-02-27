@@ -3,9 +3,6 @@
 Re-download all daily OHLCV data from WRDS CRSP to replace old cache files
 that have O=H=L=C (all identical prices).
 
-The WRDS provider code has already been fixed to query openprc/askhi/bidlo
-from CRSP dsf — this script re-downloads the data and replaces the cache.
-
 Usage:
     python3 run_wrds_daily_refresh.py --dry-run       # Preview without downloading
     python3 run_wrds_daily_refresh.py --skip-cleanup   # Download but keep old files
@@ -13,6 +10,7 @@ Usage:
     python3 run_wrds_daily_refresh.py                  # Full run: download + cleanup
     python3 run_wrds_daily_refresh.py --tickers AAPL,MSFT,NVDA  # Specific tickers
     python3 run_wrds_daily_refresh.py --gics           # Refresh GICS sector mapping
+    python3 run_wrds_daily_refresh.py --delisted        # Download all delisted stocks
 """
 import argparse
 import sys
@@ -30,6 +28,10 @@ from quant_engine.config import DATA_CACHE_DIR, UNIVERSE_FULL, BENCHMARK, SURVIV
 from quant_engine.data.local_cache import list_cached_tickers, load_ohlcv_with_meta, save_ohlcv
 from quant_engine.data.survivorship import DelistingHandler, DelistingEvent, DelistingReason
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _crsp_dlstcd_to_reason(dlstcd) -> DelistingReason:
     """Map CRSP delisting code to DelistingReason enum."""
@@ -53,6 +55,29 @@ def _crsp_dlstcd_to_reason(dlstcd) -> DelistingReason:
         return DelistingReason.VOLUNTARY
     return DelistingReason.UNKNOWN
 
+
+def _delisted_cache_symbol(ticker: str, permno) -> str:
+    """Build a collision-safe cache symbol for delisted securities."""
+    permno_str = str(int(permno))
+    ticker_u = str(ticker).strip().upper() if ticker else ""
+    if ticker_u:
+        return f"{ticker_u}__PERMNO{permno_str}"
+    return f"PERMNO{permno_str}"
+
+
+def _sanitize_permno_in_clause(values) -> str:
+    """Build a numeric SQL IN list for PERMNO values."""
+    clean = []
+    for v in values:
+        s = str(v).strip()
+        if s.isdigit():
+            clean.append(str(int(s)))
+    return ",".join(sorted(set(clean)))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ticker list for normal refresh
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _build_ticker_list(tickers_arg, skip_terminal=True):
     """Build the full ticker list from cached + UNIVERSE_FULL + BENCHMARK.
@@ -85,6 +110,10 @@ def _build_ticker_list(tickers_arg, skip_terminal=True):
     return active
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Verification helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
 def _verify_file(path):
     """Verify OHLCV quality for a single parquet file. Returns dict of results."""
     try:
@@ -98,7 +127,6 @@ def _verify_file(path):
 
     result = {"status": "ok", "n_bars": n}
 
-    # Check O != C ratio
     if "Open" in df.columns and "Close" in df.columns:
         o_ne_c = (df["Open"] != df["Close"]).sum()
         result["o_ne_c_ratio"] = float(o_ne_c / n)
@@ -106,30 +134,23 @@ def _verify_file(path):
     else:
         result["o_ne_c_ratio"] = 0.0
 
-    # Check High >= Low
     if "High" in df.columns and "Low" in df.columns:
-        h_ge_l = (df["High"] >= df["Low"]).all()
-        result["high_ge_low"] = bool(h_ge_l)
+        result["high_ge_low"] = bool((df["High"] >= df["Low"]).all())
     else:
         result["high_ge_low"] = None
 
-    # Check High >= max(Open, Close)
     if all(c in df.columns for c in ["High", "Open", "Close"]):
         oc_max = df[["Open", "Close"]].max(axis=1)
-        h_ge_oc = (df["High"] >= oc_max - 1e-6).all()
-        result["high_ge_max_oc"] = bool(h_ge_oc)
+        result["high_ge_max_oc"] = bool((df["High"] >= oc_max - 1e-6).all())
     else:
         result["high_ge_max_oc"] = None
 
-    # Check Low <= min(Open, Close)
     if all(c in df.columns for c in ["Low", "Open", "Close"]):
         oc_min = df[["Open", "Close"]].min(axis=1)
-        l_le_oc = (df["Low"] <= oc_min + 1e-6).all()
-        result["low_le_min_oc"] = bool(l_le_oc)
+        result["low_le_min_oc"] = bool((df["Low"] <= oc_min + 1e-6).all())
     else:
         result["low_le_min_oc"] = None
 
-    # Date range
     if hasattr(df.index, "min"):
         result["start"] = str(pd.to_datetime(df.index.min()).date())
         result["end"] = str(pd.to_datetime(df.index.max()).date())
@@ -201,10 +222,8 @@ def _cleanup_old_daily(cache_dir, downloaded_tickers):
             print(f"  Removing: {old_file.name}")
             old_file.unlink()
             removed += 1
-            # Remove corresponding meta.json
             meta = old_file.with_suffix("").with_suffix(".meta.json")
             if not meta.exists():
-                # Try alternate naming: {stem}.meta.json
                 meta = old_file.parent / f"{old_file.stem}.meta.json"
             if meta.exists():
                 print(f"  Removing: {meta.name}")
@@ -212,6 +231,10 @@ def _cleanup_old_daily(cache_dir, downloaded_tickers):
                 removed += 1
     return removed
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GICS sector refresh
+# ─────────────────────────────────────────────────────────────────────────────
 
 GICS_SECTOR_NAMES = {
     "10": "Energy",
@@ -229,28 +252,10 @@ GICS_SECTOR_NAMES = {
 
 
 def refresh_gics_sectors(provider, tickers: List[str]) -> Dict[str, str]:
-    """Query Compustat for GICS sector mapping.
-
-    Queries ``comp.security`` joined with ``comp.company`` to retrieve
-    the GICS sector code for each ticker, then maps the 2-digit code
-    to a human-readable sector name.
-
-    Parameters
-    ----------
-    provider : WRDSProvider
-        An initialised WRDS provider with an active connection.
-    tickers : list[str]
-        Tickers to look up.
-
-    Returns
-    -------
-    dict[str, str]
-        Mapping of ticker -> GICS sector name.
-    """
+    """Query Compustat for GICS sector mapping."""
     if not tickers:
         return {}
 
-    # Process in batches to avoid SQL query size limits
     batch_size = 200
     all_results: Dict[str, str] = {}
 
@@ -279,34 +284,18 @@ def refresh_gics_sectors(provider, tickers: List[str]) -> Dict[str, str]:
 
 
 def _write_gics_to_universe_yaml(sector_map: Dict[str, str], yaml_path: Path) -> None:
-    """Merge refreshed GICS sectors into universe.yaml.
-
-    Reads the existing YAML, replaces the ``sectors`` key with the new
-    mapping (grouped by sector name), and writes back. Preserves all
-    other keys (liquidity_tiers, borrowability, etc.).
-
-    Parameters
-    ----------
-    sector_map : dict[str, str]
-        Mapping of ticker -> sector name from WRDS.
-    yaml_path : Path
-        Path to ``config_data/universe.yaml``.
-    """
-    # Load existing YAML to preserve non-sector keys
+    """Merge refreshed GICS sectors into universe.yaml."""
     if yaml_path.exists():
         with open(yaml_path) as f:
             data = yaml.safe_load(f) or {}
     else:
         data = {}
 
-    # Group tickers by sector
     sectors: Dict[str, List[str]] = {}
     for ticker, sector_name in sorted(sector_map.items()):
-        # Normalize sector name to lowercase for YAML key consistency
         key = sector_name.lower().replace(" ", "_")
         sectors.setdefault(key, []).append(ticker)
 
-    # Sort tickers within each sector
     for key in sectors:
         sectors[key] = sorted(sectors[key])
 
@@ -316,36 +305,372 @@ def _write_gics_to_universe_yaml(sector_map: Dict[str, str], yaml_path: Path) ->
         yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Delisted stock discovery and download
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _discover_delisted_stocks(provider, start_date: str, end_date: str) -> pd.DataFrame:
+    """Query WRDS for all delisted common stocks on major exchanges.
+
+    Returns a DataFrame with columns: permno, ticker, dlstdt, dlret, dlstcd, comnam.
+
+    Queries crsp.dsedelist directly, filtered to:
+      - Common shares (shrcd 10, 11)
+      - Major exchanges (NYSE=1, AMEX=2, NASDAQ=3)
+      - Meaningful delisting codes (>= 200; codes 100-199 are still active)
+    """
+    sql = f"""
+        SELECT DISTINCT
+            d.permno,
+            n.ticker,
+            d.dlstdt,
+            d.dlret,
+            d.dlstcd,
+            n.comnam
+        FROM crsp.dsedelist AS d
+        JOIN crsp.msenames AS n
+          ON d.permno = n.permno
+         AND n.namedt <= d.dlstdt
+         AND (n.nameendt >= d.dlstdt OR n.nameendt IS NULL)
+         AND n.shrcd IN (10, 11)
+         AND n.exchcd IN (1, 2, 3)
+        WHERE d.dlstdt >= '{start_date}'::date
+          AND d.dlstdt <= '{end_date}'::date
+          AND d.dlstcd >= 200
+        ORDER BY d.dlstdt
+    """
+    return provider._query(sql)
+
+
+def _filter_terminal_delists(
+    provider,
+    delist_df: pd.DataFrame,
+    grace_days: int = 5,
+) -> pd.DataFrame:
+    """Keep only delistings where the PERMNO truly stops trading after dlstdt.
+
+    Rejects cases where a stock has a delisting event but continues trading
+    afterward (e.g., exchange transfers coded as delistings).
+    """
+    if delist_df.empty:
+        return delist_df
+
+    permnos = _sanitize_permno_in_clause(delist_df["permno"].tolist())
+    if not permnos:
+        return delist_df.iloc[0:0].copy()
+
+    # Query last trade date for each PERMNO in batches
+    batch_size = 800
+    permno_list = permnos.split(",")
+    frames = []
+    for i in range(0, len(permno_list), batch_size):
+        batch = ",".join(permno_list[i:i + batch_size])
+        sql = f"""
+            SELECT a.permno, MAX(a.date) AS last_trade_date
+            FROM crsp.dsf AS a
+            WHERE a.permno IN ({batch})
+            GROUP BY a.permno
+        """
+        f = provider._query(sql)
+        if not f.empty:
+            frames.append(f)
+
+    if not frames:
+        return delist_df
+
+    last_df = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["permno"], keep="last")
+    out = delist_df.copy()
+    out["dlstdt"] = pd.to_datetime(out["dlstdt"], errors="coerce")
+    last_df["last_trade_date"] = pd.to_datetime(last_df["last_trade_date"], errors="coerce")
+    out = out.merge(last_df[["permno", "last_trade_date"]], on="permno", how="left")
+
+    cutoff = out["dlstdt"] + pd.to_timedelta(int(grace_days), unit="D")
+    terminal_mask = out["last_trade_date"].isna() | (out["last_trade_date"] <= cutoff)
+    filtered = out.loc[terminal_mask].copy()
+
+    n_rejected = len(out) - len(filtered)
+    if n_rejected > 0:
+        print(f"  Filtered out {n_rejected} non-terminal delistings "
+              f"(stock kept trading after dlstdt + {grace_days}d)")
+
+    return filtered.drop(columns=["last_trade_date"], errors="ignore")
+
+
+def _run_delisted_download(args):
+    """Discover and download all historically delisted stocks from WRDS CRSP."""
+    start_date = f"{datetime.now().year - args.years}-01-01"
+    end_date = datetime.now().strftime("%Y-%m-%d")
+
+    print(f"\n── Connecting to WRDS ──")
+    try:
+        from quant_engine.data.wrds_provider import WRDSProvider
+    except ImportError as e:
+        print(f"  ERROR: Cannot import WRDSProvider: {e}")
+        sys.exit(1)
+
+    provider = WRDSProvider()
+    if not provider.available():
+        print("  ERROR: WRDS connection not available.")
+        print("  Check ~/.pgpass for WRDS credentials.")
+        sys.exit(1)
+    print("  WRDS connection established.")
+
+    # Discover delisted stocks
+    print(f"\n── Discovering delisted stocks ({start_date} → {end_date}) ──")
+    print(f"  Querying crsp.dsedelist for all delisted common stocks "
+          f"on NYSE/AMEX/NASDAQ...")
+    delist_df = _discover_delisted_stocks(provider, start_date, end_date)
+
+    if delist_df.empty:
+        print("  No delisted stocks found in WRDS.")
+        return
+
+    print(f"  Raw delisting events found: {len(delist_df)}")
+
+    # Filter to truly terminal delistings (stock stops trading)
+    print(f"  Validating terminal status (checking last trade dates)...")
+    delist_df = _filter_terminal_delists(
+        provider, delist_df, grace_days=args.terminal_grace_days,
+    )
+    if delist_df.empty:
+        print("  No terminal delisted stocks found after validation.")
+        return
+
+    # De-duplicate: one row per permno (keep the latest delisting event)
+    delist_df['dlstdt'] = pd.to_datetime(delist_df['dlstdt'])
+    delist_df = delist_df.sort_values('dlstdt').drop_duplicates(
+        subset=['permno'], keep='last',
+    )
+
+    # Filter out stocks we already have as terminal in cache
+    already_terminal = []
+    to_download = []
+    for _, row in delist_df.iterrows():
+        ticker_val = (str(row['ticker']).strip().upper()
+                      if pd.notna(row.get('ticker')) else None)
+        cache_symbol = _delisted_cache_symbol(ticker_val, row["permno"])
+        _, meta, _ = load_ohlcv_with_meta(cache_symbol)
+        if meta and (meta.get("is_terminal") is True
+                     or meta.get("is_delisted_download") is True):
+            already_terminal.append(cache_symbol)
+            continue
+        to_download.append(row)
+
+    to_download_df = pd.DataFrame(to_download)
+    print(f"  Terminal delisted stocks: {len(delist_df)}")
+    print(f"  Already in cache: {len(already_terminal)}")
+    print(f"  To download: {len(to_download_df)}")
+
+    if to_download_df.empty:
+        print("  Nothing to download — all delisted stocks already cached.")
+        return
+
+    # Show what we found (first 50)
+    show_limit = 50
+    print(f"\n  Delisted stocks to download (showing first {show_limit}):")
+    for i, (_, row) in enumerate(to_download_df.iterrows()):
+        if i >= show_limit:
+            print(f"    ... and {len(to_download_df) - show_limit} more")
+            break
+        ticker_val = str(row['ticker']).strip() if pd.notna(row.get('ticker')) else '???'
+        comnam = str(row['comnam']).strip() if pd.notna(row.get('comnam')) else ''
+        dlstdt = row['dlstdt']
+        dlstcd = int(row['dlstcd']) if pd.notna(row.get('dlstcd')) else '?'
+        dlret = float(row['dlret']) if pd.notna(row.get('dlret')) else 0.0
+        reason = _crsp_dlstcd_to_reason(dlstcd)
+        print(f"    {ticker_val:<8s} permno={int(row['permno']):>6d}  "
+              f"delisted={str(dlstdt.date()):>10s}  dlret={dlret:+.4f}  "
+              f"reason={reason.value:<20s} {comnam}")
+
+    if args.dry_run:
+        print(f"\n  DRY RUN — would download {len(to_download_df)} delisted stocks.")
+        return
+
+    # Download prices by PERMNO (tickers get recycled, permnos are permanent)
+    delist_handler = DelistingHandler(db_path=str(SURVIVORSHIP_DB))
+    batch_size = args.batch_size
+    t0 = time.time()
+
+    downloaded = []
+    failed = []
+    not_found = []
+    delisted_recorded = []
+
+    # Build permno -> row mapping
+    permno_to_row = {}
+    for _, row in to_download_df.iterrows():
+        permno_to_row[str(int(row['permno']))] = row
+
+    permno_list = list(permno_to_row.keys())
+
+    print(f"\n── Downloading {len(permno_list)} delisted stocks by PERMNO ──")
+
+    for batch_start in range(0, len(permno_list), batch_size):
+        batch = permno_list[batch_start:batch_start + batch_size]
+        batch_num = batch_start // batch_size + 1
+        total_batches = (len(permno_list) + batch_size - 1) // batch_size
+        print(f"\n  Batch {batch_num}/{total_batches}: {len(batch)} permnos")
+
+        try:
+            result = provider.get_crsp_prices_with_delistings(
+                batch, start_date=start_date, end_date=end_date,
+            )
+        except (OSError, ValueError, RuntimeError) as e:
+            print(f"    Batch failed ({type(e).__name__}: {e}), retrying individually...")
+            result = {}
+            for p in batch:
+                try:
+                    sub_result = provider.get_crsp_prices_with_delistings(
+                        [p], start_date=start_date, end_date=end_date,
+                    )
+                    result.update(sub_result)
+                except (OSError, ValueError, RuntimeError) as e2:
+                    row_info = permno_to_row.get(p, {})
+                    ticker_val = (str(row_info.get('ticker', p)).strip()
+                                  if hasattr(row_info, 'get') else p)
+                    print(f"    permno {p} ({ticker_val}): failed — {e2}")
+                    failed.append((ticker_val, str(e2)))
+
+        # Process results
+        for permno_key, df in result.items():
+            if len(df) == 0:
+                continue
+
+            # Get ticker from the discovery query (authoritative)
+            row_info = permno_to_row.get(permno_key)
+            if row_info is not None:
+                ticker_val = (str(row_info['ticker']).strip().upper()
+                              if pd.notna(row_info.get('ticker')) else None)
+            else:
+                ticker_val = None
+
+            # Fallback: get ticker from the price data itself
+            if not ticker_val and "ticker" in df.columns:
+                ticker_val = (str(df["ticker"].dropna().iloc[-1]).strip().upper()
+                              if df["ticker"].notna().any() else None)
+
+            cache_symbol = _delisted_cache_symbol(ticker_val, permno_key)
+
+            o_ne_c = ((df["Open"] != df["Close"]).sum()
+                       if "Open" in df.columns and "Close" in df.columns else 0)
+            pct = 100.0 * o_ne_c / len(df) if len(df) > 0 else 0
+            start = str(pd.to_datetime(df.index.min()).date()) if len(df) > 0 else "?"
+            end = str(pd.to_datetime(df.index.max()).date()) if len(df) > 0 else "?"
+
+            try:
+                save_ohlcv(
+                    cache_symbol, df,
+                    source="wrds_delisting",
+                    meta={"permno": permno_key, "ticker": ticker_val,
+                          "cache_symbol": cache_symbol,
+                          "years_requested": args.years,
+                          "is_delisted_download": True,
+                          "is_terminal": True},
+                )
+                downloaded.append(cache_symbol)
+                ticker_print = ticker_val or "N/A"
+                print(f"    {cache_symbol}: {len(df)} bars, "
+                      f"{start} → {end}, O!=C {pct:.0f}%")
+
+                # Record delisting event
+                if row_info is not None:
+                    dlret_val = (float(row_info['dlret'])
+                                 if pd.notna(row_info.get('dlret')) else 0.0)
+                    dlstcd_val = (int(row_info['dlstcd'])
+                                  if pd.notna(row_info.get('dlstcd')) else None)
+                    last_price = (float(df["Close"].iloc[-1])
+                                  if "Close" in df.columns and len(df) > 0 else 0.0)
+                    delist_date = (row_info['dlstdt'].date()
+                                   if hasattr(row_info['dlstdt'], 'date')
+                                   else row_info['dlstdt'])
+                    reason = _crsp_dlstcd_to_reason(dlstcd_val)
+                    meta_dict = {"permno": permno_key}
+                    if dlstcd_val is not None:
+                        meta_dict["dlstcd"] = dlstcd_val
+                    if ticker_val:
+                        meta_dict["ticker"] = ticker_val
+                    event = DelistingEvent(
+                        symbol=cache_symbol,
+                        delisting_date=delist_date,
+                        reason=reason,
+                        last_price=last_price,
+                        delisting_return=dlret_val,
+                        metadata=meta_dict,
+                    )
+                    delist_handler.record_delisting(event)
+                    delist_handler.preserve_price_history(cache_symbol, df)
+                    delisted_recorded.append(cache_symbol)
+                    print(f"      ↳ DELISTED {delist_date} dlret={dlret_val:+.4f} "
+                          f"reason={reason.value} dlstcd={dlstcd_val}")
+
+            except (ValueError, OSError, RuntimeError) as e:
+                fail_key = ticker_val or cache_symbol
+                print(f"    {fail_key}: save failed — {e}")
+                failed.append((fail_key, str(e)))
+
+    elapsed = time.time() - t0
+
+    # Summary
+    print(f"\n{'='*60}")
+    print(f"DELISTED DOWNLOAD SUMMARY")
+    print(f"{'='*60}")
+    print(f"  Delisted stocks discovered: {len(delist_df)}")
+    print(f"  Already terminal in cache: {len(already_terminal)}")
+    print(f"  Download attempted: {len(to_download_df)}")
+    print(f"  Successfully downloaded: {len(downloaded)}")
+    if downloaded:
+        print(f"    {', '.join(downloaded[:20])}{'...' if len(downloaded) > 20 else ''}")
+    print(f"  Not found / no data: {len(not_found)}")
+    if not_found:
+        print(f"    {', '.join(str(x) for x in not_found)}")
+    print(f"  Failed: {len(failed)}")
+    if failed:
+        for t, err in failed[:10]:
+            print(f"    {t}: {err}")
+        if len(failed) > 10:
+            print(f"    ... and {len(failed) - 10} more")
+    print(f"  Delisting events recorded: {len(delisted_recorded)}")
+    print(f"  Elapsed: {elapsed:.1f}s")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main: normal refresh workflow
+# ─────────────────────────────────────────────────────────────────────────────
+
 def main():
-    """Run the WRDS daily refresh workflow and emit a summary of refreshed datasets and outputs."""
+    """Run the WRDS daily refresh workflow."""
     parser = argparse.ArgumentParser(
-        description="Re-download daily OHLCV from WRDS CRSP to fix O=H=L=C cache files",
+        description="Re-download daily OHLCV from WRDS CRSP",
     )
     parser.add_argument("--dry-run", action="store_true",
-                        help="Preview what would be downloaded without downloading")
+                        help="Preview what would be downloaded")
     parser.add_argument("--skip-cleanup", action="store_true",
                         help="Download new files but keep old _daily_ files")
     parser.add_argument("--tickers", type=str, default=None,
-                        help="Comma-separated ticker list (default: all ~183)")
+                        help="Comma-separated ticker list (default: all)")
     parser.add_argument("--years", type=int, default=20,
                         help="Lookback years (default: 20)")
     parser.add_argument("--batch-size", type=int, default=50,
                         help="Tickers per WRDS query (default: 50)")
     parser.add_argument("--verify-only", action="store_true",
-                        help="Only run verification on existing _1d.parquet files")
+                        help="Only verify existing _1d.parquet files")
     parser.add_argument("--gics", action="store_true",
-                        help="Refresh GICS sector mapping from WRDS Compustat and write to config_data/universe.yaml")
+                        help="Refresh GICS sector mapping from WRDS Compustat")
     parser.add_argument("--include-terminal", action="store_true",
-                        help="Include delisted/terminal tickers in refresh (normally skipped as immutable)")
+                        help="Include delisted/terminal tickers in refresh")
     parser.add_argument("--backfill-terminal", action="store_true",
-                        help="Scan cache and mark delisted stocks as terminal (one-time migration)")
+                        help="Scan cache and mark delisted stocks as terminal")
+    parser.add_argument("--delisted", action="store_true",
+                        help="Discover and download ALL delisted stocks from WRDS CRSP")
+    parser.add_argument("--terminal-grace-days", type=int, default=5,
+                        help="Grace days for terminal filter (default: 5)")
     args = parser.parse_args()
 
     print(f"\n{'='*60}")
     print(f"WRDS DAILY DATA RE-DOWNLOAD")
     print(f"{'='*60}")
 
-    # Handle --backfill-terminal before building the ticker list
+    # Handle --backfill-terminal
     if args.backfill_terminal:
         print(f"\n── Backfill Terminal Metadata ──")
         from quant_engine.data.local_cache import backfill_terminal_metadata
@@ -355,6 +680,11 @@ def main():
         print(f"  Already terminal: {result['already_terminal']}")
         print(f"  Active (no delist): {result['active']}")
         print(f"  Errors: {result['errors']}")
+        return
+
+    # Handle --delisted
+    if args.delisted:
+        _run_delisted_download(args)
         return
 
     tickers = _build_ticker_list(args.tickers, skip_terminal=not args.include_terminal)
@@ -377,7 +707,6 @@ def main():
         provider = WRDSProvider()
         if not provider.available():
             print("  ERROR: WRDS connection not available.")
-            print("  Check ~/.pgpass for WRDS credentials.")
             sys.exit(1)
 
         print(f"  Querying Compustat for GICS sector codes...")
@@ -389,7 +718,6 @@ def main():
             _write_gics_to_universe_yaml(sector_map, yaml_path)
             print(f"  Updated {yaml_path}")
 
-            # Print sector summary
             sector_counts: Dict[str, int] = {}
             for sector_name in sector_map.values():
                 sector_counts[sector_name] = sector_counts.get(sector_name, 0) + 1
@@ -408,7 +736,6 @@ def main():
         print(f"  Output: {{TICKER}}_1d.parquet + .meta.json in {DATA_CACHE_DIR}")
         print(f"\n  Tickers: {', '.join(tickers[:20])}{'...' if len(tickers) > 20 else ''}")
         if not args.skip_cleanup:
-            # Count old files that would be removed
             old_count = sum(1 for _ in DATA_CACHE_DIR.glob("*_daily_*.parquet"))
             print(f"\n  Old _daily_ files that would be removed: {old_count}")
         return
@@ -428,7 +755,7 @@ def main():
         sys.exit(1)
     print("  WRDS connection established.")
 
-    # Initialize DelistingHandler for persisting delisting events
+    # Initialize DelistingHandler
     delist_handler = DelistingHandler(db_path=str(SURVIVORSHIP_DB))
 
     # Download in batches
@@ -456,8 +783,7 @@ def main():
                 batch, start_date=start_date, end_date=end_date,
             )
         except (OSError, ValueError, RuntimeError) as e:
-            print(f"    Batch failed ({type(e).__name__}: {e}), retrying with half batch size...")
-            # Retry with smaller batches
+            print(f"    Batch failed ({type(e).__name__}: {e}), retrying...")
             result = {}
             for sub_start in range(0, len(batch), retry_batch_size):
                 sub_batch = batch[sub_start:sub_start + retry_batch_size]
@@ -467,12 +793,10 @@ def main():
                     )
                     result.update(sub_result)
                 except (OSError, ValueError, RuntimeError) as e2:
-                    print(f"    Sub-batch also failed ({type(e2).__name__}: {e2}), skipping.")
                     for t in sub_batch:
                         failed.append((t, str(e2)))
 
         # Map permno results back to tickers
-        # Build ticker -> best permno result mapping
         ticker_results = {}
         for permno_key, df in result.items():
             if len(df) == 0:
@@ -483,11 +807,10 @@ def main():
                 ticker_val = None
 
             if ticker_val and ticker_val in [t.upper() for t in batch]:
-                # If multiple permnos map to same ticker, keep the longest
-                if ticker_val not in ticker_results or len(df) > len(ticker_results[ticker_val][1]):
+                if (ticker_val not in ticker_results
+                        or len(df) > len(ticker_results[ticker_val][1])):
                     ticker_results[ticker_val] = (permno_key, df)
 
-        # Track which tickers in this batch were found
         found_tickers = set(ticker_results.keys())
         for t in batch:
             if t.upper() not in found_tickers:
@@ -495,7 +818,8 @@ def main():
 
         # Save each ticker's data
         for ticker_val, (permno_key, df) in ticker_results.items():
-            o_ne_c = (df["Open"] != df["Close"]).sum() if "Open" in df.columns and "Close" in df.columns else 0
+            o_ne_c = ((df["Open"] != df["Close"]).sum()
+                       if "Open" in df.columns and "Close" in df.columns else 0)
             pct = 100.0 * o_ne_c / len(df) if len(df) > 0 else 0
             start = str(pd.to_datetime(df.index.min()).date()) if len(df) > 0 else "?"
             end = str(pd.to_datetime(df.index.max()).date()) if len(df) > 0 else "?"
@@ -511,9 +835,11 @@ def main():
                 print(f"    {ticker_val} (permno={permno_key}): {len(df)} bars, "
                       f"{start} → {end}, O!=C on {pct:.1f}% of rows")
 
-                # Persist delisting event to DelistingHandler DB
+                # Persist delisting event
                 if "delist_event" in df.columns:
-                    delist_col = pd.to_numeric(df["delist_event"], errors="coerce").fillna(0)
+                    delist_col = pd.to_numeric(
+                        df["delist_event"], errors="coerce",
+                    ).fillna(0)
                     if int(delist_col.max()) == 1:
                         delist_rows = df[delist_col == 1]
                         delist_idx = delist_rows.index.max()
@@ -539,8 +865,9 @@ def main():
                         delist_handler.record_delisting(event)
                         delist_handler.preserve_price_history(ticker_val, df)
                         delisted_recorded.append(ticker_val)
-                        print(f"      ↳ DELISTED on {delist_date} (dlret={dlret_val:.4f}, "
-                              f"reason={reason.value}, dlstcd={dlstcd_val})")
+                        print(f"      ↳ DELISTED on {delist_date} "
+                              f"(dlret={dlret_val:.4f}, reason={reason.value}, "
+                              f"dlstcd={dlstcd_val})")
             except ValueError as e:
                 print(f"    {ticker_val}: save_ohlcv failed — {e}")
                 failed.append((ticker_val, str(e)))
