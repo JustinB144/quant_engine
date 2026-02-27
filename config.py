@@ -821,4 +821,191 @@ def validate_config() -> list:
             ),
         })
 
+    # ── SPEC-A02: Config validation completeness ────────────────────
+
+    # 7. Ensemble weights must sum to 1.0
+    weights = REGIME_ENSEMBLE_DEFAULT_WEIGHTS
+    weight_sum = sum(weights.values())
+    if abs(weight_sum - 1.0) >= 1e-6:
+        issues.append({
+            "level": "ERROR",
+            "message": (
+                f"REGIME_ENSEMBLE_DEFAULT_WEIGHTS sum to {weight_sum:.6f}, "
+                "expected 1.0. Adjust weights so they sum to exactly 1.0."
+            ),
+        })
+
+    # 8. No negative cost multipliers
+    if TRANSACTION_COST_BPS < 0:
+        issues.append({
+            "level": "ERROR",
+            "message": (
+                f"TRANSACTION_COST_BPS={TRANSACTION_COST_BPS} is negative. "
+                "Transaction costs must be >= 0."
+            ),
+        })
+    if EXEC_SPREAD_BPS < 0:
+        issues.append({
+            "level": "ERROR",
+            "message": (
+                f"EXEC_SPREAD_BPS={EXEC_SPREAD_BPS} is negative. "
+                "Spread costs must be >= 0."
+            ),
+        })
+    if EXEC_IMPACT_COEFF_BPS < 0:
+        issues.append({
+            "level": "ERROR",
+            "message": (
+                f"EXEC_IMPACT_COEFF_BPS={EXEC_IMPACT_COEFF_BPS} is negative. "
+                "Market impact coefficient must be >= 0."
+            ),
+        })
+
+    # 9. Regime uncertainty entropy threshold in valid range
+    if not (0 < REGIME_UNCERTAINTY_ENTROPY_THRESHOLD < 2.0):
+        issues.append({
+            "level": "ERROR",
+            "message": (
+                f"REGIME_UNCERTAINTY_ENTROPY_THRESHOLD={REGIME_UNCERTAINTY_ENTROPY_THRESHOLD} "
+                "is out of range. Must be in (0, 2.0) for normalized entropy."
+            ),
+        })
+
+    # 10. Label horizon must be a positive integer
+    if not isinstance(LABEL_H, int) or LABEL_H <= 0:
+        issues.append({
+            "level": "ERROR",
+            "message": (
+                f"LABEL_H={LABEL_H} is invalid. "
+                "Label horizon must be a positive integer."
+            ),
+        })
+
+    # 11. Forward horizons must all be positive
+    if not FORWARD_HORIZONS or not all(
+        isinstance(h, int) and h > 0 for h in FORWARD_HORIZONS
+    ):
+        issues.append({
+            "level": "ERROR",
+            "message": (
+                f"FORWARD_HORIZONS={FORWARD_HORIZONS} is invalid. "
+                "Must be a non-empty list of positive integers."
+            ),
+        })
+
+    # 12. Blend weights (static) must sum to 1.0
+    blend_sum = sum(BLEND_WEIGHTS_STATIC.values())
+    if abs(blend_sum - 1.0) >= 1e-6:
+        issues.append({
+            "level": "ERROR",
+            "message": (
+                f"BLEND_WEIGHTS_STATIC values sum to {blend_sum:.6f}, "
+                "expected 1.0."
+            ),
+        })
+
+    # 13. Blend weights (per-regime) must each sum to 1.0
+    for regime_label, regime_weights in BLEND_WEIGHTS_BY_REGIME.items():
+        rw_sum = sum(regime_weights.values())
+        if abs(rw_sum - 1.0) >= 1e-6:
+            issues.append({
+                "level": "ERROR",
+                "message": (
+                    f"BLEND_WEIGHTS_BY_REGIME['{regime_label}'] values sum to "
+                    f"{rw_sum:.6f}, expected 1.0."
+                ),
+            })
+
+    # 14. Kelly fraction must be in (0, 1]
+    if not (0 < KELLY_FRACTION <= 1.0):
+        issues.append({
+            "level": "ERROR",
+            "message": (
+                f"KELLY_FRACTION={KELLY_FRACTION} is out of range. "
+                "Must be in (0, 1.0]."
+            ),
+        })
+
+    # 15. Drawdown thresholds must be negative and ordered correctly
+    dd_thresholds = [
+        DRAWDOWN_WARNING_THRESHOLD,
+        DRAWDOWN_CAUTION_THRESHOLD,
+        DRAWDOWN_CRITICAL_THRESHOLD,
+    ]
+    if not all(t < 0 for t in dd_thresholds):
+        issues.append({
+            "level": "ERROR",
+            "message": (
+                "Drawdown thresholds must all be negative. Got: "
+                f"WARNING={DRAWDOWN_WARNING_THRESHOLD}, "
+                f"CAUTION={DRAWDOWN_CAUTION_THRESHOLD}, "
+                f"CRITICAL={DRAWDOWN_CRITICAL_THRESHOLD}."
+            ),
+        })
+    elif not (
+        DRAWDOWN_WARNING_THRESHOLD
+        > DRAWDOWN_CAUTION_THRESHOLD
+        > DRAWDOWN_CRITICAL_THRESHOLD
+    ):
+        issues.append({
+            "level": "ERROR",
+            "message": (
+                "Drawdown thresholds must be ordered: WARNING > CAUTION > CRITICAL. Got: "
+                f"WARNING={DRAWDOWN_WARNING_THRESHOLD}, "
+                f"CAUTION={DRAWDOWN_CAUTION_THRESHOLD}, "
+                f"CRITICAL={DRAWDOWN_CRITICAL_THRESHOLD}."
+            ),
+        })
+
+    # 16. Position sizing percentage must be positive and <= 1.0
+    if not (0 < POSITION_SIZE_PCT <= 1.0):
+        issues.append({
+            "level": "ERROR",
+            "message": (
+                f"POSITION_SIZE_PCT={POSITION_SIZE_PCT} is out of range. "
+                "Must be in (0, 1.0]."
+            ),
+        })
+
+    # 17. MAX_POSITIONS must be a positive integer
+    if not isinstance(MAX_POSITIONS, int) or MAX_POSITIONS <= 0:
+        issues.append({
+            "level": "ERROR",
+            "message": (
+                f"MAX_POSITIONS={MAX_POSITIONS} is invalid. "
+                "Must be a positive integer."
+            ),
+        })
+
+    # 18. Confidence threshold must be in [0, 1]
+    if not (0 <= CONFIDENCE_THRESHOLD <= 1.0):
+        issues.append({
+            "level": "ERROR",
+            "message": (
+                f"CONFIDENCE_THRESHOLD={CONFIDENCE_THRESHOLD} is out of range. "
+                "Must be in [0, 1.0]."
+            ),
+        })
+
+    # 19. MAX_PORTFOLIO_VOL must be positive
+    if MAX_PORTFOLIO_VOL <= 0:
+        issues.append({
+            "level": "ERROR",
+            "message": (
+                f"MAX_PORTFOLIO_VOL={MAX_PORTFOLIO_VOL} is invalid. "
+                "Must be positive."
+            ),
+        })
+
+    # 20. Regime risk multipliers must all be positive
+    for regime_id, mult in REGIME_RISK_MULTIPLIER.items():
+        if mult < 0:
+            issues.append({
+                "level": "ERROR",
+                "message": (
+                    f"REGIME_RISK_MULTIPLIER[{regime_id}]={mult} is negative. "
+                    "Risk multipliers must be >= 0."
+                ),
+            })
+
     return issues
