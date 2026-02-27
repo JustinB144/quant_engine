@@ -7,6 +7,7 @@ from .provider_registry import get_provider, list_providers, register_provider
 from .quality import (
     DataQualityReport,
     assess_ohlcv_quality,
+    check_ohlc_relationships,
     generate_quality_report,
     flag_degraded_stocks,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "register_provider",
     "DataQualityReport",
     "assess_ohlcv_quality",
+    "check_ohlc_relationships",
     "generate_quality_report",
     "flag_degraded_stocks",
     "FeatureStore",

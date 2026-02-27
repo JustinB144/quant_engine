@@ -1243,7 +1243,7 @@ if capacity_result.stress_capacity < PROMOTION_MIN_STRESS_CAPACITY:
 
 # PHASE 5: DATA & FEATURE INTEGRITY
 
-## SPEC-D01: Add OHLC relationship validation [HIGH]
+## SPEC-D01: Add OHLC relationship validation [HIGH] ✅ COMPLETE
 
 **STATUS**: `data/quality.py` daily quality checks do NOT verify High >= max(Open, Close), Low <= min(Open, Close), High >= Low.
 

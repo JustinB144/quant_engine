@@ -43,9 +43,13 @@ def synthetic_ohlcv_data():
         dates = pd.bdate_range("2022-01-03", periods=n)
         close = 100.0 + np.cumsum(rng.normal(0.0005, 0.02, n))
         close = np.maximum(close, 1.0)
-        high = close * (1 + rng.uniform(0, 0.02, n))
-        low = close * (1 - rng.uniform(0, 0.02, n))
         opn = close * (1 + rng.normal(0, 0.005, n))
+        opn = np.maximum(opn, 1.0)
+        # Ensure High >= max(Open, Close) and Low <= min(Open, Close)
+        bar_max = np.maximum(opn, close)
+        bar_min = np.minimum(opn, close)
+        high = bar_max * (1 + rng.uniform(0, 0.02, n))
+        low = bar_min * (1 - rng.uniform(0, 0.02, n))
         vol = rng.integers(100_000, 10_000_000, n).astype(float)
         df = pd.DataFrame(
             {"Open": opn, "High": high, "Low": low, "Close": close, "Volume": vol},

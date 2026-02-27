@@ -29,6 +29,66 @@ from ..config import (
 )
 
 
+def _ohlc_violation_counts(df: pd.DataFrame) -> Dict[str, int]:
+    """Return per-category OHLC violation counts.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        OHLCV DataFrame with columns ``Open``, ``High``, ``Low``, ``Close``.
+
+    Returns
+    -------
+    dict[str, int]
+        Keys: ``bad_high``, ``bad_low``, ``bad_hl`` with integer counts.
+        All zeros if the DataFrame is empty or missing required columns.
+    """
+    empty = {"bad_high": 0, "bad_low": 0, "bad_hl": 0}
+    if df is None or len(df) == 0:
+        return empty
+
+    required = {"Open", "High", "Low", "Close"}
+    if not required.issubset(df.columns):
+        return empty
+
+    o = df["Open"].astype(float)
+    h = df["High"].astype(float)
+    l = df["Low"].astype(float)
+    c = df["Close"].astype(float)
+
+    return {
+        "bad_high": int((h < pd.concat([o, c], axis=1).max(axis=1)).sum()),
+        "bad_low": int((l > pd.concat([o, c], axis=1).min(axis=1)).sum()),
+        "bad_hl": int((h < l).sum()),
+    }
+
+
+def check_ohlc_relationships(df: pd.DataFrame) -> List[str]:
+    """Check OHLC bar integrity: High >= max(Open, Close), Low <= min(Open, Close), High >= Low.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        OHLCV DataFrame with columns ``Open``, ``High``, ``Low``, ``Close``.
+
+    Returns
+    -------
+    list[str]
+        Human-readable violation descriptions (empty if all bars are valid).
+    """
+    counts = _ohlc_violation_counts(df)
+    violations: List[str] = []
+
+    if counts["bad_high"] > 0:
+        violations.append(f"{counts['bad_high']} bars where High < max(Open, Close)")
+    if counts["bad_low"] > 0:
+        violations.append(f"{counts['bad_low']} bars where Low > min(Open, Close)")
+    if counts["bad_hl"] > 0:
+        violations.append(f"{counts['bad_hl']} bars where High < Low")
+
+    return violations
+
+
 def _expected_trading_days(start: pd.Timestamp, end: pd.Timestamp) -> pd.DatetimeIndex:
     """Return expected trading days between *start* and *end* (inclusive).
 
@@ -118,12 +178,32 @@ def assess_ohlcv_quality(
     if non_monotonic > 0:
         warnings.append("non_monotonic_index")
 
+    # OHLC relationship checks
+    ohlc_counts = _ohlc_violation_counts(df)
+    ohlc_bad_high = ohlc_counts["bad_high"]
+    ohlc_bad_low = ohlc_counts["bad_low"]
+    ohlc_bad_hl = ohlc_counts["bad_hl"]
+    ohlc_total = ohlc_bad_high + ohlc_bad_low + ohlc_bad_hl
+    if ohlc_total > 0:
+        parts: List[str] = []
+        if ohlc_bad_high > 0:
+            parts.append(f"{ohlc_bad_high} bars where High < max(Open, Close)")
+        if ohlc_bad_low > 0:
+            parts.append(f"{ohlc_bad_low} bars where Low > min(Open, Close)")
+        if ohlc_bad_hl > 0:
+            parts.append(f"{ohlc_bad_hl} bars where High < Low")
+        warnings.append(f"ohlc_violations: {'; '.join(parts)}")
+
     metrics = {
         "missing_bar_fraction": float(missing_frac),
         "zero_volume_fraction": float(zero_vol_frac),
         "max_abs_daily_return": float(max_abs_ret),
         "duplicate_timestamps": float(dup_idx),
         "non_monotonic_steps": float(non_monotonic),
+        "ohlc_violation_count": float(ohlc_total),
+        "ohlc_high_violations": float(ohlc_bad_high),
+        "ohlc_low_violations": float(ohlc_bad_low),
+        "ohlc_hl_violations": float(ohlc_bad_hl),
     }
     report = DataQualityReport(passed=len(warnings) == 0, metrics=metrics, warnings=warnings)
 
@@ -142,10 +222,11 @@ def assess_ohlcv_quality(
 # Default weights for the composite quality score.  Each weight
 # corresponds to a penalty source; higher weight = more impact on score.
 _DEFAULT_QUALITY_WEIGHTS: Dict[str, float] = {
-    "missing_bar_fraction": 0.35,
-    "zero_volume_fraction": 0.25,
-    "extreme_return_fraction": 0.20,
-    "duplicate_fraction": 0.20,
+    "missing_bar_fraction": 0.30,
+    "zero_volume_fraction": 0.20,
+    "extreme_return_fraction": 0.15,
+    "duplicate_fraction": 0.15,
+    "ohlc_violation_fraction": 0.20,
 }
 
 # Threshold below which a stock is considered degraded.
@@ -183,7 +264,7 @@ def generate_quality_report(
         Indexed by ticker with columns:
         ``missing_bar_fraction``, ``zero_volume_fraction``,
         ``extreme_return_count``, ``duplicate_count``,
-        ``quality_score``, ``degraded``.
+        ``ohlc_violation_count``, ``quality_score``, ``degraded``.
     """
     weights = quality_weights or _DEFAULT_QUALITY_WEIGHTS
 
@@ -196,6 +277,7 @@ def generate_quality_report(
                 "zero_volume_fraction": 1.0,
                 "extreme_return_count": 0,
                 "duplicate_count": 0,
+                "ohlc_violation_count": 0,
                 "quality_score": 0.0,
                 "degraded": True,
             })
@@ -223,16 +305,22 @@ def generate_quality_report(
         # --- Duplicate count ---
         dup_count = int(idx.duplicated().sum())
 
+        # --- OHLC relationship violations ---
+        ohlc_counts = _ohlc_violation_counts(df)
+        ohlc_violation_count = sum(ohlc_counts.values())
+
         # --- Composite quality score (0 = worst, 1 = best) ---
         # Each component is expressed as a penalty fraction in [0, 1].
         extreme_frac = extreme_count / max(1, n_rows)
         dup_frac = dup_count / max(1, n_rows)
+        ohlc_frac = ohlc_violation_count / max(1, n_rows)
 
         penalties = {
             "missing_bar_fraction": float(np.clip(missing_frac, 0.0, 1.0)),
             "zero_volume_fraction": float(np.clip(zero_vol_frac, 0.0, 1.0)),
             "extreme_return_fraction": float(np.clip(extreme_frac, 0.0, 1.0)),
             "duplicate_fraction": float(np.clip(dup_frac, 0.0, 1.0)),
+            "ohlc_violation_fraction": float(np.clip(ohlc_frac, 0.0, 1.0)),
         }
 
         weighted_penalty = sum(
@@ -250,6 +338,7 @@ def generate_quality_report(
             "zero_volume_fraction": float(zero_vol_frac),
             "extreme_return_count": extreme_count,
             "duplicate_count": dup_count,
+            "ohlc_violation_count": ohlc_violation_count,
             "quality_score": quality_score,
             "degraded": quality_score < degraded_threshold,
         })
