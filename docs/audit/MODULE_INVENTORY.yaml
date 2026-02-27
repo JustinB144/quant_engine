@@ -1,0 +1,2568 @@
+# MODULE_INVENTORY.yaml
+# Generated: 2026-02-27
+# Job 1 of 7 — LLM Audit Workflow
+# Complete inventory of every Python package and root-level file in quant_engine.
+
+###############################################################################
+# 1. data/
+###############################################################################
+- module: data
+  path: data/
+  purpose: >
+    Self-contained data loading, caching, quality assessment, and survivorship
+    bias controls. Provides a provider abstraction over WRDS, IBKR, Alpaca,
+    and Alpha Vantage data sources with atomic cache writes, point-in-time
+    feature storage, intraday quality gating, and cross-source validation.
+  file_count: 15
+  total_lines: 8617
+  files:
+    - path: data/__init__.py
+      lines: 34
+      role: >
+        Package namespace exporting loader, cache, provider registry, quality,
+        and feature store public APIs.
+    - path: data/loader.py
+      lines: 849
+      role: >
+        Data loader with multi-source priority (trusted cache, WRDS CRSP,
+        fallback cache), survivorship-safe universe loading, and delisting
+        event handling.
+    - path: data/local_cache.py
+      lines: 841
+      role: >
+        Local parquet/CSV cache with atomic temp-file writes, metadata
+        sidecars, intraday loading, and cache rehydration utilities.
+    - path: data/wrds_provider.py
+      lines: 1620
+      role: >
+        WRDS data provider giving access to CRSP daily prices, S&P 500
+        membership, Compustat fundamentals, I/B/E/S estimates, and TFN
+        institutional ownership via thread-safe PostgreSQL connection.
+    - path: data/quality.py
+      lines: 385
+      role: >
+        Per-bar OHLCV quality assessment, aggregate dashboard reporting,
+        and degraded stock flagging using NYSE trading calendar for
+        accurate gap detection.
+    - path: data/feature_store.py
+      lines: 341
+      role: >
+        Point-in-time feature store for backtest acceleration with parquet
+        persistence, temporal metadata, and look-ahead bias prevention.
+    - path: data/alternative.py
+      lines: 902
+      role: >
+        WRDS-backed alternative data framework providing earnings surprises,
+        short interest, options flow, insider transactions, and institutional
+        ownership with graceful fallback when WRDS is unavailable.
+    - path: data/survivorship.py
+      lines: 945
+      role: >
+        Survivorship bias controls tracking historical universe membership,
+        delisting events, dead company data, and point-in-time index
+        reconstruction to prevent backtesting on survivors only.
+    - path: data/intraday_quality.py
+      lines: 1110
+      role: >
+        Comprehensive 13-point quality gate for intraday OHLCV data with
+        7 hard rejection checks, 3 soft flag checks, 3 series-level checks,
+        quarantine system, and quality reporting.
+    - path: data/cross_source_validator.py
+      lines: 731
+      role: >
+        Cross-source validation comparing Alpaca/Alpha Vantage data against
+        IBKR ground truth, quarantining tickers that fail validation.
+    - path: data/provider_base.py
+      lines: 14
+      role: >
+        Protocol class defining the minimal interface for pluggable data
+        provider connectors.
+    - path: data/provider_registry.py
+      lines: 53
+      role: >
+        Provider registry for unified access to WRDS, Kalshi, and other
+        data providers by name, with factory registration support.
+    - path: data/providers/__init__.py
+      lines: 18
+      role: >
+        Intraday data provider sub-package exporting AlpacaProvider and
+        AlphaVantageProvider.
+    - path: data/providers/alpaca_provider.py
+      lines: 360
+      role: >
+        Alpaca Markets intraday data provider with chunked downloading,
+        SIP consolidated feed, split/dividend adjustment, and exponential
+        backoff rate limiting (200 req/min free tier).
+    - path: data/providers/alpha_vantage_provider.py
+      lines: 414
+      role: >
+        Alpha Vantage intraday data provider with month-by-month deep
+        historical fetch (20+ years), paid tier rate limiting (75 req/min),
+        and column normalization.
+  public_interface:
+    classes:
+      - name: DataQualityReport
+        defined_in: data/quality.py
+        exported: true
+        description: Dataclass holding per-ticker quality metrics for dashboard reporting.
+      - name: FeatureStore
+        defined_in: data/feature_store.py
+        exported: true
+        description: Point-in-time feature store with parquet persistence and temporal metadata.
+      - name: WRDSProvider
+        defined_in: data/wrds_provider.py
+        exported: false
+        description: WRDS data provider with CRSP, Compustat, I/B/E/S, and TFN support.
+      - name: WRDSUnavailableError
+        defined_in: data/alternative.py
+        exported: false
+        description: Exception raised when WRDS connection is required but unavailable.
+      - name: AlternativeDataProvider
+        defined_in: data/alternative.py
+        exported: false
+        description: WRDS-backed alternative data provider for earnings, short interest, options flow.
+      - name: DataProvider
+        defined_in: data/provider_base.py
+        exported: false
+        description: Protocol class defining the minimal provider interface.
+      - name: AlpacaProvider
+        defined_in: data/providers/alpaca_provider.py
+        exported: true
+        description: Alpaca Markets intraday data provider with chunked downloading.
+      - name: AlphaVantageProvider
+        defined_in: data/providers/alpha_vantage_provider.py
+        exported: true
+        description: Alpha Vantage intraday data provider with month-by-month fetch.
+      - name: DelistingReason
+        defined_in: data/survivorship.py
+        exported: false
+        description: Enum for delisting reasons (acquired, bankruptcy, etc.).
+      - name: UniverseHistoryTracker
+        defined_in: data/survivorship.py
+        exported: false
+        description: Tracks historical universe membership for survivorship controls.
+      - name: DelistingHandler
+        defined_in: data/survivorship.py
+        exported: false
+        description: Handles delisting events and total return adjustments.
+      - name: SurvivorshipBiasController
+        defined_in: data/survivorship.py
+        exported: false
+        description: Main controller orchestrating survivorship bias prevention.
+      - name: CheckResult
+        defined_in: data/intraday_quality.py
+        exported: false
+        description: Dataclass for a single intraday quality check result.
+      - name: IntradayQualityReport
+        defined_in: data/intraday_quality.py
+        exported: false
+        description: Complete intraday quality assessment dataclass.
+      - name: CrossSourceValidator
+        defined_in: data/cross_source_validator.py
+        exported: false
+        description: Validator comparing Alpaca/Alpha Vantage sources against IBKR ground truth.
+    functions:
+      - name: load_ohlcv
+        defined_in: data/loader.py
+        exported: true
+        description: Load OHLCV data for a single ticker from cache or WRDS.
+      - name: load_universe
+        defined_in: data/loader.py
+        exported: true
+        description: Load OHLCV data for an entire universe of tickers.
+      - name: load_survivorship_universe
+        defined_in: data/loader.py
+        exported: true
+        description: Load universe with survivorship bias handling via WRDS.
+      - name: load_with_delistings
+        defined_in: data/loader.py
+        exported: true
+        description: Load OHLCV data including delisting events.
+      - name: save_ohlcv
+        defined_in: data/local_cache.py
+        exported: true
+        description: Atomically save OHLCV DataFrame to local cache with metadata sidecar.
+      - name: load_ibkr_data
+        defined_in: data/local_cache.py
+        exported: true
+        description: Load IBKR data from a directory of CSV/parquet files.
+      - name: list_cached_tickers
+        defined_in: data/local_cache.py
+        exported: true
+        description: List all tickers available in the local cache.
+      - name: cache_universe
+        defined_in: data/local_cache.py
+        exported: true
+        description: Cache an entire universe of tickers to local storage.
+      - name: get_provider
+        defined_in: data/provider_registry.py
+        exported: true
+        description: Get a data provider instance by name from the registry.
+      - name: list_providers
+        defined_in: data/provider_registry.py
+        exported: true
+        description: List all registered data provider names.
+      - name: register_provider
+        defined_in: data/provider_registry.py
+        exported: true
+        description: Register a new data provider factory in the registry.
+      - name: assess_ohlcv_quality
+        defined_in: data/quality.py
+        exported: true
+        description: Assess per-bar quality of an OHLCV DataFrame.
+      - name: check_ohlc_relationships
+        defined_in: data/quality.py
+        exported: true
+        description: Check OHLC bar integrity (High >= Low, Close within range, etc.).
+      - name: generate_quality_report
+        defined_in: data/quality.py
+        exported: true
+        description: Generate aggregate quality report across a universe.
+      - name: flag_degraded_stocks
+        defined_in: data/quality.py
+        exported: true
+        description: Flag stocks with poor data quality for exclusion.
+      - name: validate_intraday_bars
+        defined_in: data/intraday_quality.py
+        exported: false
+        description: Run full 13-point intraday quality validation on bar data.
+    constants: []
+
+###############################################################################
+# 2. features/
+###############################################################################
+- module: features
+  path: features/
+  purpose: >
+    Feature and target computation pipeline producing 90+ continuous features
+    from OHLCV data. Includes classical technical indicators, raw transforms,
+    interaction features, research-derived factors (order flow, momentum,
+    signatures, volatility surface, cross-asset lead-lag), macro indicators,
+    options factors, intraday microstructure, and LOB proxy features.
+  file_count: 10
+  total_lines: 4016
+  files:
+    - path: features/__init__.py
+      lines: 4
+      role: >
+        Package namespace exporting FEATURE_METADATA dict and get_feature_type
+        function from pipeline.
+    - path: features/pipeline.py
+      lines: 1541
+      role: >
+        Core feature pipeline computing indicator, raw, HAR volatility,
+        multiscale, structural, interaction, and target features with
+        causality tagging and feature metadata registry.
+    - path: features/macro.py
+      lines: 244
+      role: >
+        FRED macro indicator features (VIX, term spread, credit spread,
+        jobless claims, consumer sentiment) with fredapi and requests
+        fallback.
+    - path: features/options_factors.py
+      lines: 134
+      role: >
+        Option surface factor construction from OptionMetrics-enriched daily
+        panels including IV term structure slope, put-call skew, and
+        percentile ranks.
+    - path: features/intraday.py
+      lines: 243
+      role: >
+        Intraday microstructure features from WRDS TAQmsec tick data
+        including Amihud illiquidity, Kyle's lambda, VWAP deviation, and
+        realised 5-min volatility.
+    - path: features/research_factors.py
+      lines: 985
+      role: >
+        Research-derived factors including order-flow imbalance, Markov
+        queue features, vol-scaled momentum, signature path features,
+        volatility term-structure factors, cross-asset lead-lag, and DTW
+        detection.
+    - path: features/lob_features.py
+      lines: 311
+      role: >
+        Markov LOB proxy features from intraday bar data including trade
+        arrival rate, quote update intensity, price impact asymmetry, and
+        queue imbalance.
+    - path: features/harx_spillovers.py
+      lines: 242
+      role: >
+        HARX volatility spillover features computing Diebold-Yilmaz style
+        spillover index and per-asset directional spillover measures from
+        cross-asset realized volatilities.
+    - path: features/wave_flow.py
+      lines: 144
+      role: >
+        Physics-inspired wave-flow decomposition of returns into secular
+        trend (flow) and oscillatory (wave) components with FFT spectral
+        analysis for regime connection.
+    - path: features/version.py
+      lines: 168
+      role: >
+        Feature versioning system tracking pipeline versions via content
+        hashing to prevent model-feature mismatches across training cycles.
+  public_interface:
+    classes:
+      - name: FeaturePipeline
+        defined_in: features/pipeline.py
+        exported: false
+        description: Core feature computation pipeline with per-ticker and universe-wide modes.
+      - name: MacroFeatureProvider
+        defined_in: features/macro.py
+        exported: false
+        description: FRED macro indicator provider with caching and API fallback.
+      - name: ResearchFactorConfig
+        defined_in: features/research_factors.py
+        exported: false
+        description: Dataclass configuring research factor computation parameters.
+      - name: FeatureVersion
+        defined_in: features/version.py
+        exported: false
+        description: Dataclass tracking feature pipeline version with content hashing.
+      - name: FeatureRegistry
+        defined_in: features/version.py
+        exported: false
+        description: Persistent registry of feature versions for compatibility checking.
+    functions:
+      - name: get_feature_type
+        defined_in: features/pipeline.py
+        exported: true
+        description: Return the causality type (CAUSAL, END_OF_DAY, RESEARCH_ONLY) for a feature name.
+      - name: compute_option_surface_factors
+        defined_in: features/options_factors.py
+        exported: false
+        description: Compute option surface factors from OptionMetrics-enriched panels.
+      - name: compute_intraday_features
+        defined_in: features/intraday.py
+        exported: false
+        description: Compute intraday microstructure features for a ticker on a given date.
+      - name: compute_single_asset_research_factors
+        defined_in: features/research_factors.py
+        exported: false
+        description: Compute all single-asset research factors for a DataFrame.
+      - name: compute_cross_asset_research_factors
+        defined_in: features/research_factors.py
+        exported: false
+        description: Compute cross-asset lead-lag and spillover research factors.
+      - name: compute_lob_features
+        defined_in: features/lob_features.py
+        exported: false
+        description: Compute LOB proxy features from intraday bars for a single stock-day.
+      - name: compute_lob_features_batch
+        defined_in: features/lob_features.py
+        exported: false
+        description: Batch LOB feature computation across multiple stock-days.
+      - name: compute_harx_spillovers
+        defined_in: features/harx_spillovers.py
+        exported: false
+        description: Compute HARX volatility spillover features across a universe.
+      - name: compute_wave_flow_decomposition
+        defined_in: features/wave_flow.py
+        exported: false
+        description: Decompose returns into flow (trend) and wave (oscillatory) components.
+    constants:
+      - name: FEATURE_METADATA
+        defined_in: features/pipeline.py
+        description: Comprehensive feature registry dict mapping feature names to causality types and categories.
+
+###############################################################################
+# 3. indicators/
+###############################################################################
+- module: indicators
+  path: indicators/
+  purpose: >
+    Self-contained technical indicator library with 90+ indicator classes
+    covering volatility, momentum, trend, volume, price action, support/
+    resistance, VWAP, value area, advanced volatility estimators, statistical
+    measures, information theory, microstructure, fractal analysis, and
+    regime detection indicators. Also includes spectral analysis, SSA
+    decomposition, eigenvalue spectrum, optimal transport, and tail risk
+    analyzers.
+  file_count: 7
+  total_lines: 4543
+  files:
+    - path: indicators/__init__.py
+      lines: 89
+      role: >
+        Package namespace exporting Indicator base class, 90+ concrete
+        indicator classes, and get_all_indicators registry function.
+    - path: indicators/indicators.py
+      lines: 2904
+      role: >
+        Core indicator library defining the Indicator base class and 92
+        concrete indicator subclasses covering all technical indicator
+        categories.
+    - path: indicators/eigenvalue.py
+      lines: 399
+      role: >
+        Eigenvalue spectrum analysis of rolling correlation matrices for
+        portfolio-level systemic risk detection and concentration metrics.
+    - path: indicators/spectral.py
+      lines: 328
+      role: >
+        FFT-based frequency decomposition of return series for cyclical
+        pattern detection, harmonic content measurement, and dominant
+        periodicity identification.
+    - path: indicators/ssa.py
+      lines: 321
+      role: >
+        Singular Spectrum Analysis decomposing returns into trend,
+        oscillatory, and noise components via SVD of the Hankel matrix
+        for regime-aware structural dynamics.
+    - path: indicators/ot_divergence.py
+      lines: 262
+      role: >
+        Optimal transport indicators using Wasserstein distance and
+        Sinkhorn divergence to detect distribution drift for ahead-of-time
+        regime detection.
+    - path: indicators/tail_risk.py
+      lines: 240
+      role: >
+        Tail risk and jump detection indicators computing expected
+        shortfall, vol-of-vol, and downside/upside asymmetry for extreme
+        event analysis.
+  public_interface:
+    classes:
+      - name: Indicator
+        defined_in: indicators/indicators.py
+        exported: true
+        description: Abstract base class for all technical indicators with compute() interface.
+      - name: EigenvalueAnalyzer
+        defined_in: indicators/eigenvalue.py
+        exported: false
+        description: Analyzes eigenvalue spectrum of rolling correlation matrices for systemic risk.
+      - name: SpectralAnalyzer
+        defined_in: indicators/spectral.py
+        exported: false
+        description: FFT-based spectral decomposition of return series.
+      - name: SSADecomposer
+        defined_in: indicators/ssa.py
+        exported: false
+        description: Singular Spectrum Analysis decomposer for non-stationary signal analysis.
+      - name: OptimalTransportAnalyzer
+        defined_in: indicators/ot_divergence.py
+        exported: false
+        description: Distribution drift detection using Wasserstein and Sinkhorn divergence.
+      - name: TailRiskAnalyzer
+        defined_in: indicators/tail_risk.py
+        exported: false
+        description: Tail risk and jump detection analyzer for extreme event analysis.
+    functions:
+      - name: get_all_indicators
+        defined_in: indicators/indicators.py
+        exported: true
+        description: Return a list of all available indicator classes.
+      - name: create_indicator
+        defined_in: indicators/indicators.py
+        exported: false
+        description: Factory function to create an indicator instance by name.
+    constants:
+      - name: INDICATOR_ALIASES
+        defined_in: indicators/indicators.py
+        description: Dict mapping alternative names to canonical indicator class names.
+
+###############################################################################
+# 4. regime/
+###############################################################################
+- module: regime
+  path: regime/
+  purpose: >
+    Regime detection subsystem with multiple engines (rule-based, probabilistic
+    HMM, statistical jump model, ensemble consensus) plus a structural state
+    layer providing BOCPD changepoint detection, shock vectors, confidence
+    calibration, uncertainty gating, correlation regime detection, and online
+    incremental updates.
+  file_count: 13
+  total_lines: 4420
+  files:
+    - path: regime/__init__.py
+      lines: 41
+      role: >
+        Package namespace exporting all regime detector components, HMM,
+        BOCPD, jump model, consensus, shock vector, and uncertainty gate
+        classes.
+    - path: regime/detector.py
+      lines: 940
+      role: >
+        Main regime detector orchestrating rule-based, HMM, jump model,
+        and ensemble engines with structural state layer integration and
+        batch detection support.
+    - path: regime/hmm.py
+      lines: 661
+      role: >
+        Lightweight in-repo Gaussian HMM with sticky transitions, duration
+        smoothing, BIC-based state selection, and observation matrix
+        construction.
+    - path: regime/bocpd.py
+      lines: 451
+      role: >
+        Bayesian Online Change-Point Detection implementing Adams and MacKay
+        (2007) algorithm with Normal-Inverse-Gamma conjugate prior and
+        Student-t predictive distribution.
+    - path: regime/consensus.py
+      lines: 273
+      role: >
+        Cross-sectional regime consensus computing fraction of securities
+        in each regime for market-wide regime determination and divergence
+        early warning.
+    - path: regime/correlation.py
+      lines: 213
+      role: >
+        Correlation regime detection flagging high-correlation episodes
+        when pairwise correlations spike, indicating diversification failure
+        during market stress.
+    - path: regime/jump_model.py
+      lines: 9
+      role: >
+        Backward-compatible re-export wrapper for StatisticalJumpModel and
+        JumpModelResult from the legacy implementation.
+    - path: regime/jump_model_legacy.py
+      lines: 242
+      role: >
+        Original statistical jump model implementation combining regime
+        detection with explicit jump modeling and configurable jump penalty.
+    - path: regime/jump_model_pypi.py
+      lines: 420
+      role: >
+        PyPI jumpmodels package wrapper supporting continuous/discrete modes,
+        cross-validated lambda selection, online prediction, and graceful
+        fallback to legacy implementation.
+    - path: regime/online_update.py
+      lines: 245
+      role: >
+        Online regime updating via HMM forward algorithm for incremental
+        state updates without full model refit, with periodic refit
+        scheduling.
+    - path: regime/shock_vector.py
+      lines: 494
+      role: >
+        Unified shock/structure vector combining HMM state, BOCPD signals,
+        jump detection, and structural features into a validated, version-
+        locked dataclass for downstream consumption.
+    - path: regime/confidence_calibrator.py
+      lines: 251
+      role: >
+        Empirical Calibration Matrix (ECM) calibration mapping each ensemble
+        component's reported confidence to realized frequency for bias
+        correction before vote combination.
+    - path: regime/uncertainty_gate.py
+      lines: 180
+      role: >
+        Entropy-based position sizing modifier reducing sizes when regime
+        posterior entropy is high, with binary stress assumption signal for
+        the promotion gate.
+  public_interface:
+    classes:
+      - name: RegimeDetector
+        defined_in: regime/detector.py
+        exported: true
+        description: Main regime detector orchestrating multiple detection engines.
+      - name: RegimeOutput
+        defined_in: regime/detector.py
+        exported: true
+        description: Dataclass holding regime detection results with labels, probabilities, and features.
+      - name: GaussianHMM
+        defined_in: regime/hmm.py
+        exported: true
+        description: Gaussian Hidden Markov Model with sticky transitions and duration smoothing.
+      - name: HMMFitResult
+        defined_in: regime/hmm.py
+        exported: true
+        description: Dataclass holding HMM fit results including states, probabilities, and BIC.
+      - name: BOCPDDetector
+        defined_in: regime/bocpd.py
+        exported: true
+        description: Bayesian Online Change-Point Detector with run-length posterior.
+      - name: BOCPDResult
+        defined_in: regime/bocpd.py
+        exported: true
+        description: Dataclass holding BOCPD detection result for a single observation.
+      - name: BOCPDBatchResult
+        defined_in: regime/bocpd.py
+        exported: true
+        description: Dataclass holding batch BOCPD results across multiple observations.
+      - name: RegimeConsensus
+        defined_in: regime/consensus.py
+        exported: true
+        description: Cross-sectional regime consensus calculator with divergence detection.
+      - name: CorrelationRegimeDetector
+        defined_in: regime/correlation.py
+        exported: true
+        description: Correlation regime detector flagging high-correlation stress episodes.
+      - name: StatisticalJumpModel
+        defined_in: regime/jump_model_legacy.py
+        exported: true
+        description: Statistical jump model combining regime detection with explicit jump penalties.
+      - name: JumpModelResult
+        defined_in: regime/jump_model_legacy.py
+        exported: true
+        description: Dataclass holding jump model detection results.
+      - name: PyPIJumpModel
+        defined_in: regime/jump_model_pypi.py
+        exported: true
+        description: PyPI jumpmodels wrapper with continuous/discrete modes and CV lambda selection.
+      - name: OnlineRegimeUpdater
+        defined_in: regime/online_update.py
+        exported: true
+        description: Incremental HMM state updater using forward algorithm.
+      - name: ShockVector
+        defined_in: regime/shock_vector.py
+        exported: true
+        description: Unified version-locked market state representation combining all regime signals.
+      - name: ShockVectorValidator
+        defined_in: regime/shock_vector.py
+        exported: true
+        description: Batch validation for ShockVector instances enforcing schema constraints.
+      - name: ConfidenceCalibrator
+        defined_in: regime/confidence_calibrator.py
+        exported: true
+        description: Empirical calibration matrix for ensemble component confidence correction.
+      - name: UncertaintyGate
+        defined_in: regime/uncertainty_gate.py
+        exported: true
+        description: Entropy-based position sizing modifier for regime uncertainty.
+    functions:
+      - name: detect_regimes_batch
+        defined_in: regime/detector.py
+        exported: true
+        description: Detect regimes for multiple tickers in batch.
+      - name: validate_hmm_observation_features
+        defined_in: regime/detector.py
+        exported: true
+        description: Validate that observation features are suitable for HMM fitting.
+      - name: compute_shock_vectors
+        defined_in: regime/shock_vector.py
+        exported: true
+        description: Compute ShockVector instances from regime detection outputs.
+      - name: select_hmm_states_bic
+        defined_in: regime/hmm.py
+        exported: false
+        description: Select optimal HMM state count using BIC criterion.
+      - name: build_hmm_observation_matrix
+        defined_in: regime/hmm.py
+        exported: false
+        description: Build observation matrix from OHLCV data for HMM fitting.
+      - name: map_raw_states_to_regimes
+        defined_in: regime/hmm.py
+        exported: false
+        description: Map raw HMM state indices to canonical regime labels.
+    constants: []
+
+###############################################################################
+# 5. models/
+###############################################################################
+- module: models
+  path: models/
+  purpose: >
+    Model training, prediction, versioning, governance, and monitoring
+    subsystem. Trains regime-conditional gradient boosting ensembles with
+    anti-overfitting controls (purged CV, embargo, holdout). Includes
+    confidence calibration, conformal prediction intervals, feature stability
+    tracking, distribution shift detection, online learning, retrain triggers,
+    walk-forward selection, neural net experimentation, and implied volatility
+    surface models.
+  file_count: 16
+  total_lines: 6153
+  files:
+    - path: models/__init__.py
+      lines: 24
+      role: >
+        Package namespace exporting governance, calibration, neural net,
+        walk-forward, stability, shift detection, and conformal prediction
+        classes.
+    - path: models/trainer.py
+      lines: 1818
+      role: >
+        Trains regime-conditional gradient boosting ensemble with purged
+        date-grouped CV, embargo, scaler isolation, permutation importance,
+        IS/OOS gap monitoring, and diverse ensemble construction.
+    - path: models/predictor.py
+      lines: 538
+      role: >
+        Loads trained ensemble and generates predictions blending regime-
+        specific and global models based on regime confidence, with
+        causality enforcement and median imputation.
+    - path: models/versioning.py
+      lines: 207
+      role: >
+        Timestamped model directories with JSON registry tracking latest
+        version, version history, and training metadata.
+    - path: models/governance.py
+      lines: 155
+      role: >
+        Champion/challenger governance tracking model version performance
+        and managing promotion between champion and challenger slots.
+    - path: models/calibration.py
+      lines: 327
+      role: >
+        Post-hoc confidence calibration via Platt scaling, isotonic
+        regression, or linear rescaling fallback, with ECE and reliability
+        curve computation.
+    - path: models/conformal.py
+      lines: 295
+      role: >
+        Split conformal prediction constructing distribution-free prediction
+        intervals with guaranteed finite-sample coverage probability for
+        position sizing integration.
+    - path: models/cross_sectional.py
+      lines: 136
+      role: >
+        Cross-sectional ranking converting time-series predictions to
+        relative signals via percentile ranking, z-score, and long/short
+        signal generation.
+    - path: models/feature_stability.py
+      lines: 313
+      role: >
+        Feature importance stability monitoring across training cycles
+        with rank correlation tracking, distributional shift alerts, and
+        JSON persistence.
+    - path: models/shift_detection.py
+      lines: 322
+      role: >
+        Distribution shift detection via CUSUM (persistent mean shifts)
+        and PSI (feature distribution changes) for early warning of model
+        staleness.
+    - path: models/neural_net.py
+      lines: 198
+      role: >
+        Experimental feedforward neural network for tabular financial data
+        with batch normalization, dropout, and PyTorch dependency with
+        graceful fallback.
+    - path: models/online_learning.py
+      lines: 273
+      role: >
+        Incremental model updates between full retrains using exponentially-
+        weighted moving statistics to adapt confidence scaling and feature
+        weights.
+    - path: models/retrain_trigger.py
+      lines: 344
+      role: >
+        Monitors model performance and determines retraining need based on
+        schedule, trade count, win rate degradation, OOS correlation, IC
+        drift, and Sharpe degradation.
+    - path: models/walk_forward.py
+      lines: 235
+      role: >
+        Expanding-window walk-forward hyperparameter search with Deflated
+        Sharpe Ratio penalty for multiple-testing correction.
+    - path: models/iv/__init__.py
+      lines: 31
+      role: >
+        IV sub-package exporting Black-Scholes, Heston, SVI, ArbitrageFreeSVI,
+        and IVSurface classes.
+    - path: models/iv/models.py
+      lines: 937
+      role: >
+        Implied volatility surface models implementing Black-Scholes
+        analytical pricing, Heston stochastic volatility, and SVI smile
+        parameterization with surface generation for visualization.
+  public_interface:
+    classes:
+      - name: ModelGovernance
+        defined_in: models/governance.py
+        exported: true
+        description: Champion/challenger governance for model version management.
+      - name: ChampionRecord
+        defined_in: models/governance.py
+        exported: true
+        description: Dataclass tracking the current champion model version and metrics.
+      - name: ConfidenceCalibrator
+        defined_in: models/calibration.py
+        exported: true
+        description: Post-hoc confidence calibration via Platt scaling or isotonic regression.
+      - name: TabularNet
+        defined_in: models/neural_net.py
+        exported: true
+        description: Experimental feedforward neural network for tabular financial data.
+      - name: FeatureStabilityTracker
+        defined_in: models/feature_stability.py
+        exported: true
+        description: Monitors feature importance stability across training cycles.
+      - name: DistributionShiftDetector
+        defined_in: models/shift_detection.py
+        exported: true
+        description: Detects distribution shifts via CUSUM and PSI methods.
+      - name: ConformalPredictor
+        defined_in: models/conformal.py
+        exported: true
+        description: Distribution-free prediction intervals with guaranteed coverage.
+      - name: ModelTrainer
+        defined_in: models/trainer.py
+        exported: false
+        description: Trains regime-conditional gradient boosting ensembles with anti-overfitting.
+      - name: EnsemblePredictor
+        defined_in: models/predictor.py
+        exported: false
+        description: Loads trained ensemble and generates regime-blended predictions.
+      - name: ModelVersion
+        defined_in: models/versioning.py
+        exported: false
+        description: Dataclass representing a timestamped model version with metadata.
+      - name: ModelRegistry
+        defined_in: models/versioning.py
+        exported: false
+        description: JSON-backed registry tracking model versions and latest pointer.
+      - name: RetrainTrigger
+        defined_in: models/retrain_trigger.py
+        exported: false
+        description: Monitors performance and determines when retraining is needed.
+      - name: OnlineLearner
+        defined_in: models/online_learning.py
+        exported: false
+        description: Incremental model parameter adjustment between full retrains.
+      - name: ArbitrageFreeSVIBuilder
+        defined_in: models/iv/models.py
+        exported: true
+        description: Arbitrage-free SVI surface builder with calendar and butterfly spread checks.
+      - name: BlackScholes
+        defined_in: models/iv/models.py
+        exported: true
+        description: Black-Scholes analytical pricing, Greeks, and IV solving.
+      - name: HestonModel
+        defined_in: models/iv/models.py
+        exported: true
+        description: Heston stochastic volatility model with characteristic function pricing.
+      - name: SVIModel
+        defined_in: models/iv/models.py
+        exported: true
+        description: SVI smile parameterization for volatility surface fitting.
+      - name: IVSurface
+        defined_in: models/iv/models.py
+        exported: true
+        description: Implied volatility surface container with interpolation and visualization.
+    functions:
+      - name: cross_sectional_rank
+        defined_in: models/cross_sectional.py
+        exported: true
+        description: Compute cross-sectional percentile rank and z-score for predictions.
+      - name: walk_forward_select
+        defined_in: models/walk_forward.py
+        exported: true
+        description: Walk-forward hyperparameter selection with DSR penalty.
+      - name: compute_ece
+        defined_in: models/calibration.py
+        exported: false
+        description: Compute Expected Calibration Error for confidence scores.
+      - name: compute_reliability_curve
+        defined_in: models/calibration.py
+        exported: false
+        description: Compute reliability curve for calibration diagnostics.
+    constants: []
+
+###############################################################################
+# 6. backtest/
+###############################################################################
+- module: backtest
+  path: backtest/
+  purpose: >
+    Execution-aware trade simulation with walk-forward validation,
+    advanced overfitting diagnostics, dynamic cost modeling, null model
+    baselines, cost calibration, cost stress testing, Almgren-Chriss
+    optimal execution, ADV tracking, and survivorship bias comparison.
+  file_count: 11
+  total_lines: 6927
+  files:
+    - path: backtest/__init__.py
+      lines: 4
+      role: >
+        Package namespace initialization (no explicit exports).
+    - path: backtest/engine.py
+      lines: 2488
+      role: >
+        Core backtester converting model predictions into simulated trades
+        with simple and risk-managed modes, slippage modeling, transaction
+        costs, and max concurrent position enforcement.
+    - path: backtest/execution.py
+      lines: 936
+      role: >
+        Execution simulator with spread, market impact, participation limits,
+        structural state-aware cost multipliers, ShockModePolicy, and cost
+        model calibration.
+    - path: backtest/validation.py
+      lines: 1074
+      role: >
+        Walk-forward validation with purge/embargo, Spearman rank correlation,
+        Benjamini-Hochberg FDR correction, CPCV, SPA bootstrap, and IC
+        decay detection.
+    - path: backtest/advanced_validation.py
+      lines: 665
+      role: >
+        Advanced validation including Deflated Sharpe Ratio, Probability of
+        Backtest Overfitting, Monte Carlo simulation, and capacity analysis.
+    - path: backtest/null_models.py
+      lines: 297
+      role: >
+        Null model baselines (Random, Zero, Momentum) providing reference
+        performance anchors to detect overfitting.
+    - path: backtest/cost_calibrator.py
+      lines: 685
+      role: >
+        Per-market-cap-segment impact coefficient calibration from historical
+        trades with EMA-smoothed feedback loop updates.
+    - path: backtest/cost_stress.py
+      lines: 222
+      role: >
+        Cost stress testing running backtests at multiple cost levels and
+        computing breakeven cost for robustness assessment.
+    - path: backtest/optimal_execution.py
+      lines: 201
+      role: >
+        Almgren-Chriss (2001) optimal execution computing trade trajectories
+        minimizing expected cost plus execution risk variance.
+    - path: backtest/adv_tracker.py
+      lines: 191
+      role: >
+        Average Daily Volume tracker with EMA smoothing and volume trend
+        analysis for participation limit adjustment.
+    - path: backtest/survivorship_comparison.py
+      lines: 164
+      role: >
+        Survivorship bias quantification running identical backtests on
+        survivorship-free and survivor-only universes to measure bias.
+  public_interface:
+    classes:
+      - name: Backtester
+        defined_in: backtest/engine.py
+        exported: false
+        description: Core backtester converting predictions into simulated trades.
+      - name: BacktestResult
+        defined_in: backtest/engine.py
+        exported: false
+        description: Dataclass holding complete backtest results, trades, and metrics.
+      - name: Trade
+        defined_in: backtest/engine.py
+        exported: false
+        description: Dataclass representing a single simulated trade.
+      - name: ExecutionModel
+        defined_in: backtest/execution.py
+        exported: false
+        description: Execution simulator modeling spread, impact, and participation limits.
+      - name: ExecutionFill
+        defined_in: backtest/execution.py
+        exported: false
+        description: Dataclass holding execution fill details including slippage and costs.
+      - name: ShockModePolicy
+        defined_in: backtest/execution.py
+        exported: false
+        description: Consolidated shock/elevated/normal execution parameters from ShockVector.
+      - name: WalkForwardResult
+        defined_in: backtest/validation.py
+        exported: false
+        description: Dataclass holding walk-forward validation results across all folds.
+      - name: StatisticalTests
+        defined_in: backtest/validation.py
+        exported: false
+        description: Dataclass holding statistical test results (t-test, Spearman, etc.).
+      - name: CPCVResult
+        defined_in: backtest/validation.py
+        exported: false
+        description: Dataclass holding Combinatorial Purged Cross-Validation results.
+      - name: ADVTracker
+        defined_in: backtest/adv_tracker.py
+        exported: false
+        description: EMA-smoothed average daily volume tracker.
+      - name: CostCalibrator
+        defined_in: backtest/cost_calibrator.py
+        exported: false
+        description: Per-market-cap impact coefficient calibrator with feedback loop.
+      - name: CostStressTester
+        defined_in: backtest/cost_stress.py
+        exported: false
+        description: Cost robustness tester computing breakeven cost levels.
+    functions:
+      - name: walk_forward_validate
+        defined_in: backtest/validation.py
+        exported: false
+        description: Run walk-forward validation with purge gap and embargo.
+      - name: run_statistical_tests
+        defined_in: backtest/validation.py
+        exported: false
+        description: Run statistical significance tests on backtest results.
+      - name: combinatorial_purged_cv
+        defined_in: backtest/validation.py
+        exported: false
+        description: Run Combinatorial Purged Cross-Validation (CPCV).
+      - name: superior_predictive_ability
+        defined_in: backtest/validation.py
+        exported: false
+        description: Run Superior Predictive Ability (SPA) bootstrap test.
+      - name: walk_forward_with_embargo
+        defined_in: backtest/validation.py
+        exported: false
+        description: Walk-forward validation with explicit embargo period.
+      - name: rolling_ic
+        defined_in: backtest/validation.py
+        exported: false
+        description: Compute rolling information coefficient time series.
+      - name: detect_ic_decay
+        defined_in: backtest/validation.py
+        exported: false
+        description: Detect information coefficient decay over time.
+      - name: deflated_sharpe_ratio
+        defined_in: backtest/advanced_validation.py
+        exported: false
+        description: Compute Deflated Sharpe Ratio adjusting for multiple testing.
+      - name: probability_of_backtest_overfitting
+        defined_in: backtest/advanced_validation.py
+        exported: false
+        description: Compute Probability of Backtest Overfitting (PBO).
+      - name: monte_carlo_validation
+        defined_in: backtest/advanced_validation.py
+        exported: false
+        description: Monte Carlo simulation for return distribution validation.
+      - name: run_advanced_validation
+        defined_in: backtest/advanced_validation.py
+        exported: false
+        description: Run full advanced validation suite (DSR, PBO, MC, capacity).
+      - name: compute_null_baselines
+        defined_in: backtest/null_models.py
+        exported: false
+        description: Compute all null model baselines for comparison.
+      - name: calibrate_cost_model
+        defined_in: backtest/execution.py
+        exported: false
+        description: Calibrate execution cost model parameters from historical fills.
+      - name: almgren_chriss_trajectory
+        defined_in: backtest/optimal_execution.py
+        exported: false
+        description: Compute Almgren-Chriss optimal execution trajectory.
+      - name: estimate_execution_cost
+        defined_in: backtest/optimal_execution.py
+        exported: false
+        description: Estimate total execution cost for a given trade size.
+      - name: compare_survivorship_impact
+        defined_in: backtest/survivorship_comparison.py
+        exported: false
+        description: Compare backtest results with and without survivorship bias.
+    constants: []
+
+###############################################################################
+# 7. risk/
+###############################################################################
+- module: risk
+  path: risk/
+  purpose: >
+    Renaissance-grade portfolio risk management providing Kelly criterion
+    position sizing, portfolio-level sector/correlation/exposure limits,
+    drawdown circuit breakers, ATR/trailing/regime-change stops, covariance
+    estimation, factor exposure management, portfolio optimization with
+    turnover penalty, performance attribution, stress testing, factor
+    monitoring, constraint replay, and transaction cost budgeting.
+  file_count: 16
+  total_lines: 6134
+  files:
+    - path: risk/__init__.py
+      lines: 72
+      role: >
+        Package namespace exporting all risk management components with
+        comprehensive __all__ list.
+    - path: risk/position_sizer.py
+      lines: 1254
+      role: >
+        Position sizing with Kelly criterion, volatility targeting, ATR-based,
+        composite blend, regime-conditional Kelly, drawdown governor, Bayesian
+        updating, and uncertainty-aware scaling.
+    - path: risk/portfolio_risk.py
+      lines: 885
+      role: >
+        Portfolio risk manager enforcing sector, correlation, beta, gross/net
+        exposure, single-name concentration, and factor exposure limits with
+        regime-conditioned constraint scaling.
+    - path: risk/drawdown.py
+      lines: 260
+      role: >
+        Multi-tier drawdown protection with warning/caution/critical levels,
+        daily/weekly loss limits, and recovery mode with gradual re-entry.
+    - path: risk/metrics.py
+      lines: 320
+      role: >
+        Risk metrics computing VaR, CVaR, tail risk, MAE/MFE analysis, and
+        comprehensive risk reporting.
+    - path: risk/stop_loss.py
+      lines: 293
+      role: >
+        Regime-aware stop loss manager with ATR-based, trailing, time-based,
+        regime-change, and hard percentage stops.
+    - path: risk/covariance.py
+      lines: 355
+      role: >
+        Covariance estimation via Ledoit-Wolf shrinkage, EWMA, or sample
+        methods with regime-conditioned covariance computation.
+    - path: risk/factor_exposures.py
+      lines: 268
+      role: >
+        Factor exposure manager computing and enforcing regime-conditioned
+        bounds for beta, size, value, momentum, and volatility factors.
+    - path: risk/factor_monitor.py
+      lines: 300
+      role: >
+        Factor exposure monitoring tracking portfolio factor tilts and
+        alerting on violations using price-derived factor proxies.
+    - path: risk/factor_portfolio.py
+      lines: 220
+      role: >
+        Factor-based portfolio construction decomposing returns into
+        systematic factor exposures via OLS regression and computing
+        residual returns.
+    - path: risk/portfolio_optimizer.py
+      lines: 279
+      role: >
+        Mean-variance portfolio optimization with turnover penalty,
+        position limits, volatility constraint, and sector neutrality.
+    - path: risk/attribution.py
+      lines: 368
+      role: >
+        Brinson-style performance attribution decomposing returns into
+        market, factor, and alpha components with rolling attribution.
+    - path: risk/stress_test.py
+      lines: 547
+      role: >
+        Scenario analysis, historical drawdown replay, correlation stress
+        testing, and factor stress testing with built-in crisis scenarios.
+    - path: risk/universe_config.py
+      lines: 295
+      role: >
+        Centralized universe metadata loader from config_data/universe.yaml
+        providing typed query methods for portfolio risk checks.
+    - path: risk/constraint_replay.py
+      lines: 197
+      role: >
+        Constraint tightening replay stress-testing portfolios under
+        regime-conditioned constraints to reveal fragility before regime
+        shifts.
+    - path: risk/cost_budget.py
+      lines: 221
+      role: >
+        Transaction cost budget optimization prioritizing trades by
+        importance-to-cost ratio and deferring low-value high-cost trades.
+  public_interface:
+    classes:
+      - name: PositionSizer
+        defined_in: risk/position_sizer.py
+        exported: true
+        description: Multi-method position sizing with Kelly, vol-targeting, ATR, and regime conditioning.
+      - name: PositionSize
+        defined_in: risk/position_sizer.py
+        exported: false
+        description: Dataclass holding computed position size with method breakdown.
+      - name: PortfolioRiskManager
+        defined_in: risk/portfolio_risk.py
+        exported: true
+        description: Portfolio-level risk manager enforcing multi-dimensional exposure limits.
+      - name: ConstraintMultiplier
+        defined_in: risk/portfolio_risk.py
+        exported: true
+        description: Regime-aware constraint scaling multiplier for smooth transitions.
+      - name: RiskCheck
+        defined_in: risk/portfolio_risk.py
+        exported: true
+        description: Dataclass holding risk check result with pass/fail and details.
+      - name: UniverseConfig
+        defined_in: risk/universe_config.py
+        exported: true
+        description: Universe metadata loader from YAML with typed query methods.
+      - name: ConfigError
+        defined_in: risk/universe_config.py
+        exported: true
+        description: Exception raised for universe configuration errors.
+      - name: FactorExposureManager
+        defined_in: risk/factor_exposures.py
+        exported: true
+        description: Regime-conditioned factor exposure bounds manager.
+      - name: DrawdownController
+        defined_in: risk/drawdown.py
+        exported: true
+        description: Multi-tier drawdown circuit breaker with recovery protocols.
+      - name: DrawdownState
+        defined_in: risk/drawdown.py
+        exported: false
+        description: Enum for drawdown severity levels (normal, warning, caution, critical).
+      - name: DrawdownStatus
+        defined_in: risk/drawdown.py
+        exported: false
+        description: Dataclass holding current drawdown status and sizing multiplier.
+      - name: RiskMetrics
+        defined_in: risk/metrics.py
+        exported: true
+        description: VaR, CVaR, tail risk, and MAE/MFE risk analytics.
+      - name: StopLossManager
+        defined_in: risk/stop_loss.py
+        exported: true
+        description: Regime-aware stop loss manager with multiple stop strategies.
+      - name: StopReason
+        defined_in: risk/stop_loss.py
+        exported: false
+        description: Enum for stop loss trigger reasons.
+      - name: StopResult
+        defined_in: risk/stop_loss.py
+        exported: false
+        description: Dataclass holding stop loss evaluation result.
+      - name: CovarianceEstimator
+        defined_in: risk/covariance.py
+        exported: true
+        description: Covariance estimation with Ledoit-Wolf, EWMA, and sample methods.
+      - name: FactorExposureMonitor
+        defined_in: risk/factor_monitor.py
+        exported: true
+        description: Factor tilt monitoring with price-derived proxies and alerts.
+      - name: RebalanceResult
+        defined_in: risk/cost_budget.py
+        exported: false
+        description: Dataclass holding cost-budget-optimized rebalance result.
+    functions:
+      - name: compute_regime_covariance
+        defined_in: risk/covariance.py
+        exported: true
+        description: Compute covariance matrix conditioned on current regime.
+      - name: get_regime_covariance
+        defined_in: risk/covariance.py
+        exported: true
+        description: Get pre-computed regime covariance or compute on demand.
+      - name: compute_factor_exposures
+        defined_in: risk/factor_portfolio.py
+        exported: true
+        description: Compute systematic factor exposures via OLS regression.
+      - name: compute_residual_returns
+        defined_in: risk/factor_portfolio.py
+        exported: true
+        description: Strip out systematic factor risk to isolate residual returns.
+      - name: optimize_portfolio
+        defined_in: risk/portfolio_optimizer.py
+        exported: true
+        description: Mean-variance portfolio optimization with turnover penalty.
+      - name: decompose_returns
+        defined_in: risk/attribution.py
+        exported: true
+        description: Decompose portfolio returns into market, factor, and alpha.
+      - name: compute_attribution_report
+        defined_in: risk/attribution.py
+        exported: true
+        description: Extended attribution summary with risk-adjusted metrics.
+      - name: compute_rolling_attribution
+        defined_in: risk/attribution.py
+        exported: true
+        description: Rolling window performance attribution decomposition.
+      - name: run_stress_scenarios
+        defined_in: risk/stress_test.py
+        exported: true
+        description: Apply predefined macro-economic shock scenarios to a portfolio.
+      - name: run_historical_drawdown_test
+        defined_in: risk/stress_test.py
+        exported: true
+        description: Identify worst historical drawdown episodes and report performance.
+      - name: correlation_stress_test
+        defined_in: risk/stress_test.py
+        exported: true
+        description: Model portfolio risk when correlations spike toward 1.0.
+      - name: factor_stress_test
+        defined_in: risk/stress_test.py
+        exported: true
+        description: Simulate portfolio impact of specific factor shocks.
+      - name: replay_with_stress_constraints
+        defined_in: risk/constraint_replay.py
+        exported: true
+        description: Replay portfolio under tightened stress constraints.
+      - name: compute_robustness_score
+        defined_in: risk/constraint_replay.py
+        exported: true
+        description: Compute portfolio robustness score under constraint tightening.
+      - name: optimize_rebalance_cost
+        defined_in: risk/cost_budget.py
+        exported: true
+        description: Optimize rebalance trades within a transaction cost budget.
+    constants:
+      - name: CRISIS_SCENARIOS
+        defined_in: risk/stress_test.py
+        description: Built-in crisis scenario definitions (2008, COVID, 2022, flash crash, stagflation).
+
+###############################################################################
+# 8. evaluation/
+###############################################################################
+- module: evaluation
+  path: evaluation/
+  purpose: >
+    Truth Engine providing regime-aware performance slicing, ML diagnostics,
+    fragility analysis, calibration validation, walk-forward evaluation with
+    embargo, and comprehensive HTML report generation. Detects overfitting,
+    regime dependence, feature drift, and ensemble disagreement.
+  file_count: 8
+  total_lines: 2816
+  files:
+    - path: evaluation/__init__.py
+      lines: 33
+      role: >
+        Package namespace exporting slicing, metrics, fragility, ML
+        diagnostics, calibration, and engine classes.
+    - path: evaluation/engine.py
+      lines: 826
+      role: >
+        Evaluation engine orchestrating all evaluation components into
+        comprehensive analysis with red-flag detection and HTML report
+        generation.
+    - path: evaluation/metrics.py
+      lines: 324
+      role: >
+        Per-slice performance metrics computing Sharpe, max drawdown,
+        recovery time, and other standard metrics with confidence intervals
+        and low-N warnings.
+    - path: evaluation/slicing.py
+      lines: 400
+      role: >
+        Regime-aware and condition-based return decomposition partitioning
+        backtest returns into meaningful segments for per-slice analysis.
+    - path: evaluation/fragility.py
+      lines: 452
+      role: >
+        Fragility metrics including PnL concentration, drawdown distribution,
+        recovery time analysis, and critical slowing down detection.
+    - path: evaluation/ml_diagnostics.py
+      lines: 253
+      role: >
+        Feature importance drift monitoring and ensemble disagreement
+        measurement for model stability diagnostics.
+    - path: evaluation/visualization.py
+      lines: 386
+      role: >
+        Chart generation for HTML reports using plotly with matplotlib
+        fallback for regime slices, rolling IC, decile spread, underwater,
+        recovery, calibration, and walk-forward visualizations.
+    - path: evaluation/calibration_analysis.py
+      lines: 142
+      role: >
+        Calibration diagnostics assessing whether model confidence scores
+        are well-calibrated using reliability curves and ECE.
+  public_interface:
+    classes:
+      - name: EvaluationEngine
+        defined_in: evaluation/engine.py
+        exported: true
+        description: Orchestrates all evaluation components with red-flag detection and reporting.
+      - name: PerformanceSlice
+        defined_in: evaluation/slicing.py
+        exported: true
+        description: Dataclass defining a named performance slice with filter criteria.
+      - name: SliceRegistry
+        defined_in: evaluation/slicing.py
+        exported: true
+        description: Registry of performance slices for regime-aware analysis.
+    functions:
+      - name: compute_slice_metrics
+        defined_in: evaluation/metrics.py
+        exported: true
+        description: Compute Sharpe, drawdown, recovery, and other metrics for a return slice.
+      - name: decile_spread
+        defined_in: evaluation/metrics.py
+        exported: true
+        description: Compute decile spread analysis for prediction quality assessment.
+      - name: pnl_concentration
+        defined_in: evaluation/fragility.py
+        exported: true
+        description: Measure PnL concentration across top-N trades.
+      - name: drawdown_distribution
+        defined_in: evaluation/fragility.py
+        exported: true
+        description: Compute distribution of drawdown episodes.
+      - name: recovery_time_distribution
+        defined_in: evaluation/fragility.py
+        exported: true
+        description: Analyze distribution of recovery times from drawdowns.
+      - name: detect_critical_slowing_down
+        defined_in: evaluation/fragility.py
+        exported: true
+        description: Detect increasing recovery times signaling strategy decay.
+      - name: feature_importance_drift
+        defined_in: evaluation/ml_diagnostics.py
+        exported: true
+        description: Measure feature importance rank drift across retraining periods.
+      - name: ensemble_disagreement
+        defined_in: evaluation/ml_diagnostics.py
+        exported: true
+        description: Measure consensus among ensemble model members.
+      - name: analyze_calibration
+        defined_in: evaluation/calibration_analysis.py
+        exported: true
+        description: Assess model confidence calibration with reliability curves and ECE.
+    constants: []
+
+###############################################################################
+# 9. validation/
+###############################################################################
+- module: validation
+  path: validation/
+  purpose: >
+    Truth Layer preflight checks validating execution contracts, OHLCV data
+    integrity, feature causality, and time-shift leakage before data enters
+    the modeling or backtesting pipeline.
+  file_count: 5
+  total_lines: 500
+  files:
+    - path: validation/__init__.py
+      lines: 8
+      role: >
+        Package namespace with module docstring (no explicit exports).
+    - path: validation/data_integrity.py
+      lines: 114
+      role: >
+        OHLCV quality gate validating universe data passes quality checks
+        before modeling, with fail-fast option for corrupted tickers.
+    - path: validation/feature_redundancy.py
+      lines: 114
+      role: >
+        Feature redundancy detection identifying highly correlated features
+        to validate that structural features do not introduce problematic
+        collinearity.
+    - path: validation/leakage_detection.py
+      lines: 193
+      role: >
+        Causality enforcement ensuring live features are CAUSAL, plus
+        time-shift correlation tests detecting features with suspicious
+        future-label correlation.
+    - path: validation/preconditions.py
+      lines: 71
+      role: >
+        Execution contract validation ensuring global preconditions
+        (RET_TYPE, LABEL_H, PX_TYPE, ENTRY_PRICE_TYPE) are locked down
+        before modeling or backtesting.
+  public_interface:
+    classes:
+      - name: DataIntegrityValidator
+        defined_in: validation/data_integrity.py
+        exported: false
+        description: OHLCV quality gate blocking corrupt data from entering the pipeline.
+      - name: LeakageDetector
+        defined_in: validation/leakage_detection.py
+        exported: false
+        description: Feature causality and time-shift leakage detector.
+      - name: FeatureRedundancyDetector
+        defined_in: validation/feature_redundancy.py
+        exported: false
+        description: Correlation-based feature redundancy detector.
+    functions:
+      - name: validate_execution_contract
+        defined_in: validation/preconditions.py
+        exported: false
+        description: Validate that execution contract preconditions are satisfied.
+      - name: enforce_preconditions
+        defined_in: validation/preconditions.py
+        exported: false
+        description: Enforce preconditions, raising on failure.
+      - name: run_leakage_checks
+        defined_in: validation/leakage_detection.py
+        exported: false
+        description: Run full causality and time-shift leakage check suite.
+      - name: validate_structural_feature_composition
+        defined_in: validation/feature_redundancy.py
+        exported: false
+        description: Validate structural features do not introduce problematic redundancy.
+    constants: []
+
+###############################################################################
+# 10. autopilot/
+###############################################################################
+- module: autopilot
+  path: autopilot/
+  purpose: >
+    Automated strategy lifecycle management providing strategy discovery
+    (execution-layer parameter variants), promotion gating with contract
+    checks, persistent strategy registry, stateful paper trading, meta-
+    labeling for signal confidence, regime-aware strategy allocation, and
+    end-to-end autopilot cycle orchestration.
+  file_count: 8
+  total_lines: 4480
+  files:
+    - path: autopilot/__init__.py
+      lines: 22
+      role: >
+        Package namespace exporting strategy discovery, promotion gate,
+        registry, paper trader, engine, and meta-labeler classes.
+    - path: autopilot/engine.py
+      lines: 1927
+      role: >
+        End-to-end autopilot cycle engine orchestrating model training,
+        strategy discovery, evaluation, promotion, and paper trading
+        with heuristic predictor fallback.
+    - path: autopilot/paper_trader.py
+      lines: 1254
+      role: >
+        Stateful paper-trading engine executing promoted strategies with
+        execution model integration, Kelly sizing, and persistent state.
+    - path: autopilot/promotion_gate.py
+      lines: 424
+      role: >
+        Promotion gate enforcing hard thresholds for Sharpe, drawdown,
+        win rate, DSR, PBO, CPCV, and capacity before strategy deployment.
+    - path: autopilot/registry.py
+      lines: 110
+      role: >
+        Persistent JSON-backed strategy registry tracking promoted
+        strategies and their performance metadata.
+    - path: autopilot/strategy_discovery.py
+      lines: 79
+      role: >
+        Strategy discovery generating execution-layer parameter variants
+        around a fixed predictive model for entry/confidence thresholds,
+        risk mode, and portfolio concentration.
+    - path: autopilot/meta_labeler.py
+      lines: 468
+      role: >
+        Meta-labeling XGBoost classifier predicting P(signal_correct) from
+        signal magnitude, volatility, regime state, and market context
+        features for confidence-based signal filtering.
+    - path: autopilot/strategy_allocator.py
+      lines: 196
+      role: >
+        Regime-aware strategy allocation adjusting entry thresholds,
+        position sizes, holding periods, and Kelly fractions based on
+        detected market regime.
+  public_interface:
+    classes:
+      - name: StrategyCandidate
+        defined_in: autopilot/strategy_discovery.py
+        exported: true
+        description: Frozen dataclass representing a discovered strategy parameter variant.
+      - name: StrategyDiscovery
+        defined_in: autopilot/strategy_discovery.py
+        exported: true
+        description: Generates execution-layer parameter variants for strategy search.
+      - name: PromotionDecision
+        defined_in: autopilot/promotion_gate.py
+        exported: true
+        description: Dataclass holding promotion gate pass/fail decision with reasons.
+      - name: PromotionGate
+        defined_in: autopilot/promotion_gate.py
+        exported: true
+        description: Enforces hard thresholds and validation requirements for promotion.
+      - name: StrategyRegistry
+        defined_in: autopilot/registry.py
+        exported: true
+        description: Persistent JSON-backed registry of promoted strategies.
+      - name: PaperTrader
+        defined_in: autopilot/paper_trader.py
+        exported: true
+        description: Stateful paper-trading engine for promoted strategies.
+      - name: AutopilotEngine
+        defined_in: autopilot/engine.py
+        exported: true
+        description: End-to-end autopilot cycle orchestrator.
+      - name: MetaLabelingModel
+        defined_in: autopilot/meta_labeler.py
+        exported: true
+        description: XGBoost meta-labeling classifier for signal confidence prediction.
+      - name: StrategyAllocator
+        defined_in: autopilot/strategy_allocator.py
+        exported: false
+        description: Regime-aware strategy parameter allocator.
+      - name: HeuristicPredictor
+        defined_in: autopilot/engine.py
+        exported: false
+        description: Simple heuristic predictor fallback when trained ensemble unavailable.
+    functions: []
+    constants:
+      - name: META_FEATURE_COLUMNS
+        defined_in: autopilot/meta_labeler.py
+        description: List of feature column names used by the meta-labeling model.
+      - name: REGIME_STRATEGY_PROFILES
+        defined_in: autopilot/strategy_allocator.py
+        description: Regime-indexed strategy parameter profiles for allocation.
+
+###############################################################################
+# 11. kalshi/
+###############################################################################
+- module: kalshi
+  path: kalshi/
+  purpose: >
+    Kalshi vertical for intraday event-market research, isolated within
+    quant_engine. Provides authenticated API client, DuckDB event-time
+    storage, provider abstraction, data routing, distribution reconstruction
+    from contract prices, event feature/label builders with strict as-of
+    semantics, walk-forward evaluation, promotion helpers, quality scoring,
+    cross-market disagreement, microstructure diagnostics, and regime tagging.
+  file_count: 25
+  total_lines: 6096
+  files:
+    - path: kalshi/__init__.py
+      lines: 58
+      role: >
+        Package namespace exporting client, storage, provider, pipeline,
+        router, quality, distribution, events, walkforward, options,
+        promotion, and mapping store public APIs.
+    - path: kalshi/client.py
+      lines: 655
+      role: >
+        Kalshi API client with RSA-PSS signed authentication, rate limiting,
+        retry policies, and endpoint routing for demo/prod environments.
+    - path: kalshi/storage.py
+      lines: 649
+      role: >
+        DuckDB/SQLite-backed event-time storage layer for Kalshi and macro
+        event research data with stable schema.
+    - path: kalshi/provider.py
+      lines: 647
+      role: >
+        Kalshi provider orchestrating API ingestion, storage writes, and
+        feature-ready data retrieval.
+    - path: kalshi/pipeline.py
+      lines: 167
+      role: >
+        Orchestration helpers consolidating Kalshi sync, distribution
+        building, event features, and walk-forward into pipeline steps.
+    - path: kalshi/router.py
+      lines: 102
+      role: >
+        Routing helpers selecting live vs historical Kalshi API endpoints
+        based on data age and availability.
+    - path: kalshi/quality.py
+      lines: 206
+      role: >
+        Quality scoring for event-distribution snapshots with dynamic stale
+        cutoffs, hard gates, and feature dict conversion.
+    - path: kalshi/distribution.py
+      lines: 935
+      role: >
+        Contract-to-probability distribution builder with threshold direction
+        inference, monotonic repairs, quote staleness filtering, and
+        information-theoretic features.
+    - path: kalshi/events.py
+      lines: 517
+      role: >
+        Event-time joins and as-of feature/label builders enforcing strict
+        temporal ordering to prevent information leakage.
+    - path: kalshi/walkforward.py
+      lines: 492
+      role: >
+        Walk-forward evaluation for event-centric feature panels with
+        purge/embargo, ridge regression, and bootstrap confidence intervals.
+    - path: kalshi/options.py
+      lines: 145
+      role: >
+        OptionMetrics-style options reference features for Kalshi event
+        disagreement analysis.
+    - path: kalshi/promotion.py
+      lines: 178
+      role: >
+        Event-strategy promotion helpers evaluating walk-forward outputs
+        against promotion criteria.
+    - path: kalshi/mapping_store.py
+      lines: 75
+      role: >
+        Versioned event-to-market mapping persistence for tracking which
+        contracts map to which economic events.
+    - path: kalshi/disagreement.py
+      lines: 113
+      role: >
+        Cross-market disagreement engine comparing Kalshi distribution
+        entropy vs options implied vol, tail mass vs skew, and gap
+        z-scores.
+    - path: kalshi/microstructure.py
+      lines: 127
+      role: >
+        Market microstructure diagnostics for Kalshi event markets
+        including update frequency, quote staleness, spread dynamics,
+        and tail liquidity scoring.
+    - path: kalshi/regimes.py
+      lines: 142
+      role: >
+        Regime tagging for Kalshi event strategies providing macro regime
+        classification (inflation, policy, vol) and regime stability scoring.
+    - path: kalshi/tests/__init__.py
+      lines: 1
+      role: >
+        Test sub-package marker for Kalshi package-local tests.
+    - path: kalshi/tests/test_bin_validity.py
+      lines: 105
+      role: >
+        Tests _validate_bins() with overlapping, gapped, and clean bin sets.
+    - path: kalshi/tests/test_distribution.py
+      lines: 41
+      role: >
+        Tests distribution behavior and regressions.
+    - path: kalshi/tests/test_leakage.py
+      lines: 46
+      role: >
+        Tests leakage behavior and regressions.
+    - path: kalshi/tests/test_no_leakage.py
+      lines: 117
+      role: >
+        Tests asof_ts < release_ts for every row in synthetic panels.
+    - path: kalshi/tests/test_signature_kat.py
+      lines: 141
+      role: >
+        Known-answer test for Kalshi RSA-PSS SHA256 signature verification.
+    - path: kalshi/tests/test_stale_quotes.py
+      lines: 152
+      role: >
+        Tests dynamic_stale_cutoff_minutes() behavior near and far from events.
+    - path: kalshi/tests/test_threshold_direction.py
+      lines: 126
+      role: >
+        Tests threshold direction resolution for GE vs LE semantics.
+    - path: kalshi/tests/test_walkforward_purge.py
+      lines: 159
+      role: >
+        Tests walk-forward purge/embargo guarantees.
+  public_interface:
+    classes:
+      - name: KalshiClient
+        defined_in: kalshi/client.py
+        exported: true
+        description: Authenticated API client with RSA-PSS signing and rate limiting.
+      - name: EventTimeStore
+        defined_in: kalshi/storage.py
+        exported: true
+        description: DuckDB/SQLite-backed event-time storage with stable schema.
+      - name: KalshiProvider
+        defined_in: kalshi/provider.py
+        exported: true
+        description: Kalshi data provider orchestrating ingestion and retrieval.
+      - name: KalshiPipeline
+        defined_in: kalshi/pipeline.py
+        exported: true
+        description: Pipeline orchestrator for Kalshi sync, distribution, and evaluation.
+      - name: KalshiDataRouter
+        defined_in: kalshi/router.py
+        exported: true
+        description: Routing helper selecting live vs historical API endpoints.
+      - name: QualityDimensions
+        defined_in: kalshi/quality.py
+        exported: true
+        description: Dataclass holding multi-dimensional quality scores for snapshots.
+      - name: StalePolicy
+        defined_in: kalshi/quality.py
+        exported: true
+        description: Dataclass configuring dynamic stale quote cutoff policy.
+      - name: EventMarketMappingStore
+        defined_in: kalshi/mapping_store.py
+        exported: true
+        description: Versioned event-to-market mapping persistence store.
+      - name: EventMarketMappingRecord
+        defined_in: kalshi/mapping_store.py
+        exported: true
+        description: Dataclass representing a single event-to-market mapping.
+      - name: DistributionConfig
+        defined_in: kalshi/distribution.py
+        exported: true
+        description: Dataclass configuring distribution reconstruction parameters.
+      - name: EventFeatureConfig
+        defined_in: kalshi/events.py
+        exported: true
+        description: Dataclass configuring event feature panel construction.
+      - name: EventWalkForwardConfig
+        defined_in: kalshi/walkforward.py
+        exported: true
+        description: Dataclass configuring walk-forward evaluation parameters.
+      - name: EventWalkForwardResult
+        defined_in: kalshi/walkforward.py
+        exported: true
+        description: Dataclass holding walk-forward evaluation results.
+      - name: EventPromotionConfig
+        defined_in: kalshi/promotion.py
+        exported: true
+        description: Dataclass configuring event promotion criteria.
+      - name: DisagreementSignals
+        defined_in: kalshi/disagreement.py
+        exported: false
+        description: Dataclass holding cross-market disagreement signal values.
+      - name: MicrostructureDiagnostics
+        defined_in: kalshi/microstructure.py
+        exported: false
+        description: Dataclass holding market microstructure diagnostic results.
+      - name: EventRegimeTag
+        defined_in: kalshi/regimes.py
+        exported: false
+        description: Dataclass holding regime classification for event strategies.
+    functions:
+      - name: build_distribution_panel
+        defined_in: kalshi/distribution.py
+        exported: true
+        description: Build time-series panel of probability distributions from contract prices.
+      - name: build_options_reference_panel
+        defined_in: kalshi/options.py
+        exported: true
+        description: Build OptionMetrics reference panel for disagreement features.
+      - name: add_options_disagreement_features
+        defined_in: kalshi/options.py
+        exported: true
+        description: Add options-based disagreement features to event panels.
+      - name: build_event_feature_panel
+        defined_in: kalshi/events.py
+        exported: true
+        description: Build event feature panel with strict as-of temporal semantics.
+      - name: build_event_labels
+        defined_in: kalshi/events.py
+        exported: true
+        description: Build event outcome labels for supervised learning.
+      - name: build_asset_response_labels
+        defined_in: kalshi/events.py
+        exported: true
+        description: Build asset price response labels around economic events.
+      - name: run_event_walkforward
+        defined_in: kalshi/walkforward.py
+        exported: true
+        description: Run walk-forward evaluation on event feature panels.
+      - name: evaluate_event_promotion
+        defined_in: kalshi/promotion.py
+        exported: true
+        description: Evaluate walk-forward results against event promotion criteria.
+      - name: evaluate_event_contract_metrics
+        defined_in: kalshi/walkforward.py
+        exported: true
+        description: Compute per-contract metrics from walk-forward results.
+      - name: add_reference_disagreement_features
+        defined_in: kalshi/events.py
+        exported: true
+        description: Add reference-based disagreement features to event panels.
+      - name: asof_join
+        defined_in: kalshi/events.py
+        exported: true
+        description: Backward-looking as-of join enforcing no future information leakage.
+    constants: []
+
+###############################################################################
+# 12. api/
+###############################################################################
+- module: api
+  path: api/
+  purpose: >
+    FastAPI backend providing HTTP API and SSE streaming for the quant engine.
+    Includes thin routers, synchronous service adapters, background job system
+    with SQLite persistence, in-memory TTL cache with event-driven invalidation,
+    Pydantic schemas for request/response models, dependency injection providers,
+    pipeline orchestrator, A/B testing framework, and 15 mounted router modules
+    covering health, dashboard, data, models, signals, backtests, autopilot,
+    regime, risk, diagnostics, and configuration management.
+  file_count: 59
+  total_lines: 10188
+  files:
+    # --- Core ---
+    - path: api/__init__.py
+      lines: 1
+      role: >
+        Package marker for the FastAPI backend.
+    - path: api/main.py
+      lines: 148
+      role: >
+        FastAPI application factory with CORS, error handlers, lazy router
+        mounting, and startup lifecycle with retrain-monitor background loop.
+    - path: api/orchestrator.py
+      lines: 372
+      role: >
+        Unified pipeline orchestrator consolidating data->features->regimes
+        ->train/predict/backtest flows for API job executors.
+    - path: api/config.py
+      lines: 75
+      role: >
+        Runtime-adjustable configuration for the API layer with ApiSettings
+        and RuntimeConfig dataclasses.
+    - path: api/errors.py
+      lines: 77
+      role: >
+        Custom exceptions and FastAPI error handler registration for
+        DataNotFound, TrainingFailed, JobNotFound, ConfigValidation, and
+        ServiceUnavailable errors.
+    - path: api/ab_testing.py
+      lines: 794
+      role: >
+        A/B testing framework for controlled strategy variant comparison
+        with sequential testing and O'Brien-Fleming alpha spending for
+        early stopping.
+    # --- Cache ---
+    - path: api/cache/__init__.py
+      lines: 4
+      role: >
+        Cache sub-package exporting CacheManager.
+    - path: api/cache/manager.py
+      lines: 62
+      role: >
+        In-memory per-process TTL cache manager for read-heavy endpoints.
+    - path: api/cache/invalidation.py
+      lines: 32
+      role: >
+        Event-driven cache invalidation hooks for train, backtest, data
+        refresh, and config change events.
+    # --- Dependencies ---
+    - path: api/deps/__init__.py
+      lines: 16
+      role: >
+        Dependency injection sub-package exporting FastAPI Depends providers.
+    - path: api/deps/providers.py
+      lines: 54
+      role: >
+        Singleton dependency providers for ApiSettings, RuntimeConfig,
+        JobStore, JobRunner, and CacheManager.
+    # --- Jobs ---
+    - path: api/jobs/__init__.py
+      lines: 6
+      role: >
+        Jobs sub-package exporting JobRecord, JobStatus, JobStore, and
+        JobRunner.
+    - path: api/jobs/models.py
+      lines: 32
+      role: >
+        Job data models defining JobStatus enum and JobRecord dataclass.
+    - path: api/jobs/store.py
+      lines: 145
+      role: >
+        SQLite-backed persistence for job records with CRUD operations.
+    - path: api/jobs/runner.py
+      lines: 115
+      role: >
+        Async job runner with bounded concurrency control and SSE event
+        streaming fanout.
+    - path: api/jobs/autopilot_job.py
+      lines: 31
+      role: >
+        Autopilot job executor function for background compute.
+    - path: api/jobs/backtest_job.py
+      lines: 29
+      role: >
+        Backtest job executor function for background compute.
+    - path: api/jobs/predict_job.py
+      lines: 28
+      role: >
+        Predict job executor function for background compute.
+    - path: api/jobs/train_job.py
+      lines: 30
+      role: >
+        Train job executor function for background compute.
+    # --- Routers ---
+    - path: api/routers/__init__.py
+      lines: 42
+      role: >
+        Router module registry with lazy import and graceful skip on
+        broken dependencies, returning all available APIRouter instances.
+    - path: api/routers/jobs.py
+      lines: 72
+      role: >
+        Job management endpoints for list, get, cancel, and SSE event
+        streaming.
+    - path: api/routers/system_health.py
+      lines: 121
+      role: >
+        System health endpoints for quick status, detailed health checks,
+        and health history.
+    - path: api/routers/dashboard.py
+      lines: 170
+      role: >
+        Dashboard endpoints providing KPIs, regime overview, time series
+        analytics, and equity curves.
+    - path: api/routers/data_explorer.py
+      lines: 490
+      role: >
+        Data explorer endpoints for universe listing, per-ticker OHLCV,
+        bars, and indicator computation.
+    - path: api/routers/model_lab.py
+      lines: 90
+      role: >
+        Model lab endpoints for version listing, health, feature importance,
+        and train/predict job submission.
+    - path: api/routers/signals.py
+      lines: 55
+      role: >
+        Signal/prediction endpoints serving latest prediction results.
+    - path: api/routers/backtests.py
+      lines: 89
+      role: >
+        Backtest result and compute endpoints with job submission.
+    - path: api/routers/benchmark.py
+      lines: 128
+      role: >
+        Benchmark comparison endpoints computing equity curves and
+        performance comparisons.
+    - path: api/routers/logs.py
+      lines: 38
+      role: >
+        Log retrieval endpoint with in-memory buffer handler.
+    - path: api/routers/autopilot.py
+      lines: 83
+      role: >
+        Autopilot endpoints for cycle reports, strategies, paper state,
+        and run-cycle job submission.
+    - path: api/routers/config_mgmt.py
+      lines: 146
+      role: >
+        Runtime config management endpoints with annotated status and
+        cache invalidation on changes.
+    - path: api/routers/iv_surface.py
+      lines: 71
+      role: >
+        IV surface computation endpoints using arbitrage-free SVI builder.
+    - path: api/routers/regime.py
+      lines: 133
+      role: >
+        Regime detection endpoints for metadata, current state, and
+        historical regime data.
+    - path: api/routers/risk.py
+      lines: 53
+      role: >
+        Risk API router for factor exposures and monitoring endpoints.
+    - path: api/routers/diagnostics.py
+      lines: 65
+      role: >
+        Diagnostics router for system self-diagnosis and root-cause analysis.
+    # --- Schemas ---
+    - path: api/schemas/__init__.py
+      lines: 4
+      role: >
+        Schemas sub-package exporting ApiResponse and ResponseMeta.
+    - path: api/schemas/envelope.py
+      lines: 54
+      role: >
+        Standard API response envelope with ok, data, error, and meta fields
+        plus provenance metadata.
+    - path: api/schemas/dashboard.py
+      lines: 38
+      role: >
+        Dashboard Pydantic schemas for KPIs, regime info, and equity points.
+    - path: api/schemas/data_explorer.py
+      lines: 37
+      role: >
+        Data explorer Pydantic schemas for universe, OHLCV bars, and ticker
+        detail.
+    - path: api/schemas/model_lab.py
+      lines: 43
+      role: >
+        Model lab Pydantic schemas for version info, health, and feature
+        importance.
+    - path: api/schemas/backtests.py
+      lines: 56
+      role: >
+        Backtest Pydantic schemas for summary, trades, equity curves, and
+        regime breakdowns.
+    - path: api/schemas/compute.py
+      lines: 56
+      role: >
+        Request Pydantic schemas for train, backtest, predict, and autopilot
+        compute endpoints.
+    - path: api/schemas/signals.py
+      lines: 26
+      role: >
+        Signal Pydantic schemas for signal rows and summaries.
+    - path: api/schemas/system_health.py
+      lines: 47
+      role: >
+        System health Pydantic schemas for quick status, alerts, and
+        detailed health.
+    - path: api/schemas/autopilot.py
+      lines: 30
+      role: >
+        Autopilot Pydantic schemas for cycle reports, strategy info, and
+        paper state.
+    # --- Services ---
+    - path: api/services/__init__.py
+      lines: 20
+      role: >
+        Services sub-package exporting all service adapter classes.
+    - path: api/services/data_service.py
+      lines: 208
+      role: >
+        Data service wrapping data.loader for API consumption.
+    - path: api/services/regime_service.py
+      lines: 50
+      role: >
+        Regime service wrapping regime.detector for API consumption.
+    - path: api/services/model_service.py
+      lines: 98
+      role: >
+        Model service wrapping models.* for API consumption.
+    - path: api/services/backtest_service.py
+      lines: 139
+      role: >
+        Backtest service wrapping backtest results for API consumption.
+    - path: api/services/autopilot_service.py
+      lines: 62
+      role: >
+        Autopilot service wrapping autopilot engine and results for API.
+    - path: api/services/health_service.py
+      lines: 2929
+      role: >
+        System health assessment with 17 runtime monitoring checks across
+        5 domains (data, model, execution, regime, feature) returning
+        scored HealthCheckResult dataclasses.
+    - path: api/services/kalshi_service.py
+      lines: 50
+      role: >
+        Kalshi service wrapping kalshi.storage for API consumption (not
+        routed; artifact-driven).
+    - path: api/services/results_service.py
+      lines: 85
+      role: >
+        Results service reading/writing to the results/ directory.
+    - path: api/services/data_helpers.py
+      lines: 1058
+      role: >
+        Data loading and computation functions for result files, risk
+        metrics, regime detection, and system health assessment used by
+        API services.
+    - path: api/services/diagnostics.py
+      lines: 288
+      role: >
+        System diagnostics correlating health metrics with P&L to identify
+        root causes of underperformance.
+    - path: api/services/health_alerts.py
+      lines: 324
+      role: >
+        Health alert and notification system detecting day-over-day drops
+        and domain failures with logging, email, and webhook dispatch.
+    - path: api/services/health_confidence.py
+      lines: 314
+      role: >
+        Bootstrap and parametric confidence interval computation for health
+        check scores.
+    - path: api/services/health_risk_feedback.py
+      lines: 275
+      role: >
+        Health-to-risk feedback loop feeding overall health score into the
+        risk governor for proportional position size reduction.
+  public_interface:
+    classes:
+      - name: ApiResponse
+        defined_in: api/schemas/envelope.py
+        exported: true
+        description: Standard API response envelope with ok, data, error, and meta fields.
+      - name: ResponseMeta
+        defined_in: api/schemas/envelope.py
+        exported: true
+        description: Pydantic model for response metadata (timestamp, version, provenance).
+      - name: PipelineOrchestrator
+        defined_in: api/orchestrator.py
+        exported: false
+        description: Unified pipeline orchestrator for API job execution flows.
+      - name: ApiSettings
+        defined_in: api/config.py
+        exported: false
+        description: Runtime-adjustable API settings dataclass.
+      - name: RuntimeConfig
+        defined_in: api/config.py
+        exported: false
+        description: Mutable runtime configuration for the API layer.
+      - name: JobRecord
+        defined_in: api/jobs/models.py
+        exported: true
+        description: Dataclass representing a background job with status and metadata.
+      - name: JobStatus
+        defined_in: api/jobs/models.py
+        exported: true
+        description: Enum for job lifecycle states (queued, running, succeeded, failed, cancelled).
+      - name: JobStore
+        defined_in: api/jobs/store.py
+        exported: true
+        description: SQLite-backed job persistence store.
+      - name: JobRunner
+        defined_in: api/jobs/runner.py
+        exported: true
+        description: Async job runner with concurrency control and SSE fanout.
+      - name: CacheManager
+        defined_in: api/cache/manager.py
+        exported: true
+        description: In-memory TTL cache manager for read-heavy endpoints.
+      - name: DataService
+        defined_in: api/services/data_service.py
+        exported: true
+        description: Service adapter wrapping data.loader for API consumption.
+      - name: RegimeService
+        defined_in: api/services/regime_service.py
+        exported: true
+        description: Service adapter wrapping regime.detector for API consumption.
+      - name: ModelService
+        defined_in: api/services/model_service.py
+        exported: true
+        description: Service adapter wrapping models.* for API consumption.
+      - name: BacktestService
+        defined_in: api/services/backtest_service.py
+        exported: true
+        description: Service adapter wrapping backtest results for API consumption.
+      - name: AutopilotService
+        defined_in: api/services/autopilot_service.py
+        exported: true
+        description: Service adapter wrapping autopilot engine for API consumption.
+      - name: HealthService
+        defined_in: api/services/health_service.py
+        exported: true
+        description: System health assessment service with 17 monitoring checks.
+      - name: KalshiService
+        defined_in: api/services/kalshi_service.py
+        exported: true
+        description: Service adapter wrapping kalshi.storage for API (not routed).
+      - name: ResultsService
+        defined_in: api/services/results_service.py
+        exported: true
+        description: Service adapter for reading/writing result artifacts.
+    functions:
+      - name: get_settings
+        defined_in: api/deps/providers.py
+        exported: true
+        description: FastAPI dependency provider for ApiSettings singleton.
+      - name: get_runtime_config
+        defined_in: api/deps/providers.py
+        exported: true
+        description: FastAPI dependency provider for RuntimeConfig singleton.
+      - name: get_job_store
+        defined_in: api/deps/providers.py
+        exported: true
+        description: FastAPI dependency provider for JobStore singleton.
+      - name: get_job_runner
+        defined_in: api/deps/providers.py
+        exported: true
+        description: FastAPI dependency provider for JobRunner singleton.
+      - name: get_cache
+        defined_in: api/deps/providers.py
+        exported: true
+        description: FastAPI dependency provider for CacheManager singleton.
+      - name: invalidate_on_train
+        defined_in: api/cache/invalidation.py
+        exported: false
+        description: Invalidate cache entries affected by model training.
+      - name: invalidate_on_backtest
+        defined_in: api/cache/invalidation.py
+        exported: false
+        description: Invalidate cache entries affected by backtest completion.
+      - name: invalidate_on_data_refresh
+        defined_in: api/cache/invalidation.py
+        exported: false
+        description: Invalidate cache entries affected by data refresh.
+      - name: invalidate_on_config_change
+        defined_in: api/cache/invalidation.py
+        exported: false
+        description: Invalidate cache entries affected by config changes.
+      - name: all_routers
+        defined_in: api/routers/__init__.py
+        exported: false
+        description: Import and return all available router instances.
+    constants: []
+
+###############################################################################
+# 13. utils/
+###############################################################################
+- module: utils
+  path: utils/
+  purpose: >
+    Utility helpers providing structured JSON logging, metric emission with
+    alert threshold checking, and persistent alert history with optional
+    webhook notifications.
+  file_count: 2
+  total_lines: 444
+  files:
+    - path: utils/__init__.py
+      lines: 5
+      role: >
+        Package namespace marker (no explicit exports).
+    - path: utils/logging.py
+      lines: 439
+      role: >
+        Structured logging with JSON formatter, factory for structured
+        loggers, MetricsEmitter for cycle metrics and alert thresholds,
+        and AlertHistory with webhook notification support.
+  public_interface:
+    classes:
+      - name: StructuredFormatter
+        defined_in: utils/logging.py
+        exported: false
+        description: JSON formatter for machine-parseable structured log output.
+      - name: AlertHistory
+        defined_in: utils/logging.py
+        exported: false
+        description: Persistent alert history with optional webhook notifications.
+      - name: MetricsEmitter
+        defined_in: utils/logging.py
+        exported: false
+        description: Emits key metrics on every cycle and checks alert thresholds.
+    functions:
+      - name: get_logger
+        defined_in: utils/logging.py
+        exported: false
+        description: Factory function for creating structured loggers.
+    constants: []
+
+###############################################################################
+# 14. scripts/
+###############################################################################
+- module: scripts
+  path: scripts/
+  purpose: >
+    Standalone operational scripts for data downloading (Alpaca, IBKR
+    intraday and daily gap-fill), regime model comparison, and TypeScript
+    type generation from Pydantic schemas.
+  file_count: 5
+  total_lines: 2596
+  files:
+    - path: scripts/alpaca_intraday_download.py
+      lines: 1202
+      role: >
+        Hybrid intraday data downloader using Alpaca as primary source with
+        IBKR validation/gap-fill, quality checks, and cross-source validation.
+    - path: scripts/ibkr_intraday_download.py
+      lines: 508
+      role: >
+        IBKR intraday data downloader for 1m/5m/15m/30m/1h/4h timeframes
+        using chunked historical requests.
+    - path: scripts/ibkr_daily_gapfill.py
+      lines: 417
+      role: >
+        IBKR daily gap-fill downloader for stale WRDS tickers and missing
+        universe tickers.
+    - path: scripts/compare_regime_models.py
+      lines: 323
+      role: >
+        A/B comparison of Jump Model (PyPI) vs HMM baseline on a
+        representative universe with metric comparison.
+    - path: scripts/generate_types.py
+      lines: 146
+      role: >
+        TypeScript interface generator introspecting Pydantic schemas in
+        api/schemas/ and emitting .ts type definitions.
+  public_interface:
+    classes: []
+    functions:
+      - name: main
+        defined_in: scripts/alpaca_intraday_download.py
+        exported: false
+        description: CLI entry point for hybrid Alpaca/IBKR intraday download.
+      - name: main
+        defined_in: scripts/ibkr_intraday_download.py
+        exported: false
+        description: CLI entry point for IBKR intraday download.
+      - name: main
+        defined_in: scripts/ibkr_daily_gapfill.py
+        exported: false
+        description: CLI entry point for IBKR daily gap-fill download.
+      - name: main
+        defined_in: scripts/compare_regime_models.py
+        exported: false
+        description: CLI entry point for regime model A/B comparison.
+      - name: main
+        defined_in: scripts/generate_types.py
+        exported: false
+        description: CLI entry point for TypeScript type generation.
+    constants: []
+
+###############################################################################
+# 15. root (root-level files)
+###############################################################################
+- module: root
+  path: ./
+  purpose: >
+    Root-level files providing central configuration (flat and structured),
+    reproducibility manifests, and CLI entry points for training, prediction,
+    backtesting, autopilot cycles, retraining, server startup, Kalshi event
+    pipeline, WRDS daily refresh, and cache metadata rehydration.
+  file_count: 14
+  total_lines: 4423
+  files:
+    - path: __init__.py
+      lines: 6
+      role: >
+        Top-level package marker with project description docstring.
+    - path: config.py
+      lines: 1020
+      role: >
+        Central flat-constant configuration providing ~240 ALL_CAPS constants
+        with STATUS annotations, backward-compatible with config_structured.py
+        as the authoritative source for overlapping values.
+    - path: config_structured.py
+      lines: 347
+      role: >
+        Authoritative structured configuration using 14 typed dataclasses
+        with IDE autocomplete, type checking, and organized namespacing via
+        singleton get_config() accessor.
+    - path: reproducibility.py
+      lines: 333
+      role: >
+        Reproducibility locks writing run manifests with git commit hash,
+        dataset checksums, and full config snapshots for audit trails.
+    - path: run_train.py
+      lines: 227
+      role: >
+        CLI entry point for training regime-conditional ensemble models
+        with universe, horizon, and feature mode options.
+    - path: run_backtest.py
+      lines: 464
+      role: >
+        CLI entry point for backtesting trained models with optional risk
+        management, walk-forward validation, and advanced overfitting checks.
+    - path: run_predict.py
+      lines: 237
+      role: >
+        CLI entry point for generating predictions using trained ensemble
+        models with universe and horizon options.
+    - path: run_autopilot.py
+      lines: 129
+      role: >
+        CLI entry point for running one full autopilot cycle (discovery,
+        validation, promotion, paper trading).
+    - path: run_retrain.py
+      lines: 322
+      role: >
+        CLI entry point for checking retrain triggers and retraining if
+        needed, with force, status, rollback, and version listing options.
+    - path: run_server.py
+      lines: 94
+      role: >
+        Combined API + frontend static serving entry point with dev and
+        production modes via Uvicorn.
+    - path: run_kalshi_event_pipeline.py
+      lines: 227
+      role: >
+        CLI entry point for integrated Kalshi event-time pipeline running
+        ingestion, distribution building, event features, and walk-forward.
+    - path: run_wrds_daily_refresh.py
+      lines: 915
+      role: >
+        WRDS daily data re-download script replacing stale cache files,
+        verifying integrity, refreshing GICS sectors, and downloading
+        delisted stocks.
+    - path: run_rehydrate_cache_metadata.py
+      lines: 101
+      role: >
+        Backfills cache metadata sidecars for existing OHLCV cache files
+        with source attribution and provenance.
+    - path: config_data/__init__.py
+      lines: 1
+      role: >
+        Package marker for YAML-based portfolio and universe configuration
+        data directory.
+  public_interface:
+    classes:
+      - name: SystemConfig
+        defined_in: config_structured.py
+        exported: false
+        description: Top-level configuration aggregator with typed sub-configs.
+      - name: PreconditionsConfig
+        defined_in: config_structured.py
+        exported: false
+        description: Execution contract configuration (ret_type, label_h, etc.).
+      - name: DataConfig
+        defined_in: config_structured.py
+        exported: false
+        description: Data loading and caching configuration.
+      - name: RegimeConfig
+        defined_in: config_structured.py
+        exported: false
+        description: Regime detection configuration.
+      - name: ModelConfig
+        defined_in: config_structured.py
+        exported: false
+        description: Model training configuration.
+      - name: BacktestConfig
+        defined_in: config_structured.py
+        exported: false
+        description: Backtesting configuration.
+      - name: KellyConfig
+        defined_in: config_structured.py
+        exported: false
+        description: Kelly criterion sizing configuration.
+      - name: DrawdownConfig
+        defined_in: config_structured.py
+        exported: false
+        description: Drawdown management configuration.
+      - name: StopLossConfig
+        defined_in: config_structured.py
+        exported: false
+        description: Stop-loss configuration.
+      - name: ValidationConfig
+        defined_in: config_structured.py
+        exported: false
+        description: Statistical validation configuration.
+      - name: PromotionConfig
+        defined_in: config_structured.py
+        exported: false
+        description: Strategy promotion gates configuration.
+      - name: HealthConfig
+        defined_in: config_structured.py
+        exported: false
+        description: Health monitoring threshold configuration.
+      - name: PaperTradingConfig
+        defined_in: config_structured.py
+        exported: false
+        description: Paper trading configuration.
+      - name: ExecutionConfig
+        defined_in: config_structured.py
+        exported: false
+        description: Trade execution configuration.
+    functions:
+      - name: get_config
+        defined_in: config_structured.py
+        exported: false
+        description: Singleton getter for the global SystemConfig instance.
+      - name: validate_config
+        defined_in: config.py
+        exported: false
+        description: Validate configuration values with error and warning reporting.
+      - name: build_run_manifest
+        defined_in: reproducibility.py
+        exported: false
+        description: Build a reproducibility manifest dict with git hash and checksums.
+      - name: write_run_manifest
+        defined_in: reproducibility.py
+        exported: false
+        description: Persist a run manifest to a JSON file.
+      - name: verify_manifest
+        defined_in: reproducibility.py
+        exported: false
+        description: Load and verify a previously saved run manifest.
+      - name: main
+        defined_in: run_train.py
+        exported: false
+        description: CLI entry point for model training.
+      - name: main
+        defined_in: run_backtest.py
+        exported: false
+        description: CLI entry point for backtesting.
+      - name: main
+        defined_in: run_predict.py
+        exported: false
+        description: CLI entry point for prediction generation.
+      - name: main
+        defined_in: run_autopilot.py
+        exported: false
+        description: CLI entry point for autopilot cycle.
+      - name: main
+        defined_in: run_retrain.py
+        exported: false
+        description: CLI entry point for retrain trigger checking.
+      - name: main
+        defined_in: run_server.py
+        exported: false
+        description: CLI entry point for API server startup.
+      - name: main
+        defined_in: run_kalshi_event_pipeline.py
+        exported: false
+        description: CLI entry point for Kalshi event pipeline.
+      - name: main
+        defined_in: run_wrds_daily_refresh.py
+        exported: false
+        description: CLI entry point for WRDS daily data refresh.
+      - name: main
+        defined_in: run_rehydrate_cache_metadata.py
+        exported: false
+        description: CLI entry point for cache metadata rehydration.
+    constants:
+      - name: ROOT_DIR
+        defined_in: config.py
+        description: Absolute path to the quant_engine package root.
+      - name: MODEL_DIR
+        defined_in: config.py
+        description: Path to trained model artifacts directory.
+      - name: RESULTS_DIR
+        defined_in: config.py
+        description: Path to results output directory.
+      - name: DATA_CACHE_DIR
+        defined_in: config.py
+        description: Path to OHLCV data cache directory.
+      - name: REGIME_NAMES
+        defined_in: config.py
+        description: Canonical regime ID to name mapping (0-3).
+      - name: UNIVERSE_FULL
+        defined_in: config.py
+        description: Full universe ticker list for production runs.
+      - name: UNIVERSE_QUICK
+        defined_in: config.py
+        description: Quick universe ticker list for development/testing.
+      - name: FORWARD_HORIZONS
+        defined_in: config.py
+        description: List of prediction horizons in trading days.
+      - name: FEATURE_METADATA
+        defined_in: features/pipeline.py
+        description: Feature causality metadata (re-exported from features; referenced by config consumers).
+
+# --- Note: tests/ directory (99 files) is excluded from this module ---
+# --- inventory as it is a test suite, not a runtime package.         ---
