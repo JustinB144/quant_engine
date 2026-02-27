@@ -393,6 +393,16 @@ REGIME_STOP_MULTIPLIER = {                         # STATUS: ACTIVE — backtest
 }
 MAX_ANNUALIZED_TURNOVER = 500.0                   # STATUS: ACTIVE — backtest/engine.py; 500% annualized turnover warning threshold
 
+# ── Portfolio Turnover Penalty (SPEC-P04) ────────────────────────────
+# Penalty per unit turnover in the mean-variance optimizer (decimal).
+# Higher values discourage trading; lower values allow more rebalancing.
+# When PORTFOLIO_TURNOVER_DYNAMIC is True, the optimizer uses
+# max(PORTFOLIO_TURNOVER_PENALTY, 2× estimated execution cost) so the
+# penalty always exceeds real trading friction.
+PORTFOLIO_TURNOVER_PENALTY = 0.001                # STATUS: ACTIVE — autopilot/engine.py, risk/portfolio_optimizer.py; base turnover penalty
+PORTFOLIO_TURNOVER_DYNAMIC = True                 # STATUS: ACTIVE — autopilot/engine.py; enable cost-aware dynamic penalty
+PORTFOLIO_TURNOVER_COST_MULTIPLIER = 2.0          # STATUS: ACTIVE — autopilot/engine.py; multiplier on estimated cost for dynamic penalty floor
+
 # Maximum net weight in any single GICS sector (+/-10%).
 # Enforced by risk/portfolio_optimizer.py ONLY when GICS_SECTORS is populated.
 MAX_SECTOR_EXPOSURE = 0.10                        # STATUS: ACTIVE — risk/portfolio_optimizer.py; but INACTIVE when GICS_SECTORS is empty

@@ -38,6 +38,9 @@ from ..config import (
     CPCV_PARTITIONS,
     CPCV_TEST_PARTITIONS,
     EXEC_MAX_PARTICIPATION,
+    PORTFOLIO_TURNOVER_PENALTY,
+    PORTFOLIO_TURNOVER_DYNAMIC,
+    PORTFOLIO_TURNOVER_COST_MULTIPLIER,
     REQUIRE_PERMNO,
     SURVIVORSHIP_UNIVERSE_NAME,
     WF_MAX_TRAIN_DATES,
@@ -687,6 +690,11 @@ class AutopilotEngine:
             result = backtester.run(predictions=predictions, price_data=price_data, verbose=False)
             bt_results.append((c, result))
 
+        # Step 1b: update regime-conditioned position sizing stats (SPEC-P01).
+        # Aggregate trades from all candidate backtests and feed them to the
+        # position sizer so learned win-rates replace hardcoded priors.
+        self._update_regime_stats_from_backtests(bt_results)
+
         # Step 2: compute global PBO over the full candidate search set.
         global_pbo = None
         daily_return_map: Dict[str, pd.Series] = {}
@@ -891,6 +899,56 @@ class AutopilotEngine:
             decisions.append(self.gate.evaluate(c, result, contract_metrics=contract_metrics))
 
         return decisions
+
+    # ── Regime stats update (SPEC-P01) ────────────────────────────────
+
+    def _update_regime_stats_from_backtests(
+        self,
+        bt_results: List[Tuple],
+    ) -> None:
+        """Aggregate trades from backtest results and update regime statistics.
+
+        Collects trades from all candidate backtests, deduplicates by
+        (ticker, entry_date, exit_date) to avoid inflating counts from
+        overlapping candidates, then feeds them to a PositionSizer to
+        compute learned regime-conditioned win rates.  The updated stats
+        are persisted to disk for use by subsequent cycles.
+        """
+        from ..risk.position_sizer import PositionSizer
+
+        all_trades = []
+        for _candidate, result in bt_results:
+            if not hasattr(result, "trades") or not result.trades:
+                continue
+            for t in result.trades:
+                all_trades.append({
+                    "ticker": getattr(t, "ticker", ""),
+                    "entry_date": getattr(t, "entry_date", ""),
+                    "exit_date": getattr(t, "exit_date", ""),
+                    "net_return": getattr(t, "net_return", 0.0),
+                    "regime": getattr(t, "regime", 0),
+                })
+
+        if not all_trades:
+            return
+
+        trades_df = pd.DataFrame(all_trades)
+
+        # Deduplicate: same (ticker, entry_date, exit_date) across candidates
+        trades_df = trades_df.drop_duplicates(
+            subset=["ticker", "entry_date", "exit_date"],
+            keep="first",
+        )
+
+        if trades_df.empty:
+            return
+
+        sizer = PositionSizer()
+        sizer.update_regime_stats(trades_df, regime_col="regime", persist=True)
+        self._log(
+            f"    SPEC-P01: Updated regime stats from {len(trades_df)} "
+            f"deduplicated backtest trades"
+        )
 
     # ── Meta-labeling helpers (Spec 04 T2/T3/T6) ────────────────────
 
@@ -1173,6 +1231,117 @@ class AutopilotEngine:
 
         return df
 
+    # ── SPEC-P04 helpers ─────────────────────────────────────────────
+
+    def _get_current_portfolio_weights(self) -> Optional[pd.Series]:
+        """Extract current portfolio weights from the paper trader.
+
+        Loads the paper trader's persisted state and converts active
+        positions into a weight series (notional value / total equity)
+        so the optimizer can minimise turnover relative to the existing
+        allocation.  Returns ``None`` when there are no open positions
+        (i.e. building a portfolio from scratch).
+        """
+        try:
+            state = self.paper_trader._load_state()
+            positions = state.get("positions", [])
+            if not positions:
+                return None
+
+            # Total equity = cash + sum(position values)
+            cash = float(state.get("cash", 0.0))
+            position_values: Dict[str, float] = {}
+            total_position_value = 0.0
+            for pos in positions:
+                permno = str(pos.get("permno", pos.get("ticker", "")))
+                shares = float(pos.get("shares", 0))
+                price = float(pos.get("last_price", pos.get("entry_price", 0)))
+                if shares != 0 and price > 0:
+                    val = shares * price
+                    position_values[permno] = val
+                    total_position_value += abs(val)
+
+            equity = cash + total_position_value
+            if equity <= 0:
+                return None
+
+            weights = {k: v / equity for k, v in position_values.items()}
+            if not weights:
+                return None
+            return pd.Series(weights, dtype=float)
+        except (AttributeError, TypeError, KeyError, json.JSONDecodeError):
+            return None
+
+    def _dynamic_turnover_penalty(
+        self,
+        returns_df: pd.DataFrame,
+        assets: list,
+    ) -> float:
+        """Compute cost-aware turnover penalty.
+
+        When ``PORTFOLIO_TURNOVER_DYNAMIC`` is enabled, this estimates the
+        average round-trip execution cost across the universe and sets the
+        penalty floor to ``PORTFOLIO_TURNOVER_COST_MULTIPLIER × avg_cost``
+        (in decimal, not basis points).  This ensures the optimizer never
+        proposes a rebalance whose penalty is below real trading friction.
+
+        Falls back to the static ``PORTFOLIO_TURNOVER_PENALTY`` when cost
+        estimation is unavailable.
+
+        Parameters
+        ----------
+        returns_df : pd.DataFrame
+            Historical return panel (columns are asset identifiers).
+        assets : list
+            Asset identifiers in the optimization universe.
+
+        Returns
+        -------
+        float
+            The effective turnover penalty (decimal per unit turnover).
+        """
+        base_penalty = PORTFOLIO_TURNOVER_PENALTY
+        try:
+            from ..backtest.execution import ExecutionModel
+
+            exec_model = ExecutionModel()
+
+            cost_estimates_bps: list = []
+            for asset in assets:
+                if asset not in returns_df.columns:
+                    continue
+                ret_series = returns_df[asset].dropna()
+                if len(ret_series) < 20:
+                    continue
+
+                # Annualised volatility from recent returns
+                realized_vol = float(ret_series.tail(60).std() * np.sqrt(252))
+                if not np.isfinite(realized_vol) or realized_vol <= 0:
+                    realized_vol = 0.20  # conservative fallback
+
+                # Use representative notional and volume for cost estimation.
+                # These are order-of-magnitude estimates; the execution model's
+                # relative cost scaling is what matters, not absolute levels.
+                est_cost = exec_model.estimate_cost(
+                    daily_volume=500_000.0,
+                    desired_notional=100_000.0,
+                    realized_vol=realized_vol,
+                )
+                if np.isfinite(est_cost) and est_cost > 0:
+                    cost_estimates_bps.append(est_cost)
+
+            if cost_estimates_bps:
+                avg_cost_bps = float(np.median(cost_estimates_bps))
+                # Convert from bps to decimal (10000 bps = 1.0)
+                avg_cost_decimal = avg_cost_bps / 10_000.0
+                dynamic_floor = avg_cost_decimal * PORTFOLIO_TURNOVER_COST_MULTIPLIER
+                return max(base_penalty, dynamic_floor)
+
+        except (ImportError, TypeError, ValueError) as e:
+            logger.debug("Dynamic turnover penalty estimation failed (%s); using static", e)
+
+        return base_penalty
+
     def _compute_optimizer_weights(
         self,
         latest_predictions: pd.DataFrame,
@@ -1316,10 +1485,31 @@ class AutopilotEngine:
         if len(common) < 2:
             return None
 
+        # ── SPEC-P04: Configurable, cost-aware turnover penalty ──
+        # Start with the static config penalty, then optionally raise it to
+        # a floor of (PORTFOLIO_TURNOVER_COST_MULTIPLIER × estimated cost)
+        # so the optimizer never proposes trades whose penalty is below the
+        # real round-trip friction.
+        effective_turnover_penalty = PORTFOLIO_TURNOVER_PENALTY
+        if PORTFOLIO_TURNOVER_DYNAMIC:
+            effective_turnover_penalty = self._dynamic_turnover_penalty(
+                returns_df, common,
+            )
+            self._log(
+                f"  Turnover penalty: {effective_turnover_penalty:.6f} "
+                f"(base={PORTFOLIO_TURNOVER_PENALTY:.6f}, dynamic={PORTFOLIO_TURNOVER_DYNAMIC})"
+            )
+
+        # Retrieve current portfolio weights from the paper trader so the
+        # optimizer can penalise deviations from the existing allocation.
+        current_weights = self._get_current_portfolio_weights()
+
         try:
             weights = optimize_portfolio(
                 expected_returns=expected_returns[common],
                 covariance=cov_matrix.loc[common, common],
+                turnover_penalty=effective_turnover_penalty,
+                current_weights=current_weights,
             )
 
             # ── Confidence-weighted position sizing (NEW 3) ──

@@ -1082,7 +1082,7 @@ CORRELATION_STRESS_THRESHOLDS = {0.6: 0.85, 0.7: 0.70, 0.8: 0.50}
 
 ---
 
-## SPEC-P04: Make turnover penalty configurable and cost-aware [MEDIUM]
+## SPEC-P04: Make turnover penalty configurable and cost-aware [MEDIUM] ✅ COMPLETE
 
 **STATUS**: `risk/portfolio_optimizer.py` line 33: `turnover_penalty: float = 0.001` hardcoded default. `autopilot/engine.py` line 1246 calls `optimize_portfolio()` without passing `turnover_penalty`. No config variable exists.
 
