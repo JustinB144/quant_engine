@@ -945,7 +945,7 @@ Wire into engine trade loop:
 
 ---
 
-## SPEC-E04: Build calibration feedback loop for execution costs [MEDIUM]
+## SPEC-E04: Build calibration feedback loop for execution costs [MEDIUM] ✅ COMPLETE
 
 **STATUS**: `cost_calibrator.py` can calibrate from historical trades. But there's no loop that compares simulated fills vs later actual fills and updates coefficients.
 

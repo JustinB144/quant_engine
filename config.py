@@ -370,6 +370,11 @@ EXEC_MARKETCAP_THRESHOLDS = {                     # STATUS: ACTIVE — backtest/
     "mid": 10e9,
 }
 
+# ── Calibration Feedback Loop (SPEC-E04) ─────────────────────────────
+EXEC_CALIBRATION_FEEDBACK_ENABLED = True           # STATUS: ACTIVE — backtest/cost_calibrator.py; enable predicted-vs-actual feedback loop
+EXEC_CALIBRATION_FEEDBACK_INTERVAL_DAYS = 30       # STATUS: ACTIVE — backtest/cost_calibrator.py; recalibration cadence in calendar days
+EXEC_CALIBRATION_FEEDBACK_PATH = MODEL_DIR / "cost_calibration_feedback.json"  # STATUS: ACTIVE — backtest/cost_calibrator.py; persisted fill history
+
 # ── No-Trade Gate (Spec 06) ──────────────────────────────────────────
 EXEC_NO_TRADE_STRESS_THRESHOLD = 0.95             # STATUS: ACTIVE — backtest/execution.py; VIX percentile above which low-urgency orders blocked
 
@@ -566,6 +571,16 @@ REGIME_2_SUPPRESSION_MIN_CONFIDENCE = REGIME_TRADE_POLICY[2]["min_confidence"]  
 # ── Edge-After-Costs Trade Gating (SPEC-E01) ────────────────────────
 EDGE_COST_GATE_ENABLED = True                    # STATUS: ACTIVE — backtest/engine.py; skip trades where predicted edge <= expected cost + buffer
 EDGE_COST_BUFFER_BASE_BPS = 5.0                  # STATUS: ACTIVE — backtest/engine.py; additional buffer beyond expected cost (scales with uncertainty)
+
+# ── Shock-Mode Execution Policy (SPEC-E03) ──────────────────────────
+SHOCK_MODE_ENABLED = True                        # STATUS: ACTIVE — backtest/engine.py; enable unified shock-mode execution policy
+SHOCK_MODE_SHOCK_MAX_PARTICIPATION = 0.005       # STATUS: ACTIVE — backtest/execution.py; max participation during full shock (0.5% of ADV)
+SHOCK_MODE_SHOCK_SPREAD_MULT = 2.0               # STATUS: ACTIVE — backtest/execution.py; spread multiplier during full shock events
+SHOCK_MODE_SHOCK_MIN_CONFIDENCE = 0.80           # STATUS: ACTIVE — backtest/engine.py; min confidence to enter during full shock events
+SHOCK_MODE_ELEVATED_MAX_PARTICIPATION = 0.01     # STATUS: ACTIVE — backtest/execution.py; max participation during elevated uncertainty (1%)
+SHOCK_MODE_ELEVATED_SPREAD_MULT = 1.5            # STATUS: ACTIVE — backtest/execution.py; spread multiplier during elevated uncertainty
+SHOCK_MODE_ELEVATED_MIN_CONFIDENCE = 0.65        # STATUS: ACTIVE — backtest/engine.py; min confidence during elevated uncertainty
+SHOCK_MODE_UNCERTAINTY_THRESHOLD = 0.7           # STATUS: ACTIVE — backtest/execution.py; HMM uncertainty above which elevated mode activates
 
 # ── Regime Strategy Allocation ──────────────────────────────────────
 REGIME_STRATEGY_ALLOCATION_ENABLED = True            # STATUS: ACTIVE — autopilot/strategy_allocator.py; adapt parameters by regime

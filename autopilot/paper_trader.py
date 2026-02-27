@@ -45,9 +45,16 @@ from ..config import (
     ADV_LOOKBACK_DAYS,
     ADV_EMA_SPAN,
     EXEC_LOW_VOLUME_COST_MULT,
+    EXEC_CALIBRATION_FEEDBACK_ENABLED,
+    EXEC_CALIBRATION_FEEDBACK_INTERVAL_DAYS,
+    EXEC_CALIBRATION_FEEDBACK_PATH,
+    EXEC_CALIBRATION_MIN_TRADES,
+    EXEC_CALIBRATION_MIN_SEGMENT_TRADES,
+    EXEC_CALIBRATION_SMOOTHING,
 )
 from ..backtest.execution import ExecutionModel
 from ..backtest.adv_tracker import ADVTracker
+from ..backtest.cost_calibrator import CostCalibrator
 from ..risk.position_sizer import PositionSizer
 from ..risk.stop_loss import StopLossManager
 from ..risk.portfolio_risk import PortfolioRiskManager
@@ -138,6 +145,19 @@ class PaperTrader:
             ema_span=ADV_EMA_SPAN,
             low_volume_cost_mult=EXEC_LOW_VOLUME_COST_MULT,
         )
+
+        # SPEC-E04: Cost calibrator with feedback loop
+        if EXEC_CALIBRATION_FEEDBACK_ENABLED:
+            self._cost_calibrator = CostCalibrator(
+                min_total_trades=EXEC_CALIBRATION_MIN_TRADES,
+                min_segment_trades=EXEC_CALIBRATION_MIN_SEGMENT_TRADES,
+                smoothing=EXEC_CALIBRATION_SMOOTHING,
+                model_dir=Path("trained_models"),
+                feedback_path=EXEC_CALIBRATION_FEEDBACK_PATH,
+                feedback_interval_days=EXEC_CALIBRATION_FEEDBACK_INTERVAL_DAYS,
+            )
+        else:
+            self._cost_calibrator = None
 
         # A/B test registry — lazily loaded to avoid circular imports
         self._ab_registry = None
@@ -422,6 +442,60 @@ class PaperTrader:
                              pred_row.get("vix_percentile"))
             ),
         }
+
+    def _record_fill_feedback(
+        self,
+        fill,
+        reference_price: float,
+        side: str,
+        symbol: str,
+        daily_volume: float,
+        price: float,
+        regime: int,
+        as_of: pd.Timestamp,
+    ) -> None:
+        """Record predicted-vs-actual cost to the calibration feedback loop.
+
+        SPEC-E04: Computes the actual execution cost from the fill slippage
+        and records it alongside the model's predicted cost for later
+        recalibration.
+        """
+        if self._cost_calibrator is None:
+            return
+        if fill.fill_ratio <= 0 or fill.participation_rate <= 0:
+            return
+
+        predicted_cost = fill.cost_details.get("total_bps", 0.0)
+        if not np.isfinite(predicted_cost) or predicted_cost <= 0:
+            return
+
+        # Compute actual cost from fill slippage
+        if reference_price <= 0:
+            return
+        if side == "buy":
+            actual_cost = (
+                (fill.fill_price - reference_price) / reference_price * 10000.0
+            )
+        else:
+            actual_cost = (
+                (reference_price - fill.fill_price) / reference_price * 10000.0
+            )
+
+        if not np.isfinite(actual_cost):
+            return
+
+        # Estimate market cap from price * volume (rough proxy)
+        estimated_mcap = float(price * daily_volume * 200.0)
+
+        self._cost_calibrator.record_actual_fill(
+            symbol=symbol,
+            market_cap=estimated_mcap,
+            predicted_cost_bps=float(predicted_cost),
+            actual_cost_bps=float(max(0.0, actual_cost)),
+            participation_rate=float(fill.participation_rate),
+            regime=int(regime),
+            fill_timestamp=str(as_of.isoformat()),
+        )
 
     def _get_volume(
         self,
@@ -794,6 +868,18 @@ class PaperTrader:
                 volume_trend=vol_trend,
             )
 
+            # SPEC-E04: Record fill for calibration feedback
+            self._record_fill_feedback(
+                fill=exit_fill,
+                reference_price=px,
+                side="sell",
+                symbol=permno,
+                daily_volume=daily_vol,
+                price=px,
+                regime=current_regime,
+                as_of=as_of,
+            )
+
             # Use execution model cost or fall back to flat cost
             if exit_fill.fill_ratio > 0 and EXEC_DYNAMIC_COSTS:
                 effective_exit_price = exit_fill.fill_price
@@ -1009,6 +1095,18 @@ class PaperTrader:
                     if entry_fill.no_trade_blocked or entry_fill.fill_ratio <= 0:
                         continue
 
+                    # SPEC-E04: Record fill for calibration feedback
+                    self._record_fill_feedback(
+                        fill=entry_fill,
+                        reference_price=px,
+                        side="buy",
+                        symbol=permno,
+                        daily_volume=entry_daily_vol,
+                        price=px,
+                        regime=regime,
+                        as_of=as_of,
+                    )
+
                     if EXEC_DYNAMIC_COSTS:
                         effective_entry_price = entry_fill.fill_price
                         filled_notional = notional * entry_fill.fill_ratio
@@ -1089,5 +1187,22 @@ class PaperTrader:
                     )
             except Exception as e:
                 logger.debug("A/B early stopping check failed: %s", e)
+
+        # SPEC-E04: Trigger feedback recalibration if interval has elapsed
+        if self._cost_calibrator is not None:
+            try:
+                feedback_result = (
+                    self._cost_calibrator.run_feedback_recalibration()
+                )
+                if feedback_result:
+                    result["cost_feedback_recalibration"] = feedback_result
+                    logger.info(
+                        "SPEC-E04: feedback recalibration updated %d segments",
+                        len(feedback_result),
+                    )
+            except Exception as e:
+                logger.warning(
+                    "SPEC-E04: feedback recalibration failed: %s", e
+                )
 
         return result

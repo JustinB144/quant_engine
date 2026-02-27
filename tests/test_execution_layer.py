@@ -11,6 +11,7 @@ Covers:
   - Integration tests
 """
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -1090,6 +1091,489 @@ class TestCostCalibratorWithExecutionPipeline(unittest.TestCase):
             regime=0, confidence=0.8, holding_days=10,
         )
         self.assertEqual(trade.market_cap_segment, "")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# SPEC-E04: Calibration Feedback Loop
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class TestRecordActualFill(unittest.TestCase):
+    """Test record_actual_fill stores fill data for feedback comparison."""
+
+    def setUp(self):
+        self.calibrator = CostCalibrator(model_dir=None)
+
+    def test_records_valid_fill(self):
+        self.calibrator.record_actual_fill(
+            symbol="AAPL",
+            market_cap=200e9,
+            predicted_cost_bps=5.0,
+            actual_cost_bps=4.5,
+            participation_rate=0.01,
+            regime=0,
+        )
+        self.assertEqual(self.calibrator.feedback_fill_count, 1)
+
+    def test_rejects_zero_participation(self):
+        self.calibrator.record_actual_fill(
+            symbol="AAPL", market_cap=200e9,
+            predicted_cost_bps=5.0, actual_cost_bps=4.5,
+            participation_rate=0.0, regime=0,
+        )
+        self.assertEqual(self.calibrator.feedback_fill_count, 0)
+
+    def test_rejects_nan_costs(self):
+        self.calibrator.record_actual_fill(
+            symbol="AAPL", market_cap=200e9,
+            predicted_cost_bps=float("nan"), actual_cost_bps=4.5,
+            participation_rate=0.01, regime=0,
+        )
+        self.assertEqual(self.calibrator.feedback_fill_count, 0)
+
+        self.calibrator.record_actual_fill(
+            symbol="AAPL", market_cap=200e9,
+            predicted_cost_bps=5.0, actual_cost_bps=float("nan"),
+            participation_rate=0.01, regime=0,
+        )
+        self.assertEqual(self.calibrator.feedback_fill_count, 0)
+
+    def test_rejects_negative_participation(self):
+        self.calibrator.record_actual_fill(
+            symbol="AAPL", market_cap=200e9,
+            predicted_cost_bps=5.0, actual_cost_bps=4.5,
+            participation_rate=-0.01, regime=0,
+        )
+        self.assertEqual(self.calibrator.feedback_fill_count, 0)
+
+    def test_segment_classification_in_fill(self):
+        self.calibrator.record_actual_fill(
+            symbol="MICRO", market_cap=100e6,
+            predicted_cost_bps=8.0, actual_cost_bps=7.0,
+            participation_rate=0.02, regime=2,
+        )
+        fills = self.calibrator.actual_fills
+        self.assertEqual(len(fills), 1)
+        self.assertEqual(fills[0]["segment"], "micro")
+
+    def test_multiple_fills_accumulated(self):
+        for i in range(10):
+            self.calibrator.record_actual_fill(
+                symbol=f"SYM_{i}", market_cap=50e9,
+                predicted_cost_bps=5.0 + i * 0.1,
+                actual_cost_bps=4.5 + i * 0.1,
+                participation_rate=0.01, regime=i % 4,
+            )
+        self.assertEqual(self.calibrator.feedback_fill_count, 10)
+
+    def test_fill_stores_timestamp(self):
+        self.calibrator.record_actual_fill(
+            symbol="AAPL", market_cap=200e9,
+            predicted_cost_bps=5.0, actual_cost_bps=4.5,
+            participation_rate=0.01, regime=0,
+            fill_timestamp="2024-06-01T12:00:00+00:00",
+        )
+        fills = self.calibrator.actual_fills
+        self.assertEqual(fills[0]["timestamp"], "2024-06-01T12:00:00+00:00")
+
+    def test_fill_auto_generates_timestamp(self):
+        self.calibrator.record_actual_fill(
+            symbol="AAPL", market_cap=200e9,
+            predicted_cost_bps=5.0, actual_cost_bps=4.5,
+            participation_rate=0.01, regime=0,
+        )
+        fills = self.calibrator.actual_fills
+        # Should have a non-empty ISO timestamp
+        self.assertTrue(len(fills[0]["timestamp"]) > 0)
+
+
+class TestComputeCostSurprise(unittest.TestCase):
+    """Test compute_cost_surprise and compute_cost_surprise_by_segment."""
+
+    def setUp(self):
+        self.calibrator = CostCalibrator(model_dir=None)
+
+    def test_empty_returns_empty(self):
+        self.assertEqual(self.calibrator.compute_cost_surprise(), {})
+        self.assertEqual(self.calibrator.compute_cost_surprise_by_segment(), {})
+
+    def test_single_regime_bucket(self):
+        # Model over-estimates cost (predicted=5.0, actual=4.0 → surprise=1.0)
+        for i in range(5):
+            self.calibrator.record_actual_fill(
+                symbol=f"SYM_{i}", market_cap=50e9,
+                predicted_cost_bps=5.0, actual_cost_bps=4.0,
+                participation_rate=0.01, regime=0,
+            )
+        result = self.calibrator.compute_cost_surprise()
+        self.assertIn("0", result)
+        self.assertIn("_all", result)
+        self.assertAlmostEqual(result["0"]["mean_surprise_bps"], 1.0)
+        self.assertAlmostEqual(result["0"]["pct_overestimated"], 1.0)
+        self.assertEqual(result["0"]["count"], 5)
+
+    def test_multiple_regime_buckets(self):
+        # Regime 0: over-estimate
+        for i in range(3):
+            self.calibrator.record_actual_fill(
+                symbol=f"A_{i}", market_cap=50e9,
+                predicted_cost_bps=6.0, actual_cost_bps=4.0,
+                participation_rate=0.01, regime=0,
+            )
+        # Regime 3: under-estimate
+        for i in range(3):
+            self.calibrator.record_actual_fill(
+                symbol=f"B_{i}", market_cap=50e9,
+                predicted_cost_bps=3.0, actual_cost_bps=5.0,
+                participation_rate=0.01, regime=3,
+            )
+        result = self.calibrator.compute_cost_surprise()
+        self.assertIn("0", result)
+        self.assertIn("3", result)
+        self.assertAlmostEqual(result["0"]["mean_surprise_bps"], 2.0)
+        self.assertAlmostEqual(result["3"]["mean_surprise_bps"], -2.0)
+        # Aggregate should be near zero
+        self.assertAlmostEqual(result["_all"]["mean_surprise_bps"], 0.0)
+
+    def test_segment_bucketing(self):
+        # Large cap fills
+        for i in range(3):
+            self.calibrator.record_actual_fill(
+                symbol=f"L_{i}", market_cap=50e9,
+                predicted_cost_bps=5.0, actual_cost_bps=4.0,
+                participation_rate=0.01, regime=0,
+            )
+        # Micro cap fills
+        for i in range(3):
+            self.calibrator.record_actual_fill(
+                symbol=f"M_{i}", market_cap=100e6,
+                predicted_cost_bps=10.0, actual_cost_bps=8.0,
+                participation_rate=0.02, regime=0,
+            )
+        result = self.calibrator.compute_cost_surprise_by_segment()
+        self.assertIn("large", result)
+        self.assertIn("micro", result)
+        self.assertAlmostEqual(result["large"]["mean_surprise_bps"], 1.0)
+        self.assertAlmostEqual(result["micro"]["mean_surprise_bps"], 2.0)
+
+    def test_std_with_single_fill(self):
+        self.calibrator.record_actual_fill(
+            symbol="A", market_cap=50e9,
+            predicted_cost_bps=5.0, actual_cost_bps=4.0,
+            participation_rate=0.01, regime=0,
+        )
+        result = self.calibrator.compute_cost_surprise()
+        self.assertAlmostEqual(result["_all"]["std_surprise_bps"], 0.0)
+
+
+class TestFeedbackRecalibration(unittest.TestCase):
+    """Test run_feedback_recalibration updates coefficients from actual fills."""
+
+    def setUp(self):
+        self.calibrator = CostCalibrator(
+            model_dir=None,
+            min_total_trades=10,
+            min_segment_trades=5,
+            smoothing=0.30,
+            spread_bps=3.0,
+        )
+
+    def test_no_fills_returns_empty(self):
+        result = self.calibrator.run_feedback_recalibration(force=True)
+        self.assertEqual(result, {})
+
+    def test_insufficient_fills_returns_empty(self):
+        for i in range(5):
+            self.calibrator.record_actual_fill(
+                symbol=f"SYM_{i}", market_cap=50e9,
+                predicted_cost_bps=5.0, actual_cost_bps=4.0,
+                participation_rate=0.01, regime=0,
+            )
+        result = self.calibrator.run_feedback_recalibration(force=True)
+        self.assertEqual(result, {})
+
+    def test_recalibration_updates_coefficients(self):
+        old_large = self.calibrator.coefficients["large"]
+        # Record fills with actual costs that imply a coefficient different
+        # from the default. actual_cost = 5.0 bps, participation = 0.01
+        # implied_coeff = (5.0 - 1.5) / sqrt(0.01) = 3.5 / 0.1 = 35.0
+        for i in range(15):
+            self.calibrator.record_actual_fill(
+                symbol=f"AAPL_{i}", market_cap=50e9,
+                predicted_cost_bps=5.0, actual_cost_bps=5.0,
+                participation_rate=0.01, regime=0,
+            )
+        result = self.calibrator.run_feedback_recalibration(force=True)
+        self.assertIn("large", result)
+        new_large = self.calibrator.coefficients["large"]
+        # Coefficient should have moved toward 35.0 from 15.0
+        self.assertGreater(new_large, old_large)
+
+    def test_smoothing_applied(self):
+        # Record fills implying coefficient = 35.0 for large segment
+        for i in range(15):
+            self.calibrator.record_actual_fill(
+                symbol=f"SYM_{i}", market_cap=50e9,
+                predicted_cost_bps=5.0, actual_cost_bps=5.0,
+                participation_rate=0.01, regime=0,
+            )
+        old_large = self.calibrator.coefficients["large"]  # 15.0
+        result = self.calibrator.run_feedback_recalibration(force=True)
+        new_large = self.calibrator.coefficients["large"]
+        observed = result["large"]["observed_coeff"]
+        expected = np.clip(0.30 * observed + 0.70 * old_large, 5.0, 100.0)
+        self.assertAlmostEqual(new_large, expected, places=1)
+
+    def test_interval_check_prevents_early_recalibration(self):
+        for i in range(15):
+            self.calibrator.record_actual_fill(
+                symbol=f"SYM_{i}", market_cap=50e9,
+                predicted_cost_bps=5.0, actual_cost_bps=5.0,
+                participation_rate=0.01, regime=0,
+            )
+        # First call with force=True succeeds
+        result1 = self.calibrator.run_feedback_recalibration(force=True)
+        self.assertIn("large", result1)
+
+        # Second call without force should be skipped (interval not elapsed)
+        result2 = self.calibrator.run_feedback_recalibration(force=False)
+        self.assertEqual(result2, {})
+
+    def test_force_bypasses_interval(self):
+        for i in range(15):
+            self.calibrator.record_actual_fill(
+                symbol=f"SYM_{i}", market_cap=50e9,
+                predicted_cost_bps=5.0, actual_cost_bps=5.0,
+                participation_rate=0.01, regime=0,
+            )
+        self.calibrator.run_feedback_recalibration(force=True)
+        # Force should still work even after recent recalibration
+        result = self.calibrator.run_feedback_recalibration(force=True)
+        self.assertIn("large", result)
+
+    def test_records_recalibration_timestamp(self):
+        for i in range(15):
+            self.calibrator.record_actual_fill(
+                symbol=f"SYM_{i}", market_cap=50e9,
+                predicted_cost_bps=5.0, actual_cost_bps=5.0,
+                participation_rate=0.01, regime=0,
+            )
+        self.assertIsNone(self.calibrator.last_feedback_recalibration)
+        self.calibrator.run_feedback_recalibration(force=True)
+        self.assertIsNotNone(self.calibrator.last_feedback_recalibration)
+
+    def test_multi_segment_recalibration(self):
+        # Large-cap fills
+        for i in range(10):
+            self.calibrator.record_actual_fill(
+                symbol=f"L_{i}", market_cap=50e9,
+                predicted_cost_bps=5.0, actual_cost_bps=5.0,
+                participation_rate=0.01, regime=0,
+            )
+        # Micro-cap fills
+        for i in range(10):
+            self.calibrator.record_actual_fill(
+                symbol=f"M_{i}", market_cap=100e6,
+                predicted_cost_bps=10.0, actual_cost_bps=10.0,
+                participation_rate=0.02, regime=0,
+            )
+        result = self.calibrator.run_feedback_recalibration(force=True)
+        self.assertIn("large", result)
+        self.assertIn("micro", result)
+        # Both segments should have fills_count
+        self.assertEqual(result["large"]["fills_count"], 10)
+        self.assertEqual(result["micro"]["fills_count"], 10)
+
+    def test_result_includes_surprise_stats(self):
+        for i in range(15):
+            self.calibrator.record_actual_fill(
+                symbol=f"SYM_{i}", market_cap=50e9,
+                predicted_cost_bps=5.0 + i * 0.1,
+                actual_cost_bps=4.0 + i * 0.1,
+                participation_rate=0.01, regime=0,
+            )
+        result = self.calibrator.run_feedback_recalibration(force=True)
+        large = result["large"]
+        self.assertIn("mean_surprise_bps", large)
+        self.assertIn("median_surprise_bps", large)
+        self.assertAlmostEqual(large["mean_surprise_bps"], 1.0)
+
+
+class TestFeedbackPersistence(unittest.TestCase):
+    """Test that feedback fill history persists to and loads from disk."""
+
+    def setUp(self):
+        import tempfile
+        self._tmpdir = tempfile.mkdtemp()
+        self._feedback_path = Path(self._tmpdir) / "feedback.json"
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def test_save_and_load_feedback(self):
+        cal1 = CostCalibrator(
+            model_dir=None,
+            feedback_path=self._feedback_path,
+        )
+        for i in range(5):
+            cal1.record_actual_fill(
+                symbol=f"SYM_{i}", market_cap=50e9,
+                predicted_cost_bps=5.0, actual_cost_bps=4.0,
+                participation_rate=0.01, regime=0,
+            )
+        cal1._save_feedback_history()
+        self.assertTrue(self._feedback_path.exists())
+
+        # Load into fresh calibrator
+        cal2 = CostCalibrator(
+            model_dir=None,
+            feedback_path=self._feedback_path,
+        )
+        self.assertEqual(cal2.feedback_fill_count, 5)
+
+    def test_recalibration_timestamp_persists(self):
+        cal1 = CostCalibrator(
+            model_dir=None,
+            feedback_path=self._feedback_path,
+            min_total_trades=5,
+            min_segment_trades=3,
+        )
+        for i in range(10):
+            cal1.record_actual_fill(
+                symbol=f"SYM_{i}", market_cap=50e9,
+                predicted_cost_bps=5.0, actual_cost_bps=5.0,
+                participation_rate=0.01, regime=0,
+            )
+        cal1.run_feedback_recalibration(force=True)
+        self.assertIsNotNone(cal1.last_feedback_recalibration)
+
+        # Load into fresh calibrator
+        cal2 = CostCalibrator(
+            model_dir=None,
+            feedback_path=self._feedback_path,
+        )
+        self.assertEqual(
+            cal2.last_feedback_recalibration,
+            cal1.last_feedback_recalibration,
+        )
+
+    def test_no_feedback_path_no_save(self):
+        cal = CostCalibrator(model_dir=None, feedback_path=None)
+        cal.record_actual_fill(
+            symbol="SYM", market_cap=50e9,
+            predicted_cost_bps=5.0, actual_cost_bps=4.0,
+            participation_rate=0.01, regime=0,
+        )
+        # Should not crash and should not create any file
+        cal._save_feedback_history()
+        cal._load_feedback_history()
+
+
+class TestResetFeedbackHistory(unittest.TestCase):
+    """Test reset_feedback_history clears fill state."""
+
+    def test_reset_clears_fills_and_timestamp(self):
+        cal = CostCalibrator(
+            model_dir=None,
+            min_total_trades=5,
+            min_segment_trades=3,
+        )
+        for i in range(10):
+            cal.record_actual_fill(
+                symbol=f"SYM_{i}", market_cap=50e9,
+                predicted_cost_bps=5.0, actual_cost_bps=5.0,
+                participation_rate=0.01, regime=0,
+            )
+        cal.run_feedback_recalibration(force=True)
+        self.assertGreater(cal.feedback_fill_count, 0)
+        self.assertIsNotNone(cal.last_feedback_recalibration)
+
+        cal.reset_feedback_history()
+        self.assertEqual(cal.feedback_fill_count, 0)
+        self.assertIsNone(cal.last_feedback_recalibration)
+
+
+class TestCostCalibratorRepr(unittest.TestCase):
+    """Test __repr__ includes feedback info."""
+
+    def test_repr_includes_feedback_fills(self):
+        cal = CostCalibrator(model_dir=None)
+        cal.record_actual_fill(
+            symbol="SYM", market_cap=50e9,
+            predicted_cost_bps=5.0, actual_cost_bps=4.0,
+            participation_rate=0.01, regime=0,
+        )
+        r = repr(cal)
+        self.assertIn("feedback_fills=1", r)
+
+
+class TestFeedbackEndToEnd(unittest.TestCase):
+    """End-to-end: execution model → calibrator → feedback → recalibration."""
+
+    def test_full_feedback_cycle(self):
+        """End-to-end: record fills with realistic costs, recalibrate, verify."""
+        calibrator = CostCalibrator(
+            model_dir=None,
+            min_total_trades=10,
+            min_segment_trades=5,
+            smoothing=0.30,
+            spread_bps=3.0,
+        )
+        old_large = calibrator.coefficients["large"]
+
+        # Record 15 large-cap fills with costs that exceed half-spread
+        # so implied coefficients are positive.
+        # predicted=5.0, actual=6.0 → under-estimated (surprise < 0)
+        # implied_coeff from actual: (6.0 - 1.5) / sqrt(0.01) = 4.5/0.1 = 45.0
+        for i in range(15):
+            calibrator.record_actual_fill(
+                symbol=f"AAPL_{i}",
+                market_cap=200e9,  # large cap
+                predicted_cost_bps=5.0,
+                actual_cost_bps=6.0,
+                participation_rate=0.01,
+                regime=0,
+            )
+
+        self.assertEqual(calibrator.feedback_fill_count, 15)
+
+        # Recalibrate
+        result = calibrator.run_feedback_recalibration(force=True)
+        self.assertIn("large", result)
+
+        # Cost surprise should be negative (model under-estimated)
+        surprise = calibrator.compute_cost_surprise()
+        self.assertLess(surprise["_all"]["mean_surprise_bps"], 0.0)
+
+        # Coefficients should have moved toward 45.0 from 15.0
+        new_large = calibrator.coefficients["large"]
+        self.assertGreater(new_large, old_large)
+
+    def test_well_calibrated_model_surprise_near_zero(self):
+        """After calibration, a perfectly calibrated model should have
+        cost surprise distribution centered near zero."""
+        calibrator = CostCalibrator(
+            model_dir=None,
+            min_total_trades=10,
+            min_segment_trades=5,
+        )
+
+        # Record fills where predicted == actual
+        for i in range(20):
+            calibrator.record_actual_fill(
+                symbol=f"SYM_{i}", market_cap=50e9,
+                predicted_cost_bps=5.0, actual_cost_bps=5.0,
+                participation_rate=0.01, regime=0,
+            )
+
+        surprise = calibrator.compute_cost_surprise()
+        self.assertAlmostEqual(
+            surprise["_all"]["mean_surprise_bps"], 0.0, places=5,
+        )
+        self.assertAlmostEqual(
+            surprise["_all"]["median_surprise_bps"], 0.0, places=5,
+        )
 
 
 if __name__ == "__main__":
