@@ -60,10 +60,19 @@ from ..config import (
     # SPEC-E01: edge-after-costs trade gating
     EDGE_COST_GATE_ENABLED,
     EDGE_COST_BUFFER_BASE_BPS,
+    # SPEC-E03: shock-mode execution policy
+    SHOCK_MODE_ENABLED,
+    SHOCK_MODE_SHOCK_MAX_PARTICIPATION,
+    SHOCK_MODE_SHOCK_SPREAD_MULT,
+    SHOCK_MODE_SHOCK_MIN_CONFIDENCE,
+    SHOCK_MODE_ELEVATED_MAX_PARTICIPATION,
+    SHOCK_MODE_ELEVATED_SPREAD_MULT,
+    SHOCK_MODE_ELEVATED_MIN_CONFIDENCE,
+    SHOCK_MODE_UNCERTAINTY_THRESHOLD,
 )
 
 logger = logging.getLogger(__name__)
-from .execution import ExecutionModel
+from .execution import ExecutionModel, ShockModePolicy
 from .cost_calibrator import CostCalibrator
 from ..regime.shock_vector import compute_shock_vectors, ShockVector
 from ..regime.uncertainty_gate import UncertaintyGate
@@ -275,6 +284,33 @@ class Backtester:
         self._portfolio_risk = None
         self._risk_metrics = None
 
+    def _compute_shock_policy(
+        self,
+        shock: Optional[ShockVector],
+    ) -> ShockModePolicy:
+        """Derive shock-mode execution policy from a ShockVector (SPEC-E03).
+
+        Uses config-driven thresholds for the three tiers: shock, elevated,
+        and normal.  Returns a normal-mode policy when shock mode is disabled
+        or no shock vector is available.
+        """
+        if not SHOCK_MODE_ENABLED or shock is None:
+            return ShockModePolicy.normal_default()
+
+        return ShockModePolicy.from_shock_vector(
+            shock,
+            shock_max_participation=SHOCK_MODE_SHOCK_MAX_PARTICIPATION,
+            shock_spread_mult=SHOCK_MODE_SHOCK_SPREAD_MULT,
+            shock_min_confidence=SHOCK_MODE_SHOCK_MIN_CONFIDENCE,
+            elevated_max_participation=SHOCK_MODE_ELEVATED_MAX_PARTICIPATION,
+            elevated_spread_mult=SHOCK_MODE_ELEVATED_SPREAD_MULT,
+            elevated_min_confidence=SHOCK_MODE_ELEVATED_MIN_CONFIDENCE,
+            elevated_uncertainty_threshold=SHOCK_MODE_UNCERTAINTY_THRESHOLD,
+            normal_max_participation=EXEC_MAX_PARTICIPATION,
+            normal_spread_mult=1.0,
+            normal_min_confidence=self.confidence_threshold,
+        )
+
     def _init_risk_components(self):
         """Initialize risk management components."""
         from ..risk.position_sizer import PositionSizer
@@ -339,6 +375,7 @@ class Backtester:
         ohlcv: pd.DataFrame,
         entry_idx: int,
         position_size: float,
+        shock_policy: Optional[ShockModePolicy] = None,
     ) -> Optional[dict]:
         """
         Simulate entry execution with participation and impact constraints.
@@ -346,6 +383,12 @@ class Backtester:
         For positions exceeding ``ALMGREN_CHRISS_ADV_THRESHOLD`` of daily
         volume the Almgren-Chriss optimal-execution cost model replaces the
         simple square-root impact model.  Small positions keep the fast path.
+
+        Parameters
+        ----------
+        shock_policy : ShockModePolicy, optional
+            SPEC-E03: If provided, overrides max participation and applies
+            shock spread multiplier to the execution simulation.
         """
         ref_price = float(ohlcv["Open"].iloc[entry_idx])
         vol = float(ohlcv["Volume"].iloc[entry_idx]) if "Volume" in ohlcv.columns else 0.0
@@ -375,6 +418,16 @@ class Backtester:
                     estimated_market_cap,
                 )
 
+        # SPEC-E03: extract shock mode overrides for execution
+        _shock_max_part = (
+            shock_policy.max_participation_override
+            if shock_policy is not None and shock_policy.is_active else None
+        )
+        _shock_spread_mult = (
+            shock_policy.spread_multiplier
+            if shock_policy is not None and shock_policy.is_active else 1.0
+        )
+
         fill = self.execution_model.simulate(
             side="buy",
             reference_price=ref_price,
@@ -384,6 +437,7 @@ class Backtester:
             realized_vol=context["realized_vol"],
             overnight_gap=context["overnight_gap"],
             intraday_range=context["intraday_range"],
+            event_spread_multiplier=_shock_spread_mult,
             urgency_type="entry",
             volume_trend=volume_trend,
             # SPEC-W01: structural state from shock vector
@@ -393,6 +447,8 @@ class Backtester:
             systemic_stress=shock.structural_features.get("systemic_stress") if shock else None,
             # SPEC-W02: per-segment impact coefficient
             impact_coeff_override=impact_coeff_override,
+            # SPEC-E03: shock mode participation override
+            max_participation_override=_shock_max_part,
         )
         if fill.fill_ratio <= 0:
             return None
@@ -457,8 +513,16 @@ class Backtester:
         exit_idx: int,
         shares: float,
         force_full: bool = True,
+        shock_policy: Optional[ShockModePolicy] = None,
     ) -> dict:
-        """Simulate exit execution, upgrading to Almgren-Chriss for large positions."""
+        """Simulate exit execution, upgrading to Almgren-Chriss for large positions.
+
+        Parameters
+        ----------
+        shock_policy : ShockModePolicy, optional
+            SPEC-E03: If provided, applies shock mode spread multiplier and
+            participation override to the exit execution simulation.
+        """
         ref_price = float(ohlcv["Close"].iloc[exit_idx])
         vol = float(ohlcv["Volume"].iloc[exit_idx]) if "Volume" in ohlcv.columns else 0.0
         context = self._execution_context(ohlcv=ohlcv, bar_idx=exit_idx)
@@ -487,6 +551,16 @@ class Backtester:
                     estimated_market_cap,
                 )
 
+        # SPEC-E03: extract shock mode overrides for execution
+        _shock_max_part = (
+            shock_policy.max_participation_override
+            if shock_policy is not None and shock_policy.is_active else None
+        )
+        _shock_spread_mult = (
+            shock_policy.spread_multiplier
+            if shock_policy is not None and shock_policy.is_active else 1.0
+        )
+
         fill = self.execution_model.simulate(
             side="sell",
             reference_price=ref_price,
@@ -496,6 +570,7 @@ class Backtester:
             realized_vol=context["realized_vol"],
             overnight_gap=context["overnight_gap"],
             intraday_range=context["intraday_range"],
+            event_spread_multiplier=_shock_spread_mult,
             urgency_type="exit",
             volume_trend=volume_trend,
             # SPEC-W01: structural state from shock vector
@@ -505,6 +580,8 @@ class Backtester:
             systemic_stress=shock.structural_features.get("systemic_stress") if shock else None,
             # SPEC-W02: per-segment impact coefficient
             impact_coeff_override=impact_coeff_override,
+            # SPEC-E03: shock mode participation override
+            max_participation_override=_shock_max_part,
         )
         if fill.fill_ratio <= 0:
             # Emergency fallback: force full exit with legacy slippage.
@@ -941,6 +1018,30 @@ class Backtester:
                 # Skip trades where predicted edge does not exceed expected
                 # round-trip cost plus an uncertainty-scaled buffer.
                 shock = self._shock_vectors.get((permno, dt))
+
+                # SPEC-E03: Compute unified shock-mode execution policy.
+                shock_policy = self._compute_shock_policy(shock)
+                if shock_policy.is_active:
+                    # Confidence filter: require higher conviction during shocks
+                    if float(signal["confidence"]) < shock_policy.min_confidence_override:
+                        logger.debug(
+                            "Shock mode (%s): skipping %s on %s — confidence %.2f "
+                            "< min_confidence %.2f",
+                            shock_policy.tier, permno, dt,
+                            float(signal["confidence"]),
+                            shock_policy.min_confidence_override,
+                        )
+                        continue
+                    logger.info(
+                        "Shock mode (%s) active for %s on %s: "
+                        "max_participation=%.4f, spread_mult=%.1f, "
+                        "min_confidence=%.2f",
+                        shock_policy.tier, permno, dt,
+                        shock_policy.max_participation_override,
+                        shock_policy.spread_multiplier,
+                        shock_policy.min_confidence_override,
+                    )
+
                 if EDGE_COST_GATE_ENABLED:
                     entry_vol = (
                         float(ohlcv["Volume"].iloc[entry_idx])
@@ -955,6 +1056,12 @@ class Backtester:
                         else 0.0
                     )
 
+                    # SPEC-E03: pass shock mode overrides to cost estimator
+                    _gate_max_part = (
+                        shock_policy.max_participation_override
+                        if shock_policy.is_active else None
+                    )
+
                     expected_cost_bps = self.execution_model.estimate_cost(
                         daily_volume=entry_vol,
                         desired_notional=desired_notional,
@@ -963,6 +1070,10 @@ class Backtester:
                         overnight_gap=context["overnight_gap"],
                         intraday_range=context["intraday_range"],
                         reference_price=entry_ref_price,
+                        event_spread_multiplier=(
+                            shock_policy.spread_multiplier
+                            if shock_policy.is_active else 1.0
+                        ),
                         break_probability=(
                             shock.bocpd_changepoint_prob if shock else None
                         ),
@@ -974,6 +1085,7 @@ class Backtester:
                             shock.structural_features.get("systemic_stress")
                             if shock else None
                         ),
+                        max_participation_override=_gate_max_part,
                     )
 
                     predicted_edge_bps = abs(float(signal["predicted_return"])) * 10000
@@ -1002,6 +1114,7 @@ class Backtester:
                     ohlcv=ohlcv,
                     entry_idx=entry_idx,
                     position_size=adjusted_size,
+                    shock_policy=shock_policy,
                 )
                 if entry_fill is None:
                     continue
@@ -1013,6 +1126,7 @@ class Backtester:
                     exit_idx=exit_idx,
                     shares=entry_fill["shares"],
                     force_full=True,
+                    shock_policy=shock_policy,
                 )
 
                 entry_price = float(entry_fill["entry_price"])
@@ -1485,6 +1599,29 @@ class Backtester:
 
                 # SPEC-E01: Edge-after-costs trade gate (risk-managed mode).
                 shock = self._shock_vectors.get((ticker, dt))
+
+                # SPEC-E03: Compute unified shock-mode execution policy.
+                shock_policy = self._compute_shock_policy(shock)
+                if shock_policy.is_active:
+                    if float(signal["confidence"]) < shock_policy.min_confidence_override:
+                        logger.debug(
+                            "Shock mode (%s): skipping %s on %s — confidence %.2f "
+                            "< min_confidence %.2f",
+                            shock_policy.tier, ticker, dt,
+                            float(signal["confidence"]),
+                            shock_policy.min_confidence_override,
+                        )
+                        continue
+                    logger.info(
+                        "Shock mode (%s) active for %s on %s: "
+                        "max_participation=%.4f, spread_mult=%.1f, "
+                        "min_confidence=%.2f",
+                        shock_policy.tier, ticker, dt,
+                        shock_policy.max_participation_override,
+                        shock_policy.spread_multiplier,
+                        shock_policy.min_confidence_override,
+                    )
+
                 if EDGE_COST_GATE_ENABLED:
                     entry_vol = (
                         float(ohlcv["Volume"].iloc[entry_idx])
@@ -1498,6 +1635,12 @@ class Backtester:
                         else 0.0
                     )
 
+                    # SPEC-E03: pass shock mode overrides to cost estimator
+                    _gate_max_part = (
+                        shock_policy.max_participation_override
+                        if shock_policy.is_active else None
+                    )
+
                     expected_cost_bps = self.execution_model.estimate_cost(
                         daily_volume=entry_vol,
                         desired_notional=desired_notional,
@@ -1506,6 +1649,10 @@ class Backtester:
                         overnight_gap=context["overnight_gap"],
                         intraday_range=context["intraday_range"],
                         reference_price=entry_price,
+                        event_spread_multiplier=(
+                            shock_policy.spread_multiplier
+                            if shock_policy.is_active else 1.0
+                        ),
                         break_probability=(
                             shock.bocpd_changepoint_prob if shock else None
                         ),
@@ -1517,6 +1664,7 @@ class Backtester:
                             shock.structural_features.get("systemic_stress")
                             if shock else None
                         ),
+                        max_participation_override=_gate_max_part,
                     )
 
                     predicted_edge_bps = abs(float(signal["predicted_return"])) * 10000
@@ -1606,6 +1754,7 @@ class Backtester:
                     ohlcv=ohlcv,
                     entry_idx=entry_idx,
                     position_size=position_size,
+                    shock_policy=shock_policy,
                 )
                 if entry_fill is None:
                     continue

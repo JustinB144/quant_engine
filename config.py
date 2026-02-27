@@ -506,6 +506,10 @@ KELLY_BAYESIAN_BETA = 2.0                         # STATUS: ACTIVE — risk/posi
 KELLY_REGIME_CONDITIONAL = True                   # STATUS: PLACEHOLDER — defined but never imported; use regime-specific parameters
 KELLY_MIN_SAMPLES_FOR_UPDATE = 10                 # STATUS: ACTIVE — risk/position_sizer.py; min trades before Bayesian posterior overrides prior
 
+# ── Regime Trade Statistics (SPEC-P01) ─────────────────────────────
+MIN_REGIME_TRADES_FOR_STATS = 30                  # STATUS: ACTIVE — risk/position_sizer.py; min trades per regime before learned stats override Bayesian prior
+REGIME_STATS_PERSIST_PATH = MODEL_DIR / "regime_trade_stats.json"  # STATUS: ACTIVE — risk/position_sizer.py; persisted learned regime statistics
+
 # ── Risk Governor — Spec 05 ─────────────────────────────────────────
 # Shock budget: reserve fraction of capital for tail events
 SHOCK_BUDGET_PCT = 0.05                           # STATUS: ACTIVE — risk/position_sizer.py; reserve 5% of capital (positions capped at 95%)

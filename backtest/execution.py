@@ -9,6 +9,10 @@ Spec 06 enhancements:
   - No-trade gate during extreme stress for low-urgency orders
   - Per-market-cap-segment impact coefficient support
 
+SPEC-E03 enhancement:
+  - Unified ShockModePolicy that consolidates shock/elevated/normal
+    execution parameters from a ShockVector into a single policy object.
+
 Includes a cost-model calibration routine that fits spread, impact, and fill
 parameters from historical fill data.
 """
@@ -16,10 +20,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from ..regime.shock_vector import ShockVector
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +45,125 @@ class ExecutionFill:
     urgency_type: str = ""
     no_trade_blocked: bool = False
     cost_details: Dict = field(default_factory=dict)
+
+
+@dataclass
+class ShockModePolicy:
+    """Unified shock-mode execution policy (SPEC-E03).
+
+    Consolidates the system's response to market shocks, elevated
+    uncertainty, and normal conditions into a single policy object that
+    downstream execution and entry logic can consume without ad-hoc checks.
+
+    Three tiers:
+      1. **Shock** — active shock event (jump, changepoint, large move).
+         Severely restricts participation, widens spreads, raises the
+         confidence bar for new entries.
+      2. **Elevated** — high HMM uncertainty (regime transition zone).
+         Moderately restricts participation and raises confidence bar.
+      3. **Normal** — calm market, default execution parameters.
+
+    Attributes
+    ----------
+    is_active : bool
+        True when operating in shock or elevated mode.
+    tier : str
+        ``"shock"``, ``"elevated"``, or ``"normal"``.
+    max_participation_override : float
+        Max participation rate to use for this bar's execution.
+    spread_multiplier : float
+        Multiplicative factor applied to effective spread.
+    min_confidence_override : float
+        Minimum signal confidence required to enter a new position.
+    """
+
+    is_active: bool
+    tier: str
+    max_participation_override: float
+    spread_multiplier: float
+    min_confidence_override: float
+
+    @classmethod
+    def from_shock_vector(
+        cls,
+        shock: "ShockVector",
+        *,
+        shock_max_participation: float = 0.005,
+        shock_spread_mult: float = 2.0,
+        shock_min_confidence: float = 0.80,
+        elevated_max_participation: float = 0.01,
+        elevated_spread_mult: float = 1.5,
+        elevated_min_confidence: float = 0.65,
+        elevated_uncertainty_threshold: float = 0.7,
+        normal_max_participation: float = 0.02,
+        normal_spread_mult: float = 1.0,
+        normal_min_confidence: float = 0.50,
+    ) -> "ShockModePolicy":
+        """Derive execution policy from a ShockVector.
+
+        Parameters
+        ----------
+        shock : ShockVector
+            Current bar's structural state.
+        shock_max_participation : float
+            Max participation during full shock events.
+        shock_spread_mult : float
+            Spread multiplier during full shock events.
+        shock_min_confidence : float
+            Minimum confidence to enter during full shock events.
+        elevated_max_participation : float
+            Max participation during elevated uncertainty.
+        elevated_spread_mult : float
+            Spread multiplier during elevated uncertainty.
+        elevated_min_confidence : float
+            Minimum confidence to enter during elevated uncertainty.
+        elevated_uncertainty_threshold : float
+            HMM uncertainty above which elevated mode activates.
+        normal_max_participation : float
+            Max participation under normal conditions.
+        normal_spread_mult : float
+            Spread multiplier under normal conditions.
+        normal_min_confidence : float
+            Minimum confidence under normal conditions.
+
+        Returns
+        -------
+        ShockModePolicy
+        """
+        if shock.is_shock_event():
+            return cls(
+                is_active=True,
+                tier="shock",
+                max_participation_override=shock_max_participation,
+                spread_multiplier=shock_spread_mult,
+                min_confidence_override=shock_min_confidence,
+            )
+        elif shock.hmm_uncertainty > elevated_uncertainty_threshold:
+            return cls(
+                is_active=True,
+                tier="elevated",
+                max_participation_override=elevated_max_participation,
+                spread_multiplier=elevated_spread_mult,
+                min_confidence_override=elevated_min_confidence,
+            )
+        return cls(
+            is_active=False,
+            tier="normal",
+            max_participation_override=normal_max_participation,
+            spread_multiplier=normal_spread_mult,
+            min_confidence_override=normal_min_confidence,
+        )
+
+    @classmethod
+    def normal_default(cls) -> "ShockModePolicy":
+        """Return the default normal-mode policy (no overrides)."""
+        return cls(
+            is_active=False,
+            tier="normal",
+            max_participation_override=0.02,
+            spread_multiplier=1.0,
+            min_confidence_override=0.50,
+        )
 
 
 class ExecutionModel:
@@ -255,6 +381,8 @@ class ExecutionModel:
         systemic_stress: float | None = None,
         volume_trend: float | None = None,
         impact_coeff_override: float | None = None,
+        # SPEC-E03: shock mode overrides
+        max_participation_override: float | None = None,
     ) -> float:
         """Estimate expected round-trip cost in basis points without executing.
 
@@ -304,8 +432,17 @@ class ExecutionModel:
         if desired <= 0 or vol <= 0:
             return 0.0
 
-        # Participation limit with optional volume trend adjustment
+        # Participation limit with optional shock mode and volume trend adjustment
         effective_max_participation = self.max_participation
+
+        # SPEC-E03: shock mode participation override
+        if (
+            max_participation_override is not None
+            and np.isfinite(max_participation_override)
+            and max_participation_override > 0
+        ):
+            effective_max_participation = float(max_participation_override)
+
         if (
             self.volume_trend_enabled
             and volume_trend is not None
@@ -313,9 +450,9 @@ class ExecutionModel:
         ):
             trend = float(np.clip(volume_trend, 0.5, 2.0))
             effective_max_participation = float(np.clip(
-                self.max_participation * trend,
-                self.max_participation * 0.5,
-                self.max_participation * 2.0,
+                effective_max_participation * trend,
+                effective_max_participation * 0.5,
+                effective_max_participation * 2.0,
             ))
 
         daily_dollar_volume = max(px * vol, 1e-9)
@@ -410,6 +547,8 @@ class ExecutionModel:
         volume_trend: float | None = None,
         # Spec 06: per-segment impact coefficient override
         impact_coeff_override: float | None = None,
+        # SPEC-E03: shock mode participation override
+        max_participation_override: float | None = None,
     ) -> ExecutionFill:
         """
         Simulate execution against daily volume capacity.
@@ -444,6 +583,9 @@ class ExecutionModel:
             Current volume relative to ADV EMA (e.g. 1.2 = 20% above average).
         impact_coeff_override : float, optional
             Calibrated impact coefficient for this security's market cap segment.
+        max_participation_override : float, optional
+            SPEC-E03: Override effective max participation rate for this
+            execution (e.g. during shock mode).
         """
         px = float(max(1e-9, reference_price))
         vol = float(max(0.0, daily_volume))
@@ -475,8 +617,17 @@ class ExecutionModel:
                 urgency_type=urgency_type, no_trade_blocked=True,
             )
 
-        # Participation limit with optional volume trend adjustment
+        # Participation limit with optional shock mode and volume trend adjustment
         effective_max_participation = self.max_participation
+
+        # SPEC-E03: shock mode participation override
+        if (
+            max_participation_override is not None
+            and np.isfinite(max_participation_override)
+            and max_participation_override > 0
+        ):
+            effective_max_participation = float(max_participation_override)
+
         if (
             self.volume_trend_enabled
             and volume_trend is not None
@@ -484,9 +635,9 @@ class ExecutionModel:
         ):
             trend = float(np.clip(volume_trend, 0.5, 2.0))
             effective_max_participation = float(np.clip(
-                self.max_participation * trend,
-                self.max_participation * 0.5,
-                self.max_participation * 2.0,
+                effective_max_participation * trend,
+                effective_max_participation * 0.5,
+                effective_max_participation * 2.0,
             ))
 
         daily_dollar_volume = max(px * vol, 1e-9)
