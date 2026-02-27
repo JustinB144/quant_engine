@@ -510,6 +510,17 @@ KELLY_MIN_SAMPLES_FOR_UPDATE = 10                 # STATUS: ACTIVE — risk/posi
 MIN_REGIME_TRADES_FOR_STATS = 30                  # STATUS: ACTIVE — risk/position_sizer.py; min trades per regime before learned stats override Bayesian prior
 REGIME_STATS_PERSIST_PATH = MODEL_DIR / "regime_trade_stats.json"  # STATUS: ACTIVE — risk/position_sizer.py; persisted learned regime statistics
 
+# ── Correlation Stress Tightening (SPEC-P03) ─────────────────────────
+# When average pairwise correlation exceeds a threshold, constraint limits
+# (sector cap, single-name cap, gross exposure) are scaled by the
+# corresponding multiplier.  Applied ON TOP of regime multipliers so that
+# correlation spikes are caught even before the regime detector reacts.
+CORRELATION_STRESS_THRESHOLDS: Dict[float, float] = {  # STATUS: ACTIVE — risk/portfolio_risk.py; avg_corr → constraint multiplier
+    0.6: 0.85,  # 15% tighter when avg pairwise |corr| > 0.6
+    0.7: 0.70,  # 30% tighter when avg pairwise |corr| > 0.7
+    0.8: 0.50,  # 50% tighter when avg pairwise |corr| > 0.8
+}
+
 # ── Risk Governor — Spec 05 ─────────────────────────────────────────
 # Shock budget: reserve fraction of capital for tail events
 SHOCK_BUDGET_PCT = 0.05                           # STATUS: ACTIVE — risk/position_sizer.py; reserve 5% of capital (positions capped at 95%)

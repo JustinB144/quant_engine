@@ -21,7 +21,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from ..config import MAX_PORTFOLIO_VOL
+from ..config import MAX_PORTFOLIO_VOL, CORRELATION_STRESS_THRESHOLDS
 from .covariance import CovarianceEstimator, compute_regime_covariance, get_regime_covariance
 from .universe_config import UniverseConfig, ConfigError
 
@@ -323,6 +323,27 @@ class PortfolioRiskManager:
             metrics["regime"] = regime
             metrics["constraint_multipliers"] = mults
 
+        # ── SPEC-P03: Dynamic correlation-based constraint tightening ──
+        # Compute average pairwise correlation across all proposed positions
+        # and apply additional tightening when correlation is elevated.
+        # This fires faster than regime detection, catching correlation
+        # spikes before the regime detector reclassifies.
+        avg_corr = self._compute_avg_pairwise_correlation(
+            proposed_positions, price_data,
+        )
+        metrics["avg_pairwise_corr"] = avg_corr
+
+        corr_stress_mult = self._get_correlation_stress_multiplier(avg_corr)
+        if corr_stress_mult < 1.0:
+            eff_sector_cap *= corr_stress_mult
+            eff_single *= corr_stress_mult
+            eff_gross *= corr_stress_mult
+            metrics["corr_stress_multiplier"] = corr_stress_mult
+            logger.info(
+                "Correlation stress tightening: avg_corr=%.3f, multiplier=%.2f",
+                avg_corr, corr_stress_mult,
+            )
+
         # ── Single-name check ──
         if position_size > eff_single:
             violations.append(
@@ -449,14 +470,22 @@ class PortfolioRiskManager:
             eff_corr_limit *= mults.get("correlation_limit", 1.0)
             eff_gross *= mults.get("gross_exposure", 1.0)
 
+        # SPEC-P03: correlation-based constraint tightening
+        avg_corr = self._compute_avg_pairwise_correlation(positions, price_data)
+        corr_stress_mult = self._get_correlation_stress_multiplier(avg_corr)
+        if corr_stress_mult < 1.0:
+            eff_sector_cap *= corr_stress_mult
+            eff_gross *= corr_stress_mult
+
         # Gross
         gross = sum(positions.values())
         if eff_gross > 0:
             util["gross_exposure"] = gross / eff_gross
 
         # Single name
-        if positions and self.max_single > 0:
-            util["single_name"] = max(positions.values()) / self.max_single
+        eff_single = self.max_single * corr_stress_mult
+        if positions and eff_single > 0:
+            util["single_name"] = max(positions.values()) / eff_single
 
         # Sector
         sector_weights: Dict[str, float] = {}
@@ -622,6 +651,76 @@ class PortfolioRiskManager:
 
         return float(max_corr)
 
+    def _compute_avg_pairwise_correlation(
+        self,
+        positions: Dict[str, float],
+        price_data: Dict[str, pd.DataFrame],
+    ) -> float:
+        """Compute average absolute pairwise correlation across all positions.
+
+        Uses the most recent ``corr_lookback`` bars of close-to-close returns.
+        Positions without price data are silently skipped.
+
+        Parameters
+        ----------
+        positions : dict
+            {ticker: weight} of current portfolio positions.
+        price_data : dict
+            {ticker: OHLCV DataFrame}.
+
+        Returns
+        -------
+        float
+            Average absolute value of upper-triangle pairwise correlations,
+            or 0.0 when fewer than 2 tickers have sufficient data.
+        """
+        tickers = [t for t in positions if t in price_data]
+        if len(tickers) < 2:
+            return 0.0
+
+        returns = {}
+        for ticker in tickers:
+            series = price_data[ticker]["Close"].pct_change().iloc[-self.corr_lookback:]
+            series = series.replace([np.inf, -np.inf], np.nan)
+            returns[ticker] = series
+
+        ret_df = pd.DataFrame(returns).dropna(how="all")
+        if ret_df.shape[0] < 20 or ret_df.shape[1] < 2:
+            return 0.0
+
+        corr_matrix = ret_df.corr().values
+        n = corr_matrix.shape[0]
+        upper_tri = np.abs(corr_matrix[np.triu_indices(n, k=1)])
+        # Filter out NaN values that can occur with insufficient overlap
+        upper_tri = upper_tri[np.isfinite(upper_tri)]
+        if len(upper_tri) == 0:
+            return 0.0
+
+        return float(np.mean(upper_tri))
+
+    @staticmethod
+    def _get_correlation_stress_multiplier(avg_corr: float) -> float:
+        """Map average pairwise correlation to a constraint stress multiplier.
+
+        Iterates through ``CORRELATION_STRESS_THRESHOLDS`` (sorted ascending)
+        and returns the tightest multiplier whose threshold is exceeded.
+
+        Parameters
+        ----------
+        avg_corr : float
+            Average absolute pairwise correlation of the portfolio.
+
+        Returns
+        -------
+        float
+            Multiplier in (0, 1].  1.0 means no tightening.
+        """
+        multiplier = 1.0
+        for threshold in sorted(CORRELATION_STRESS_THRESHOLDS.keys()):
+            if avg_corr > threshold:
+                multiplier = CORRELATION_STRESS_THRESHOLDS[threshold]
+        return multiplier
+
     def invalidate_regime_cov_cache(self) -> None:
         """Clear the cached regime-conditional covariance matrices."""
         self._regime_cov_cache.clear()
@@ -717,7 +816,10 @@ class PortfolioRiskManager:
                 n = len(tickers)
                 if n > 1:
                     upper_tri = corr_matrix.values[np.triu_indices(n, k=1)]
+                    avg_abs_corr = float(np.mean(np.abs(upper_tri)))
                     summary["avg_pairwise_corr"] = float(np.mean(upper_tri))
+                    summary["avg_abs_pairwise_corr"] = avg_abs_corr
                     summary["max_pairwise_corr"] = float(np.max(upper_tri))
+                    summary["corr_stress_multiplier"] = self._get_correlation_stress_multiplier(avg_abs_corr)
 
         return summary
