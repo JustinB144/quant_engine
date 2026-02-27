@@ -3,12 +3,17 @@ Local data cache for daily OHLCV data.
 
 Primary storage is parquet when available, with a CSV fallback path so the
 engine can run in minimal environments without pyarrow/fastparquet.
+
+All writes use an atomic temp-file + ``os.replace`` pattern so that
+concurrent processes never observe a partially-written file.
 """
 import json
 import logging
+import os
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Tuple
+from typing import Callable, Dict, List, Mapping, Optional, Tuple
 
 import pandas as pd
 
@@ -23,6 +28,33 @@ FALLBACK_SOURCE_DIRS = [
     FRAMEWORK_DIR / "data_cache",
     FRAMEWORK_DIR / "automated_portfolio_system" / "data_cache",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Atomic write helpers
+# ---------------------------------------------------------------------------
+
+def _atomic_replace(target: Path, write_fn: Callable[[str], None]) -> None:
+    """Write to *target* atomically via a temp file and ``os.replace``.
+
+    *write_fn* is called with the temporary file path (a ``str``) as its
+    sole argument.  On success the temp file is atomically renamed to
+    *target* (POSIX guarantees of ``os.replace``).  On failure the temp
+    file is cleaned up and the exception re-raised so that *target* is
+    never left in a partially-written state.
+    """
+    dir_name = str(target.parent)
+    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+    try:
+        os.close(fd)
+        write_fn(tmp_path)
+        os.replace(tmp_path, str(target))
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def _ensure_cache_dir() -> Path:
@@ -186,8 +218,11 @@ def _write_cache_meta(
         payload.update(meta)
     meta_path = _cache_meta_path(data_path, ticker)
     try:
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2, sort_keys=True)
+        def _dump_json(tmp: str) -> None:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, sort_keys=True)
+
+        _atomic_replace(meta_path, _dump_json)
     except OSError as e:
         logger.debug("Could not write cache meta for %s: %s", ticker, e)
 
@@ -233,13 +268,13 @@ def save_ohlcv(
 
     parquet_path = d / f"{ticker.upper()}_1d.parquet"
     try:
-        daily.to_parquet(parquet_path)
+        _atomic_replace(parquet_path, lambda p: daily.to_parquet(p))
         _write_cache_meta(parquet_path, ticker=ticker, df=daily, source=source, meta=extra_meta)
         return parquet_path
     except (ImportError, OSError) as e:
         logger.debug("Parquet write failed for %s, falling back to CSV: %s", ticker, e)
         csv_path = d / f"{ticker.upper()}_1d.csv"
-        daily.to_csv(csv_path, index=True)
+        _atomic_replace(csv_path, lambda p: daily.to_csv(p, index=True))
         _write_cache_meta(csv_path, ticker=ticker, df=daily, source=source, meta=extra_meta)
         return csv_path
 

@@ -20,9 +20,11 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+import os
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 import pandas as pd
 
@@ -33,6 +35,28 @@ logger = logging.getLogger(__name__)
 _DEFAULT_STORE_DIR = ROOT_DIR / "data" / "feature_store"
 
 _DATE_FMT = "%Y-%m-%d"
+
+
+def _atomic_replace(target: Path, write_fn: Callable[[str], None]) -> None:
+    """Write to *target* atomically via a temp file and ``os.replace``.
+
+    On success the temp file is atomically renamed to *target* (POSIX
+    guarantees of ``os.replace``).  On failure the temp file is cleaned
+    up and the exception re-raised so that *target* is never left in a
+    partially-written state.
+    """
+    dir_name = str(target.parent)
+    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+    try:
+        os.close(fd)
+        write_fn(tmp_path)
+        os.replace(tmp_path, str(target))
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 class FeatureStore:
@@ -114,19 +138,24 @@ class FeatureStore:
         pq_path = self._parquet_path(permno, feature_version, computed_at)
         meta_path = self._meta_path(permno, feature_version, computed_at)
 
-        # Write parquet
-        features.to_parquet(pq_path, engine="pyarrow")
+        # Write parquet atomically
+        _atomic_replace(pq_path, lambda p: features.to_parquet(p, engine="pyarrow"))
 
-        # Write JSON sidecar
+        # Write JSON sidecar atomically
         meta = {
             "permno": permno,
             "computed_at": computed_at,
             "feature_version": feature_version,
             "row_count": len(features),
             "columns": list(features.columns),
-            "saved_utc": datetime.utcnow().isoformat(),
+            "saved_utc": datetime.now(timezone.utc).isoformat(),
         }
-        meta_path.write_text(json.dumps(meta, indent=2))
+
+        def _dump_json(tmp: str) -> None:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=2)
+
+        _atomic_replace(meta_path, _dump_json)
 
         logger.info(
             "FeatureStore: saved %d rows for %s (version=%s, computed_at=%s)",
