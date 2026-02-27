@@ -1373,18 +1373,20 @@ assert LABEL_HORIZONS and all(h > 0 for h in LABEL_HORIZONS), "Invalid label hor
 
 # PHASE 7: HEALTH & MONITORING
 
-## SPEC-H01: Add IC tracking to health system [MEDIUM]
+## SPEC-H01: Add IC tracking to health system [MEDIUM] ✅ COMPLETE
 
-**STATUS**: Health service monitors data quality, model freshness, and general system health. It does NOT track rolling IC (information coefficient) over time.
+**STATUS**: IC tracking health check implemented with SQLite persistence, rolling mean/trend analysis, and autopilot engine integration.
 
-**SPEC**:
-Add a health check that:
-1. Retrieves last N autopilot cycle reports
-2. Extracts IC values from each
-3. Computes rolling IC mean and trend
-4. Flags WARNING if IC < 0.01, CRITICAL if IC < 0
+**IMPLEMENTED**:
+1. Added `_check_ic_tracking()` to HealthService — retrieves last N autopilot cycle IC values, computes rolling mean and linear trend
+2. Added IC history SQLite storage (`ic_tracking.db`) with `save_ic_snapshot()` and `get_ic_history()` methods
+3. Wired IC saving into autopilot engine (`_save_ic_to_health_tracking()`) — saves best IC from each cycle
+4. Added fallback to `latest_cycle.json` when no history DB exists
+5. Scoring: IC >= 0.03 → 90/PASS, >= 0.01 → 70/PASS, >= 0.0 → 40/WARN, < 0.0 → 15/FAIL
+6. Added config constants: `IC_TRACKING_LOOKBACK=20`, `IC_TRACKING_WARN_THRESHOLD=0.01`, `IC_TRACKING_CRITICAL_THRESHOLD=0.0`
+7. 33 tests covering storage, thresholds, trend detection, fallback, domain integration, and engine wiring
 
-**FILES**: `api/services/health_service.py`
+**FILES**: `api/services/health_service.py`, `autopilot/engine.py`, `config.py`, `tests/test_health_ic_tracking.py`
 
 ---
 
@@ -1580,7 +1582,7 @@ SPEC-A01 through SPEC-A02 (2 specs)
 
 **Phase 7 — Health & Monitoring (~8 hours)**:
 SPEC-H01 through SPEC-H03 (3 specs)
-- H01: IC tracking [MEDIUM] (3h)
+- H01: IC tracking [MEDIUM] ✅ DONE (3h)
 - H02: Ensemble disagreement monitoring [MEDIUM] (2h)
 - H03: Execution quality monitoring [MEDIUM] (3h)
 

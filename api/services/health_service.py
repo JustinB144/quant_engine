@@ -1,8 +1,8 @@
 """System health assessment for API consumption.
 
-Expanded health service with 16 runtime monitoring checks across 5 domains:
+Expanded health service with 17 runtime monitoring checks across 5 domains:
     - Data Integrity (25%)
-    - Signal Quality (25%)  — includes Information Ratio (Spec 09)
+    - Signal Quality (25%)  — includes IR (Spec 09) + IC tracking (SPEC-H01)
     - Risk Management (20%)
     - Execution Quality (20%)  — increased from 15% (Spec 09)
     - Model Governance (10%)   — reduced from 15% (Spec 09)
@@ -18,6 +18,11 @@ Spec 09 additions:
     - Enhanced health history with rolling averages and trend detection
     - Health alert integration (degradation + domain failure detection)
     - Health-to-risk feedback loop (position size scaling)
+
+SPEC-H01 additions:
+    - IC tracking across autopilot cycles (rolling mean + trend)
+    - IC history persistence in SQLite (ic_tracking.db)
+    - WARNING if rolling IC mean < 0.01, CRITICAL if IC < 0
 """
 from __future__ import annotations
 
@@ -265,12 +270,13 @@ class HealthService:
             "checks": [c.to_dict() for c in data_checks],
         }
 
-        # ── Signal Quality (25%) — now includes Information Ratio (Spec 09) ──
+        # ── Signal Quality (25%) — includes IR (Spec 09) + IC tracking (SPEC-H01) ──
         signal_checks = [
             self._check_signal_decay(),
             self._check_prediction_distribution(),
             self._check_ensemble_disagreement(),
             self._check_information_ratio(),
+            self._check_ic_tracking(),
         ]
         for c in signal_checks:
             c.severity = "critical"
@@ -2020,3 +2026,281 @@ class HealthService:
         except Exception as e:
             logger.warning("Health check '%s' failed: %s", name, e)
             return _unavailable(name, domain, f"Error: {e}")
+
+    # ── IC Tracking (SPEC-H01) ─────────────────────────────────────────
+
+    _IC_DB_PATH: Optional[Path] = None
+    _MAX_IC_SNAPSHOTS = 200  # Retain up to 200 autopilot cycle IC records
+
+    @classmethod
+    def _get_ic_db_path(cls) -> Path:
+        """Return the path to the IC tracking SQLite database."""
+        if cls._IC_DB_PATH is None:
+            from quant_engine.config import RESULTS_DIR
+            cls._IC_DB_PATH = Path(RESULTS_DIR) / "ic_tracking.db"
+        return cls._IC_DB_PATH
+
+    @classmethod
+    def _ensure_ic_table(cls) -> None:
+        """Create ic_history table if it doesn't exist."""
+        import sqlite3
+        db_path = cls._get_ic_db_path()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS ic_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    ic_mean REAL NOT NULL,
+                    ic_ir REAL,
+                    n_candidates INTEGER,
+                    n_passed INTEGER,
+                    best_strategy_id TEXT
+                )
+            """)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def save_ic_snapshot(
+        self,
+        ic_mean: float,
+        ic_ir: Optional[float] = None,
+        n_candidates: int = 0,
+        n_passed: int = 0,
+        best_strategy_id: str = "",
+    ) -> None:
+        """Save IC metrics from an autopilot cycle to the tracking database.
+
+        Called by the autopilot engine after evaluating candidates.
+        """
+        import sqlite3
+        try:
+            self._ensure_ic_table()
+            db_path = self._get_ic_db_path()
+            conn = sqlite3.connect(str(db_path))
+            try:
+                timestamp = datetime.now(timezone.utc).isoformat()
+                conn.execute(
+                    "INSERT INTO ic_history "
+                    "(timestamp, ic_mean, ic_ir, n_candidates, n_passed, best_strategy_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (timestamp, ic_mean, ic_ir, n_candidates, n_passed, best_strategy_id),
+                )
+                # Prune old entries
+                conn.execute(
+                    "DELETE FROM ic_history WHERE id NOT IN "
+                    "(SELECT id FROM ic_history ORDER BY id DESC LIMIT ?)",
+                    (self._MAX_IC_SNAPSHOTS,),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning("Failed to save IC snapshot: %s", e)
+
+    def get_ic_history(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """Retrieve recent IC snapshots for tracking and health checks.
+
+        Parameters
+        ----------
+        limit : int
+            Maximum number of recent snapshots to return.
+
+        Returns
+        -------
+        List of dicts, each with: timestamp, ic_mean, ic_ir,
+        n_candidates, n_passed, best_strategy_id.
+        Ordered chronologically (oldest first).
+        """
+        import sqlite3
+        try:
+            self._ensure_ic_table()
+            db_path = self._get_ic_db_path()
+            conn = sqlite3.connect(str(db_path))
+            try:
+                cursor = conn.execute(
+                    "SELECT timestamp, ic_mean, ic_ir, n_candidates, n_passed, best_strategy_id "
+                    "FROM ic_history ORDER BY id DESC LIMIT ?",
+                    (limit,),
+                )
+                rows = cursor.fetchall()
+                history = []
+                for ts, ic_mean, ic_ir, n_cand, n_pass, strat_id in reversed(rows):
+                    history.append({
+                        "timestamp": ts,
+                        "ic_mean": ic_mean,
+                        "ic_ir": ic_ir,
+                        "n_candidates": n_cand,
+                        "n_passed": n_pass,
+                        "best_strategy_id": strat_id,
+                    })
+                return history
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning("Failed to load IC history: %s", e)
+            return []
+
+    def _check_ic_tracking(self) -> HealthCheckResult:
+        """Track rolling IC across autopilot cycles (SPEC-H01).
+
+        Retrieves last N autopilot cycle IC values, computes rolling mean
+        and trend, and flags:
+            - WARNING if rolling IC mean < 0.01
+            - CRITICAL (FAIL) if rolling IC mean < 0
+
+        Falls back to extracting IC from the latest autopilot cycle report
+        if no IC history database exists yet.
+
+        Score mapping:
+            IC mean >= 0.03  → 90 (strong predictive signal)
+            IC mean >= 0.01  → 70 (acceptable signal)
+            IC mean >= 0.00  → 40 (marginal — WARNING)
+            IC mean <  0.00  → 15 (negative IC — CRITICAL)
+        """
+        domain = "signal_quality"
+        name = "ic_tracking"
+        methodology = (
+            "Retrieve IC (Information Coefficient) values from last N autopilot "
+            "cycles.  Compute rolling mean and linear trend.  IC is the Spearman "
+            "rank correlation between predicted and actual returns — values > 0.01 "
+            "indicate useful predictive signal.  IC < 0 means the model is "
+            "anti-predictive."
+        )
+        try:
+            from quant_engine.config import (
+                IC_TRACKING_LOOKBACK,
+                IC_TRACKING_WARN_THRESHOLD,
+                IC_TRACKING_CRITICAL_THRESHOLD,
+            )
+        except ImportError:
+            IC_TRACKING_LOOKBACK = 20
+            IC_TRACKING_WARN_THRESHOLD = 0.01
+            IC_TRACKING_CRITICAL_THRESHOLD = 0.0
+
+        thresholds = {
+            "ic_strong": 0.03,
+            "ic_warn": IC_TRACKING_WARN_THRESHOLD,
+            "ic_critical": IC_TRACKING_CRITICAL_THRESHOLD,
+        }
+
+        try:
+            # Primary: read from IC history database
+            ic_history = self.get_ic_history(limit=IC_TRACKING_LOOKBACK)
+            ic_values = [h["ic_mean"] for h in ic_history if h["ic_mean"] is not None]
+
+            # Fallback: extract from latest autopilot cycle report if no history
+            if not ic_values:
+                ic_from_report = self._extract_ic_from_cycle_report()
+                if ic_from_report is not None:
+                    ic_values = [ic_from_report]
+
+            if not ic_values:
+                return _unavailable(
+                    name, domain,
+                    "No IC data available — run at least one autopilot cycle",
+                )
+
+            ic_arr = np.array(ic_values, dtype=float)
+            rolling_mean = float(np.mean(ic_arr))
+            ic_std = float(np.std(ic_arr)) if len(ic_arr) > 1 else 0.0
+
+            # Trend detection via linear regression
+            trend_label = "unknown"
+            trend_slope = 0.0
+            if len(ic_arr) >= 3:
+                x = np.arange(len(ic_arr), dtype=float)
+                coeffs = np.polyfit(x, ic_arr, 1)
+                trend_slope = float(coeffs[0])
+                if trend_slope > 0.001:
+                    trend_label = "improving"
+                elif trend_slope < -0.001:
+                    trend_label = "degrading"
+                else:
+                    trend_label = "stable"
+
+            raw = {
+                "rolling_ic_mean": round(rolling_mean, 6),
+                "ic_std": round(ic_std, 6),
+                "n_cycles": len(ic_values),
+                "trend": trend_label,
+                "trend_slope": round(trend_slope, 6),
+                "latest_ic": round(float(ic_arr[-1]), 6),
+                "ic_values": [round(float(v), 6) for v in ic_arr],
+            }
+
+            # Scoring
+            if rolling_mean >= 0.03:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=90.0, status="PASS",
+                    explanation=(
+                        f"Strong IC: mean={rolling_mean:.4f} over {len(ic_values)} cycles "
+                        f"(trend: {trend_label})"
+                    ),
+                    methodology=methodology, raw_metrics=raw,
+                    thresholds=thresholds, raw_value=rolling_mean,
+                )
+            if rolling_mean >= IC_TRACKING_WARN_THRESHOLD:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=70.0, status="PASS",
+                    explanation=(
+                        f"Acceptable IC: mean={rolling_mean:.4f} over {len(ic_values)} cycles "
+                        f"(trend: {trend_label})"
+                    ),
+                    methodology=methodology, raw_metrics=raw,
+                    thresholds=thresholds, raw_value=rolling_mean,
+                )
+            if rolling_mean >= IC_TRACKING_CRITICAL_THRESHOLD:
+                return HealthCheckResult(
+                    name=name, domain=domain, score=40.0, status="WARN",
+                    explanation=(
+                        f"Weak IC: mean={rolling_mean:.4f} < {IC_TRACKING_WARN_THRESHOLD} "
+                        f"over {len(ic_values)} cycles (trend: {trend_label})"
+                    ),
+                    methodology=methodology, raw_metrics=raw,
+                    thresholds=thresholds, raw_value=rolling_mean,
+                )
+            return HealthCheckResult(
+                name=name, domain=domain, score=15.0, status="FAIL",
+                explanation=(
+                    f"CRITICAL: Negative IC mean={rolling_mean:.4f} — model is anti-predictive "
+                    f"over {len(ic_values)} cycles (trend: {trend_label})"
+                ),
+                methodology=methodology, raw_metrics=raw,
+                thresholds=thresholds, severity="critical",
+                raw_value=rolling_mean,
+            )
+
+        except Exception as e:
+            logger.warning("Health check '%s' failed: %s", name, e)
+            return _unavailable(name, domain, f"Error: {e}")
+
+    @staticmethod
+    def _extract_ic_from_cycle_report() -> Optional[float]:
+        """Extract best IC mean from the latest autopilot cycle report.
+
+        Scans all top_decisions in latest_cycle.json for ic_mean values
+        and returns the best (highest) one.  Returns None if no IC data
+        found.
+        """
+        try:
+            from quant_engine.config import AUTOPILOT_CYCLE_REPORT
+            report_path = Path(AUTOPILOT_CYCLE_REPORT)
+            if not report_path.exists():
+                return None
+
+            with open(report_path, "r") as f:
+                report = json.load(f)
+
+            ic_values = []
+            for decision in report.get("top_decisions", []):
+                metrics = decision.get("metrics", {})
+                ic = metrics.get("ic_mean")
+                if ic is not None:
+                    ic_values.append(float(ic))
+
+            return max(ic_values) if ic_values else None
+        except Exception:
+            return None

@@ -1699,7 +1699,62 @@ class AutopilotEngine:
         with open(self.report_path, "w") as f:
             json.dump(report, f, indent=2, default=str)
 
+        # ── Save IC metrics to health tracking database (SPEC-H01) ──
+        self._save_ic_to_health_tracking(decisions, candidates)
+
         self._log(f"  Cycle report: {self.report_path}")
         self._log(f"  Active strategies: {len(active)}")
         self._log(f"  Paper equity: {paper_report['equity']:.2f}")
         return report
+
+    def _save_ic_to_health_tracking(
+        self,
+        decisions: list,
+        candidates: list,
+    ) -> None:
+        """Persist IC metrics from this cycle to the health tracking database.
+
+        Extracts the best (highest) ic_mean across all evaluated candidates
+        and saves it via HealthService.save_ic_snapshot().  This enables
+        the IC tracking health check (SPEC-H01) to monitor IC trends
+        across autopilot cycles.
+        """
+        try:
+            ic_values = []
+            ic_ir_values = []
+            best_strategy_id = ""
+
+            for d in decisions:
+                metrics = d.metrics if hasattr(d, "metrics") else {}
+                ic = metrics.get("ic_mean")
+                if ic is not None:
+                    ic_values.append(float(ic))
+                    ir = metrics.get("ic_ir")
+                    if ir is not None:
+                        ic_ir_values.append(float(ir))
+                    # Track which strategy produced the best IC
+                    if float(ic) == max(ic_values):
+                        cand = d.candidate if hasattr(d, "candidate") else None
+                        if cand and hasattr(cand, "strategy_id"):
+                            best_strategy_id = cand.strategy_id
+
+            if not ic_values:
+                self._log("  IC tracking: no IC values from this cycle (skipping)")
+                return
+
+            best_ic = max(ic_values)
+            best_ir = max(ic_ir_values) if ic_ir_values else None
+            n_passed = sum(1 for d in decisions if getattr(d, "passed", False))
+
+            from ..api.services.health_service import HealthService
+            svc = HealthService()
+            svc.save_ic_snapshot(
+                ic_mean=best_ic,
+                ic_ir=best_ir,
+                n_candidates=len(candidates),
+                n_passed=n_passed,
+                best_strategy_id=best_strategy_id,
+            )
+            self._log(f"  IC tracking: saved ic_mean={best_ic:.4f} to health DB")
+        except Exception as e:
+            logger.warning("Failed to save IC to health tracking: %s", e)

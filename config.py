@@ -1,7 +1,11 @@
 """
 Central configuration for the quant engine.
 
-Self-contained — no references to automated_portfolio_system.
+Backward-compatible flat-constant interface.  All values that overlap
+with ``config_structured.py`` are derived from the structured config
+singleton so there is a single source of truth.  Constants that exist
+only in this module (e.g. KALSHI_*, STRUCTURAL_*, universes, paths)
+are defined here and will be migrated to structured config over time.
 
 Config Status Legend
 ====================
@@ -22,6 +26,10 @@ Search for ``# STATUS:`` to locate all annotations.
 from pathlib import Path
 from typing import Dict
 
+from config_structured import get_config as _get_config
+
+_cfg = _get_config()
+
 # ── Paths ──────────────────────────────────────────────────────────────
 ROOT_DIR = Path(__file__).parent                  # STATUS: ACTIVE — base path for all relative references
 FRAMEWORK_DIR = ROOT_DIR.parent                   # STATUS: ACTIVE — parent directory of quant_engine
@@ -30,7 +38,7 @@ RESULTS_DIR = ROOT_DIR / "results"                # STATUS: ACTIVE — backtest 
 
 # ── Data Sources ──────────────────────────────────────────────────────
 DATA_CACHE_DIR = ROOT_DIR / "data" / "cache"      # STATUS: ACTIVE — data/loader.py, data/local_cache.py
-WRDS_ENABLED = True                               # STATUS: ACTIVE — data/loader.py; try WRDS first, fall back to local cache / IBKR
+WRDS_ENABLED = _cfg.data.wrds_enabled             # STATUS: ACTIVE — data/loader.py; try WRDS first, fall back to local cache / IBKR
 
 # PLACEHOLDER — OptionMetrics IV surface data integration.
 # Set to True once api/routers/iv_surface.py has a working /iv-surface/heston endpoint
@@ -38,25 +46,25 @@ WRDS_ENABLED = True                               # STATUS: ACTIVE — data/load
 # Note: data/loader.py does gate on this flag (lines 296, 625), but the upstream
 # OptionMetrics data source is not configured in most environments, so the try/except
 # blocks silently fall through.  Disabled until the full pipeline is verified.
-OPTIONMETRICS_ENABLED = False                     # STATUS: PLACEHOLDER — data/loader.py gates on this but pipeline incomplete
+OPTIONMETRICS_ENABLED = _cfg.data.optionmetrics_enabled  # STATUS: PLACEHOLDER — data/loader.py gates on this but pipeline incomplete
 
 # ── Execution Contract (Truth Layer) ─────────────────────────────────
-RET_TYPE = "log"                                  # STATUS: ACTIVE — "log" (log returns) or "simple" (pct returns)
-LABEL_H = 5                                       # STATUS: ACTIVE — label horizon in trading days
-PX_TYPE = "close"                                 # STATUS: ACTIVE — "close" or "open" for price baseline
-ENTRY_PRICE_TYPE = "next_bar_open"                # STATUS: ACTIVE — "next_bar_open" (no look-ahead)
+RET_TYPE = _cfg.preconditions.ret_type.value      # STATUS: ACTIVE — "log" (log returns) or "simple" (pct returns)
+LABEL_H = _cfg.preconditions.label_h              # STATUS: ACTIVE — label horizon in trading days
+PX_TYPE = _cfg.preconditions.px_type.value        # STATUS: ACTIVE — "close" or "open" for price baseline
+ENTRY_PRICE_TYPE = _cfg.preconditions.entry_price_type.value  # STATUS: ACTIVE — "next_bar_open" (no look-ahead)
 
 # ── Truth Layer Feature Flags ────────────────────────────────────────
 TRUTH_LAYER_STRICT_PRECONDITIONS = True           # STATUS: ACTIVE — raise on invalid execution contract
 TRUTH_LAYER_FAIL_ON_CORRUPT = True                # STATUS: ACTIVE — block corrupt OHLCV from pipeline
 TRUTH_LAYER_ENFORCE_CAUSALITY = True              # STATUS: ACTIVE — enforce feature causality at runtime
 TRUTH_LAYER_COMPUTE_NULL_BASELINES = False        # STATUS: ACTIVE — compute null baselines per backtest (adds ~4x time)
-TRUTH_LAYER_COST_STRESS_ENABLED = False           # STATUS: ACTIVE — run cost stress sweep per backtest (adds ~4x time)
+TRUTH_LAYER_COST_STRESS_ENABLED = _cfg.cost_stress.enabled  # STATUS: ACTIVE — run cost stress sweep per backtest (adds ~4x time)
 
 # ── Cost Stress Testing ──────────────────────────────────────────────
-COST_STRESS_MULTIPLIERS = [0.5, 1.0, 2.0, 5.0]   # STATUS: ACTIVE — cost sweep factors
+COST_STRESS_MULTIPLIERS = list(_cfg.cost_stress.multipliers)  # STATUS: ACTIVE — cost sweep factors
 
-KALSHI_ENABLED = False                            # STATUS: ACTIVE — kalshi/provider.py, run_kalshi_event_pipeline.py; disabled by design
+KALSHI_ENABLED = _cfg.data.kalshi_enabled          # STATUS: ACTIVE — kalshi/provider.py, run_kalshi_event_pipeline.py; disabled by design
 KALSHI_ENV = "demo"                               # STATUS: ACTIVE — selects demo vs prod API URL; "demo" (safety) or "prod"
 KALSHI_DEMO_API_BASE_URL = "https://demo-api.kalshi.co/trade-api/v2"   # STATUS: ACTIVE — used to compute KALSHI_API_BASE_URL
 KALSHI_PROD_API_BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"  # STATUS: ACTIVE — used when KALSHI_ENV="prod"
@@ -90,9 +98,9 @@ KALSHI_TAIL_THRESHOLDS = {                         # STATUS: ACTIVE — kalshi/p
     "FOMC": [0.0, 25.0, 50.0],
     "_default": [0.0, 0.5, 1.0],
 }
-DEFAULT_UNIVERSE_SOURCE = "wrds"                  # STATUS: PLACEHOLDER — defined but never imported; "wrds", "static", or "ibkr"
-CACHE_TRUSTED_SOURCES = ["wrds", "wrds_delisting", "ibkr"]  # STATUS: ACTIVE — data/local_cache.py source ranking
-CACHE_MAX_STALENESS_DAYS = 21                     # STATUS: ACTIVE — data/local_cache.py max cache age
+DEFAULT_UNIVERSE_SOURCE = _cfg.data.default_universe_source  # STATUS: PLACEHOLDER — defined but never imported; "wrds", "static", or "ibkr"
+CACHE_TRUSTED_SOURCES = list(_cfg.data.cache_trusted_sources)  # STATUS: ACTIVE — data/local_cache.py source ranking
+CACHE_MAX_STALENESS_DAYS = _cfg.data.cache_max_staleness_days  # STATUS: ACTIVE — data/local_cache.py max cache age
 CACHE_WRDS_SPAN_ADVANTAGE_DAYS = 180              # STATUS: ACTIVE — data/local_cache.py WRDS preference window
 REQUIRE_PERMNO = True                             # STATUS: ACTIVE — data/loader.py, backtest/engine.py PERMNO validation
 
@@ -103,7 +111,7 @@ SURVIVORSHIP_SNAPSHOT_FREQ = "quarterly"           # STATUS: ACTIVE — data/loa
 
 # ── Model Versioning ─────────────────────────────────────────────────
 MODEL_REGISTRY = MODEL_DIR / "registry.json"      # STATUS: PLACEHOLDER — defined but never imported; CHAMPION_REGISTRY is used instead
-MAX_MODEL_VERSIONS = 5                            # STATUS: ACTIVE — models/versioning.py; keep last 5 versions for rollback
+MAX_MODEL_VERSIONS = _cfg.model.max_model_versions  # STATUS: ACTIVE — models/versioning.py; keep last 5 versions for rollback
 CHAMPION_REGISTRY = MODEL_DIR / "champion_registry.json"  # STATUS: ACTIVE — models/governance.py
 
 # ── Retraining ───────────────────────────────────────────────────────
@@ -156,8 +164,8 @@ UNIVERSE_INTRADAY = [                              # STATUS: ACTIVE — 128-tick
 BENCHMARK = "SPY"                                 # STATUS: ACTIVE — backtest/engine.py, api/routers/benchmark.py
 
 # ── Data ───────────────────────────────────────────────────────────────
-LOOKBACK_YEARS = 15                               # STATUS: ACTIVE — data/loader.py; years of historical data to load
-MIN_BARS = 500                                    # STATUS: ACTIVE — data/loader.py; minimum bars needed for feature warm-up
+LOOKBACK_YEARS = _cfg.data.lookback_years         # STATUS: ACTIVE — data/loader.py; years of historical data to load
+MIN_BARS = _cfg.data.min_bars                     # STATUS: ACTIVE — data/loader.py; minimum bars needed for feature warm-up
 
 # ── Intraday Data ─────────────────────────────────────────────────
 INTRADAY_TIMEFRAMES = ["4h", "1h", "30m", "15m", "5m", "1m"]  # STATUS: PLACEHOLDER — defined but never imported
@@ -179,7 +187,7 @@ INTRADAY_VALIDATION_DAYS_PER_WINDOW = 2           # STATUS: ACTIVE — data/cros
 INTRADAY_QUARANTINE_DIR = DATA_CACHE_DIR / "quarantine"  # STATUS: ACTIVE — data/intraday_quality.py; quarantined data location
 
 # ── Targets ────────────────────────────────────────────────────────────
-FORWARD_HORIZONS = [5, 10, 20]                    # STATUS: ACTIVE — models/trainer.py, run_*.py; days ahead to predict
+FORWARD_HORIZONS = list(_cfg.model.forward_horizons)  # STATUS: ACTIVE — models/trainer.py, run_*.py; days ahead to predict
 
 # ── Features ───────────────────────────────────────────────────────────
 INTERACTION_PAIRS = [                              # STATUS: ACTIVE — features/pipeline.py; regime-conditional interaction features
@@ -212,22 +220,22 @@ REGIME_NAMES = {                                   # STATUS: ACTIVE — used in 
     3: "high_volatility",
 }
 MIN_REGIME_SAMPLES = 100                          # STATUS: ACTIVE — models/trainer.py; minimum training samples per regime model (SPEC-B08: 100 for reliable covariance/mean estimation)
-REGIME_MODEL_TYPE = "jump"                        # STATUS: ACTIVE — regime/detector.py; "jump", "hmm", or "rule"
-REGIME_HMM_STATES = 4                             # STATUS: ACTIVE — regime/hmm.py; number of hidden states
-REGIME_HMM_MAX_ITER = 60                          # STATUS: ACTIVE — regime/hmm.py; EM iteration limit
-REGIME_HMM_STICKINESS = 0.92                      # STATUS: ACTIVE — regime/hmm.py; diagonal prior bias for sticky transitions
-REGIME_MIN_DURATION = 3                           # STATUS: ACTIVE — regime/detector.py; minimum regime duration in days
+REGIME_MODEL_TYPE = _cfg.regime.model_type         # STATUS: ACTIVE — regime/detector.py; "jump", "hmm", or "rule"
+REGIME_HMM_STATES = _cfg.regime.n_states           # STATUS: ACTIVE — regime/hmm.py; number of hidden states
+REGIME_HMM_MAX_ITER = _cfg.regime.hmm_max_iter     # STATUS: ACTIVE — regime/hmm.py; EM iteration limit
+REGIME_HMM_STICKINESS = _cfg.regime.hmm_stickiness  # STATUS: ACTIVE — regime/hmm.py; diagonal prior bias for sticky transitions
+REGIME_MIN_DURATION = _cfg.regime.min_duration     # STATUS: ACTIVE — regime/detector.py; minimum regime duration in days
 REGIME_SOFT_ASSIGNMENT_THRESHOLD = 0.35           # STATUS: ACTIVE — models/trainer.py; probability threshold for soft regime labels
-REGIME_HMM_PRIOR_WEIGHT = 0.3                     # STATUS: ACTIVE — regime/hmm.py; shrinkage weight toward sticky prior in M-step
-REGIME_HMM_COVARIANCE_TYPE = "full"               # STATUS: ACTIVE — regime/hmm.py; "full" (captures return-vol correlation) or "diag"
-REGIME_HMM_AUTO_SELECT_STATES = True              # STATUS: ACTIVE — regime/hmm.py; use BIC to select optimal number of states
-REGIME_HMM_MIN_STATES = 2                         # STATUS: ACTIVE — regime/hmm.py; BIC state search lower bound
-REGIME_HMM_MAX_STATES = 6                         # STATUS: ACTIVE — regime/hmm.py; BIC state search upper bound
-REGIME_JUMP_MODEL_ENABLED = True                  # STATUS: ACTIVE — regime/detector.py; statistical jump model alongside HMM
-REGIME_JUMP_PENALTY = 0.02                        # STATUS: ACTIVE — regime/jump_model.py; jump penalty lambda (higher = fewer transitions)
-REGIME_EXPECTED_CHANGES_PER_YEAR = 4              # STATUS: ACTIVE — regime/jump_model.py; calibrate jump penalty from expected regime changes/yr
-REGIME_ENSEMBLE_ENABLED = True                    # STATUS: ACTIVE — regime/detector.py; combine HMM + JM + rule-based via majority vote
-REGIME_ENSEMBLE_CONSENSUS_THRESHOLD = 2           # STATUS: ACTIVE — regime/detector.py; require N of 3 methods to agree for transition
+REGIME_HMM_PRIOR_WEIGHT = _cfg.regime.hmm_prior_weight  # STATUS: ACTIVE — regime/hmm.py; shrinkage weight toward sticky prior in M-step
+REGIME_HMM_COVARIANCE_TYPE = _cfg.regime.hmm_covariance_type  # STATUS: ACTIVE — regime/hmm.py; "full" (captures return-vol correlation) or "diag"
+REGIME_HMM_AUTO_SELECT_STATES = _cfg.regime.hmm_auto_select_states  # STATUS: ACTIVE — regime/hmm.py; use BIC to select optimal number of states
+REGIME_HMM_MIN_STATES = _cfg.regime.hmm_min_states  # STATUS: ACTIVE — regime/hmm.py; BIC state search lower bound
+REGIME_HMM_MAX_STATES = _cfg.regime.hmm_max_states  # STATUS: ACTIVE — regime/hmm.py; BIC state search upper bound
+REGIME_JUMP_MODEL_ENABLED = _cfg.regime.jump_model_enabled  # STATUS: ACTIVE — regime/detector.py; statistical jump model alongside HMM
+REGIME_JUMP_PENALTY = _cfg.regime.jump_penalty     # STATUS: ACTIVE — regime/jump_model.py; jump penalty lambda (higher = fewer transitions)
+REGIME_EXPECTED_CHANGES_PER_YEAR = _cfg.regime.expected_changes_per_year  # STATUS: ACTIVE — regime/jump_model.py; calibrate jump penalty from expected regime changes/yr
+REGIME_ENSEMBLE_ENABLED = _cfg.regime.ensemble_enabled  # STATUS: ACTIVE — regime/detector.py; combine HMM + JM + rule-based via majority vote
+REGIME_ENSEMBLE_CONSENSUS_THRESHOLD = _cfg.regime.ensemble_consensus_threshold  # STATUS: ACTIVE — regime/detector.py; require N of 3 methods to agree for transition
 
 # PyPI jumpmodels package configuration
 REGIME_JUMP_USE_PYPI_PACKAGE = True               # STATUS: ACTIVE — regime/jump_model_pypi.py; True=PyPI jumpmodels, False=legacy custom
@@ -292,38 +300,31 @@ KALSHI_PURGE_WINDOW_BY_EVENT = {"CPI": 14, "FOMC": 21, "NFP": 14, "GDP": 14}  # 
 KALSHI_DEFAULT_PURGE_WINDOW = 10                  # STATUS: PLACEHOLDER — defined but never imported; companion to KALSHI_PURGE_WINDOW_BY_EVENT
 
 # ── Model ──────────────────────────────────────────────────────────────
-MODEL_PARAMS = {                                   # STATUS: ACTIVE — models/trainer.py; GBR hyperparameters
-    "n_estimators": 500,
-    "max_depth": 4,
-    "min_samples_leaf": 30,
-    "learning_rate": 0.05,
-    "subsample": 0.8,
-    "max_features": "sqrt",
-}
-MAX_FEATURES_SELECTED = 30                        # STATUS: ACTIVE — models/trainer.py; after permutation importance
-MAX_IS_OOS_GAP = 0.05                            # STATUS: ACTIVE — models/trainer.py; max allowed IS-OOS degradation (R^2 or correlation)
-CV_FOLDS = 5                                      # STATUS: ACTIVE — models/trainer.py; cross-validation folds
-HOLDOUT_FRACTION = 0.15                           # STATUS: ACTIVE — models/trainer.py; holdout set fraction
-ENSEMBLE_DIVERSIFY = True                         # STATUS: ACTIVE — models/trainer.py; train GBR + ElasticNet + RandomForest and average
+MODEL_PARAMS = dict(_cfg.model.params)             # STATUS: ACTIVE — models/trainer.py; GBR hyperparameters
+MAX_FEATURES_SELECTED = _cfg.model.max_features_selected  # STATUS: ACTIVE — models/trainer.py; after permutation importance
+MAX_IS_OOS_GAP = _cfg.model.max_is_oos_gap         # STATUS: ACTIVE — models/trainer.py; max allowed IS-OOS degradation (R^2 or correlation)
+CV_FOLDS = _cfg.model.cv_folds                     # STATUS: ACTIVE — models/trainer.py; cross-validation folds
+HOLDOUT_FRACTION = _cfg.model.holdout_fraction     # STATUS: ACTIVE — models/trainer.py; holdout set fraction
+ENSEMBLE_DIVERSIFY = _cfg.model.ensemble_diversify  # STATUS: ACTIVE — models/trainer.py; train GBR + ElasticNet + RandomForest and average
 
 # ── Walk-Forward Rolling Window ───────────────────────────────────────
 # When set, training windows are capped at this many unique dates so old
 # data rolls off.  ``None`` means expanding windows (all history).
 # A typical value of 1260 ~ 5 years of trading days.
-WF_MAX_TRAIN_DATES = 1260                         # STATUS: ACTIVE — backtest/engine.py, models/trainer.py; rolling walk-forward window
+WF_MAX_TRAIN_DATES = _cfg.backtest.wf_max_train_dates  # STATUS: ACTIVE — backtest/engine.py, models/trainer.py; rolling walk-forward window
 
 # ── Backtest ───────────────────────────────────────────────────────────
-TRANSACTION_COST_BPS = 20                         # STATUS: ACTIVE — backtest/engine.py; 20 bps round-trip
-ENTRY_THRESHOLD = 0.005                           # STATUS: ACTIVE — backtest/engine.py; minimum predicted return to enter (0.5%)
-CONFIDENCE_THRESHOLD = 0.6                        # STATUS: ACTIVE — backtest/engine.py; minimum model confidence
-MAX_POSITIONS = 20                                # STATUS: ACTIVE — backtest/engine.py; max simultaneous positions
-POSITION_SIZE_PCT = 0.05                          # STATUS: ACTIVE — backtest/engine.py; 5% of capital per position
-BACKTEST_ASSUMED_CAPITAL_USD = 1_000_000.0        # STATUS: ACTIVE — backtest/engine.py; initial capital
-EXEC_SPREAD_BPS = 3.0                            # STATUS: ACTIVE — backtest/engine.py; base spread cost
-EXEC_MAX_PARTICIPATION = 0.02                     # STATUS: ACTIVE — backtest/engine.py; max 2% of daily volume
-EXEC_IMPACT_COEFF_BPS = 25.0                     # STATUS: ACTIVE — backtest/engine.py; market impact coefficient
-EXEC_MIN_FILL_RATIO = 0.20                       # STATUS: ACTIVE — backtest/engine.py; minimum fill ratio
-EXEC_DYNAMIC_COSTS = True                         # STATUS: ACTIVE — backtest/engine.py; condition costs on market state
+TRANSACTION_COST_BPS = _cfg.backtest.transaction_cost_bps  # STATUS: ACTIVE — backtest/engine.py; 20 bps round-trip
+ENTRY_THRESHOLD = _cfg.backtest.entry_threshold    # STATUS: ACTIVE — backtest/engine.py; minimum predicted return to enter (0.5%)
+CONFIDENCE_THRESHOLD = _cfg.backtest.confidence_threshold  # STATUS: ACTIVE — backtest/engine.py; minimum model confidence
+MAX_POSITIONS = _cfg.backtest.max_positions         # STATUS: ACTIVE — backtest/engine.py; max simultaneous positions
+POSITION_SIZE_PCT = _cfg.backtest.position_size_pct  # STATUS: ACTIVE — backtest/engine.py; 5% of capital per position
+BACKTEST_ASSUMED_CAPITAL_USD = _cfg.backtest.assumed_capital_usd  # STATUS: ACTIVE — backtest/engine.py; initial capital
+EXEC_SPREAD_BPS = _cfg.execution.spread_bps        # STATUS: ACTIVE — backtest/engine.py; base spread cost
+EXEC_MAX_PARTICIPATION = _cfg.execution.max_participation  # STATUS: ACTIVE — backtest/engine.py; max 2% of daily volume
+EXEC_IMPACT_COEFF_BPS = _cfg.execution.impact_coeff_bps  # STATUS: ACTIVE — backtest/engine.py; market impact coefficient
+EXEC_MIN_FILL_RATIO = _cfg.execution.min_fill_ratio  # STATUS: ACTIVE — backtest/engine.py; minimum fill ratio
+EXEC_DYNAMIC_COSTS = _cfg.execution.dynamic_costs   # STATUS: ACTIVE — backtest/engine.py; condition costs on market state
 EXEC_DOLLAR_VOLUME_REF_USD = 25_000_000.0        # STATUS: ACTIVE — backtest/engine.py; dollar volume reference
 EXEC_VOL_REF = 0.20                              # STATUS: ACTIVE — backtest/engine.py; reference volatility
 EXEC_VOL_SPREAD_BETA = 1.0                       # STATUS: ACTIVE — backtest/engine.py; vol-spread sensitivity
@@ -378,20 +379,10 @@ EXEC_CALIBRATION_FEEDBACK_PATH = MODEL_DIR / "cost_calibration_feedback.json"  #
 # ── No-Trade Gate (Spec 06) ──────────────────────────────────────────
 EXEC_NO_TRADE_STRESS_THRESHOLD = 0.95             # STATUS: ACTIVE — backtest/execution.py; VIX percentile above which low-urgency orders blocked
 
-MAX_PORTFOLIO_VOL = 0.30                          # STATUS: ACTIVE — backtest/engine.py, risk/portfolio_optimizer.py; max annualized vol
-REGIME_RISK_MULTIPLIER = {                         # STATUS: ACTIVE — backtest/engine.py; regime-conditional position sizing multipliers
-    0: 1.00,  # trending_bull
-    1: 0.85,  # trending_bear
-    2: 0.95,  # mean_reverting
-    3: 0.60,  # high_volatility
-}
-REGIME_STOP_MULTIPLIER = {                         # STATUS: ACTIVE — backtest/engine.py; regime-conditional stop loss multipliers
-    0: 1.0,   # trending_bull: standard stops
-    1: 0.8,   # trending_bear: tighter stops (cut losses faster)
-    2: 1.2,   # mean_reverting: wider stops (expect reversals)
-    3: 1.5,   # high_volatility: wider stops (avoid noise stops)
-}
-MAX_ANNUALIZED_TURNOVER = 500.0                   # STATUS: ACTIVE — backtest/engine.py; 500% annualized turnover warning threshold
+MAX_PORTFOLIO_VOL = _cfg.backtest.max_portfolio_vol  # STATUS: ACTIVE — backtest/engine.py, risk/portfolio_optimizer.py; max annualized vol
+REGIME_RISK_MULTIPLIER = dict(_cfg.regime.risk_multiplier)  # STATUS: ACTIVE — backtest/engine.py; regime-conditional position sizing multipliers
+REGIME_STOP_MULTIPLIER = dict(_cfg.regime.stop_multiplier)  # STATUS: ACTIVE — backtest/engine.py; regime-conditional stop loss multipliers
+MAX_ANNUALIZED_TURNOVER = _cfg.backtest.max_annualized_turnover  # STATUS: ACTIVE — backtest/engine.py; 500% annualized turnover warning threshold
 
 # ── Portfolio Turnover Penalty (SPEC-P04) ────────────────────────────
 # Penalty per unit turnover in the mean-variance optimizer (decimal).
@@ -405,7 +396,7 @@ PORTFOLIO_TURNOVER_COST_MULTIPLIER = 2.0          # STATUS: ACTIVE — autopilot
 
 # Maximum net weight in any single GICS sector (+/-10%).
 # Enforced by risk/portfolio_optimizer.py ONLY when GICS_SECTORS is populated.
-MAX_SECTOR_EXPOSURE = 0.10                        # STATUS: ACTIVE — risk/portfolio_optimizer.py; but INACTIVE when GICS_SECTORS is empty
+MAX_SECTOR_EXPOSURE = _cfg.backtest.max_sector_exposure  # STATUS: ACTIVE — risk/portfolio_optimizer.py; but INACTIVE when GICS_SECTORS is empty
 
 # Maps ticker -> GICS sector name for sector-neutrality constraints.
 # Loaded automatically from config_data/universe.yaml below.
@@ -437,19 +428,19 @@ del _yaml, _UNIVERSE_YAML  # Clean up module namespace
 # The AC model exists in backtest/engine.py and is gated on this flag,
 # but it is not wired into the trade simulation loop end-to-end.
 # Set to True once backtest/execution.py integrates AC into the fill model.
-ALMGREN_CHRISS_ENABLED = False                    # STATUS: PLACEHOLDER — backtest/engine.py gates on this but not fully integrated
-ALMGREN_CHRISS_ADV_THRESHOLD = 0.05               # STATUS: ACTIVE — backtest/engine.py; positions > 5% of ADV use AC cost model
+ALMGREN_CHRISS_ENABLED = _cfg.execution.almgren_chriss_enabled  # STATUS: PLACEHOLDER — backtest/engine.py gates on this but not fully integrated
+ALMGREN_CHRISS_ADV_THRESHOLD = _cfg.execution.almgren_chriss_adv_threshold  # STATUS: ACTIVE — backtest/engine.py; positions > 5% of ADV use AC cost model
 
 # ── Validation ─────────────────────────────────────────────────────────
-CPCV_PARTITIONS = 8                               # STATUS: ACTIVE — backtest/validation.py; combinatorial purged CV partitions
-CPCV_TEST_PARTITIONS = 4                          # STATUS: ACTIVE — backtest/validation.py; CPCV test partitions
-SPA_BOOTSTRAPS = 400                              # STATUS: ACTIVE — backtest/validation.py; SPA bootstrap trials
+CPCV_PARTITIONS = _cfg.validation.cpcv_partitions  # STATUS: ACTIVE — backtest/validation.py; combinatorial purged CV partitions
+CPCV_TEST_PARTITIONS = _cfg.validation.cpcv_test_partitions  # STATUS: ACTIVE — backtest/validation.py; CPCV test partitions
+SPA_BOOTSTRAPS = _cfg.validation.spa_bootstraps    # STATUS: ACTIVE — backtest/validation.py; SPA bootstrap trials
 
 # ── Data Quality ───────────────────────────────────────────────────────
 DATA_QUALITY_ENABLED = True                       # STATUS: ACTIVE — data/loader.py; OHLCV quality checks
-MAX_MISSING_BAR_FRACTION = 0.05                   # STATUS: ACTIVE — data/quality.py; max fraction of missing bars
-MAX_ZERO_VOLUME_FRACTION = 0.25                   # STATUS: ACTIVE — data/quality.py; max fraction of zero-volume bars
-MAX_ABS_DAILY_RETURN = 0.40                       # STATUS: ACTIVE — data/quality.py; max absolute single-day return
+MAX_MISSING_BAR_FRACTION = _cfg.data.max_missing_bar_fraction  # STATUS: ACTIVE — data/quality.py; max fraction of missing bars
+MAX_ZERO_VOLUME_FRACTION = _cfg.data.max_zero_volume_fraction  # STATUS: ACTIVE — data/quality.py; max fraction of zero-volume bars
+MAX_ABS_DAILY_RETURN = _cfg.data.max_abs_daily_return  # STATUS: ACTIVE — data/quality.py; max absolute single-day return
 
 # ── Autopilot (discovery -> promotion -> paper trading) ─────────────────
 AUTOPILOT_DIR = RESULTS_DIR / "autopilot"         # STATUS: ACTIVE — base path for autopilot output (used via derived paths below)
@@ -463,34 +454,34 @@ DISCOVERY_CONFIDENCE_OFFSETS = [-0.10, 0.0, 0.10] # STATUS: ACTIVE — autopilot
 DISCOVERY_RISK_VARIANTS = [False, True]           # STATUS: ACTIVE — autopilot/strategy_discovery.py
 DISCOVERY_MAX_POSITIONS_VARIANTS = [10, 20]       # STATUS: ACTIVE — autopilot/strategy_discovery.py
 
-PROMOTION_MIN_TRADES = 80                         # STATUS: ACTIVE — autopilot/promotion_gate.py
-PROMOTION_MIN_WIN_RATE = 0.50                     # STATUS: ACTIVE — autopilot/promotion_gate.py
-PROMOTION_MIN_SHARPE = 0.75                       # STATUS: ACTIVE — autopilot/promotion_gate.py
-PROMOTION_MIN_PROFIT_FACTOR = 1.10                # STATUS: ACTIVE — autopilot/promotion_gate.py
-PROMOTION_MAX_DRAWDOWN = -0.20                    # STATUS: ACTIVE — autopilot/promotion_gate.py
-PROMOTION_MIN_ANNUAL_RETURN = 0.05                # STATUS: ACTIVE — autopilot/promotion_gate.py
-PROMOTION_MAX_ACTIVE_STRATEGIES = 5               # STATUS: ACTIVE — autopilot/registry.py
-PROMOTION_REQUIRE_ADVANCED_CONTRACT = True         # STATUS: ACTIVE — autopilot/promotion_gate.py
-PROMOTION_MAX_DSR_PVALUE = 0.05                   # STATUS: ACTIVE — autopilot/promotion_gate.py
-PROMOTION_MAX_PBO = 0.45                          # STATUS: ACTIVE — autopilot/promotion_gate.py; tightened from 0.50 (Bailey et al. 2017)
+PROMOTION_MIN_TRADES = _cfg.promotion.min_trades   # STATUS: ACTIVE — autopilot/promotion_gate.py
+PROMOTION_MIN_WIN_RATE = _cfg.promotion.min_win_rate  # STATUS: ACTIVE — autopilot/promotion_gate.py
+PROMOTION_MIN_SHARPE = _cfg.promotion.min_sharpe   # STATUS: ACTIVE — autopilot/promotion_gate.py
+PROMOTION_MIN_PROFIT_FACTOR = _cfg.promotion.min_profit_factor  # STATUS: ACTIVE — autopilot/promotion_gate.py
+PROMOTION_MAX_DRAWDOWN = _cfg.promotion.max_drawdown  # STATUS: ACTIVE — autopilot/promotion_gate.py
+PROMOTION_MIN_ANNUAL_RETURN = _cfg.promotion.min_annual_return  # STATUS: ACTIVE — autopilot/promotion_gate.py
+PROMOTION_MAX_ACTIVE_STRATEGIES = _cfg.promotion.max_active_strategies  # STATUS: ACTIVE — autopilot/registry.py
+PROMOTION_REQUIRE_ADVANCED_CONTRACT = _cfg.promotion.require_advanced_contract  # STATUS: ACTIVE — autopilot/promotion_gate.py
+PROMOTION_MAX_DSR_PVALUE = _cfg.promotion.max_dsr_pvalue  # STATUS: ACTIVE — autopilot/promotion_gate.py
+PROMOTION_MAX_PBO = _cfg.promotion.max_pbo         # STATUS: ACTIVE — autopilot/promotion_gate.py; tightened from 0.50 (Bailey et al. 2017)
 PROMOTION_REQUIRE_CAPACITY_UNCONSTRAINED = True    # STATUS: ACTIVE — autopilot/promotion_gate.py
 PROMOTION_MAX_CAPACITY_UTILIZATION = 1.0           # STATUS: ACTIVE — autopilot/promotion_gate.py
-PROMOTION_MIN_WF_OOS_CORR = 0.01                  # STATUS: ACTIVE — autopilot/promotion_gate.py
-PROMOTION_MIN_WF_POSITIVE_FOLD_FRACTION = 0.60    # STATUS: ACTIVE — autopilot/promotion_gate.py
-PROMOTION_MAX_WF_IS_OOS_GAP = 0.20               # STATUS: ACTIVE — autopilot/promotion_gate.py
-PROMOTION_MIN_REGIME_POSITIVE_FRACTION = 0.50     # STATUS: ACTIVE — autopilot/promotion_gate.py
+PROMOTION_MIN_WF_OOS_CORR = _cfg.promotion.min_wf_oos_corr  # STATUS: ACTIVE — autopilot/promotion_gate.py
+PROMOTION_MIN_WF_POSITIVE_FOLD_FRACTION = _cfg.promotion.min_wf_positive_fold_fraction  # STATUS: ACTIVE — autopilot/promotion_gate.py
+PROMOTION_MAX_WF_IS_OOS_GAP = _cfg.promotion.max_wf_is_oos_gap  # STATUS: ACTIVE — autopilot/promotion_gate.py
+PROMOTION_MIN_REGIME_POSITIVE_FRACTION = _cfg.promotion.min_regime_positive_fraction  # STATUS: ACTIVE — autopilot/promotion_gate.py
 PROMOTION_EVENT_MAX_WORST_EVENT_LOSS = -0.08      # STATUS: ACTIVE — autopilot/promotion_gate.py
 PROMOTION_EVENT_MIN_SURPRISE_HIT_RATE = 0.50      # STATUS: ACTIVE — autopilot/promotion_gate.py
 PROMOTION_EVENT_MIN_REGIME_STABILITY = 0.40       # STATUS: ACTIVE — autopilot/promotion_gate.py
-PROMOTION_REQUIRE_STATISTICAL_TESTS = True        # STATUS: ACTIVE — autopilot/promotion_gate.py; require IC/FDR tests to pass
-PROMOTION_REQUIRE_CPCV = True                     # STATUS: ACTIVE — autopilot/promotion_gate.py; require CPCV to pass
-PROMOTION_REQUIRE_SPA = False                     # STATUS: ACTIVE — autopilot/promotion_gate.py; SPA is informational by default
+PROMOTION_REQUIRE_STATISTICAL_TESTS = _cfg.promotion.require_statistical_tests  # STATUS: ACTIVE — autopilot/promotion_gate.py; require IC/FDR tests to pass
+PROMOTION_REQUIRE_CPCV = _cfg.promotion.require_cpcv  # STATUS: ACTIVE — autopilot/promotion_gate.py; require CPCV to pass
+PROMOTION_REQUIRE_SPA = _cfg.promotion.require_spa  # STATUS: ACTIVE — autopilot/promotion_gate.py; SPA is informational by default
 
 # ── Stress-Regime Promotion Gates (SPEC-V02) ─────────────────────
-PROMOTION_MAX_STRESS_DRAWDOWN = 0.15              # STATUS: ACTIVE — autopilot/promotion_gate.py; max drawdown in stress regimes (2, 3)
-PROMOTION_MIN_STRESS_SHARPE = -0.50               # STATUS: ACTIVE — autopilot/promotion_gate.py; min Sharpe in stress regimes (not deeply negative)
-PROMOTION_MAX_TRANSITION_DRAWDOWN = 0.10          # STATUS: ACTIVE — autopilot/promotion_gate.py; max drawdown near regime transitions
-PROMOTION_STRESS_REGIMES = [2, 3]                 # STATUS: ACTIVE — autopilot/promotion_gate.py; regime codes considered stress buckets
+PROMOTION_MAX_STRESS_DRAWDOWN = _cfg.promotion.max_stress_drawdown  # STATUS: ACTIVE — autopilot/promotion_gate.py; max drawdown in stress regimes (2, 3)
+PROMOTION_MIN_STRESS_SHARPE = _cfg.promotion.min_stress_sharpe  # STATUS: ACTIVE — autopilot/promotion_gate.py; min Sharpe in stress regimes (not deeply negative)
+PROMOTION_MAX_TRANSITION_DRAWDOWN = _cfg.promotion.max_transition_drawdown  # STATUS: ACTIVE — autopilot/promotion_gate.py; max drawdown near regime transitions
+PROMOTION_STRESS_REGIMES = list(_cfg.promotion.stress_regimes)  # STATUS: ACTIVE — autopilot/promotion_gate.py; regime codes considered stress buckets
 
 # ── Stress-Regime Capacity Gates (SPEC-V03) ──────────────────────
 PROMOTION_MIN_STRESS_CAPACITY_USD = 500_000       # STATUS: ACTIVE — autopilot/promotion_gate.py; min capacity during stress regimes
@@ -518,12 +509,12 @@ META_LABELING_XGB_PARAMS = {                     # STATUS: ACTIVE — autopilot/
 FOLD_CONSISTENCY_PENALTY_WEIGHT = 0.15           # STATUS: ACTIVE — autopilot/promotion_gate.py; weight in composite score
 
 # ── Kelly Sizing ──────────────────────────────────────────────────────
-KELLY_FRACTION = 0.50                             # STATUS: ACTIVE — risk/position_sizer.py; half-Kelly (conservative default)
-MAX_PORTFOLIO_DD = 0.20                           # STATUS: ACTIVE — risk/position_sizer.py; max portfolio drawdown for governor
-KELLY_PORTFOLIO_BLEND = 0.30                      # STATUS: PLACEHOLDER — defined but never imported; Kelly weight in composite blend
-KELLY_BAYESIAN_ALPHA = 2.0                        # STATUS: ACTIVE — risk/position_sizer.py; Beta prior alpha for win rate
-KELLY_BAYESIAN_BETA = 2.0                         # STATUS: ACTIVE — risk/position_sizer.py; Beta prior beta for win rate
-KELLY_REGIME_CONDITIONAL = True                   # STATUS: PLACEHOLDER — defined but never imported; use regime-specific parameters
+KELLY_FRACTION = _cfg.kelly.fraction               # STATUS: ACTIVE — risk/position_sizer.py; half-Kelly (conservative default)
+MAX_PORTFOLIO_DD = _cfg.kelly.max_portfolio_dd     # STATUS: ACTIVE — risk/position_sizer.py; max portfolio drawdown for governor
+KELLY_PORTFOLIO_BLEND = _cfg.kelly.portfolio_blend  # STATUS: PLACEHOLDER — defined but never imported; Kelly weight in composite blend
+KELLY_BAYESIAN_ALPHA = _cfg.kelly.bayesian_alpha   # STATUS: ACTIVE — risk/position_sizer.py; Beta prior alpha for win rate
+KELLY_BAYESIAN_BETA = _cfg.kelly.bayesian_beta     # STATUS: ACTIVE — risk/position_sizer.py; Beta prior beta for win rate
+KELLY_REGIME_CONDITIONAL = _cfg.kelly.regime_conditional  # STATUS: PLACEHOLDER — defined but never imported; use regime-specific parameters
 KELLY_MIN_SAMPLES_FOR_UPDATE = 10                 # STATUS: ACTIVE — risk/position_sizer.py; min trades before Bayesian posterior overrides prior
 
 # ── Regime Trade Statistics (SPEC-P01) ─────────────────────────────
@@ -575,26 +566,23 @@ UNCERTAINTY_REGIME_WEIGHT = 0.30                  # STATUS: ACTIVE — risk/posi
 UNCERTAINTY_DRIFT_WEIGHT = 0.30                   # STATUS: ACTIVE — risk/position_sizer.py; weight of drift_score (inverted)
 UNCERTAINTY_REDUCTION_FACTOR = 0.30               # STATUS: ACTIVE — risk/position_sizer.py; max reduction from base size (30%)
 
-PAPER_INITIAL_CAPITAL = 1_000_000.0               # STATUS: ACTIVE — autopilot/paper_trader.py
-PAPER_MAX_TOTAL_POSITIONS = 30                    # STATUS: ACTIVE — autopilot/paper_trader.py
-PAPER_USE_KELLY_SIZING = True                     # STATUS: ACTIVE — autopilot/paper_trader.py, api/services/backtest_service.py
-PAPER_KELLY_FRACTION = 0.50                       # STATUS: ACTIVE — autopilot/paper_trader.py
-PAPER_KELLY_LOOKBACK_TRADES = 200                 # STATUS: ACTIVE — autopilot/paper_trader.py
-PAPER_KELLY_MIN_SIZE_MULTIPLIER = 0.25            # STATUS: ACTIVE — autopilot/paper_trader.py
-PAPER_KELLY_MAX_SIZE_MULTIPLIER = 1.50            # STATUS: ACTIVE — autopilot/paper_trader.py
+PAPER_INITIAL_CAPITAL = _cfg.paper_trading.initial_capital  # STATUS: ACTIVE — autopilot/paper_trader.py
+PAPER_MAX_TOTAL_POSITIONS = _cfg.paper_trading.max_total_positions  # STATUS: ACTIVE — autopilot/paper_trader.py
+PAPER_USE_KELLY_SIZING = _cfg.paper_trading.use_kelly_sizing  # STATUS: ACTIVE — autopilot/paper_trader.py, api/services/backtest_service.py
+PAPER_KELLY_FRACTION = _cfg.paper_trading.kelly_fraction  # STATUS: ACTIVE — autopilot/paper_trader.py
+PAPER_KELLY_LOOKBACK_TRADES = _cfg.paper_trading.kelly_lookback_trades  # STATUS: ACTIVE — autopilot/paper_trader.py
+PAPER_KELLY_MIN_SIZE_MULTIPLIER = _cfg.paper_trading.kelly_min_size_multiplier  # STATUS: ACTIVE — autopilot/paper_trader.py
+PAPER_KELLY_MAX_SIZE_MULTIPLIER = _cfg.paper_trading.kelly_max_size_multiplier  # STATUS: ACTIVE — autopilot/paper_trader.py
 
 # ── Feature Profiles ────────────────────────────────────────────────────
-FEATURE_MODE_DEFAULT = "core"                     # STATUS: ACTIVE — run_backtest.py, run_train.py, run_predict.py; "full" or "core"
+FEATURE_MODE_DEFAULT = _cfg.model.feature_mode     # STATUS: ACTIVE — run_backtest.py, run_train.py, run_predict.py; "full" or "core"
 
 # ── Regime Trade Gating (SPEC-E02) ───────────────────────────────────
 # Per-regime trade policy: each regime ID maps to an enabled flag and a
 # minimum confidence threshold.  When ``enabled`` is False, signals in
 # that regime are suppressed *unless* confidence >= ``min_confidence``.
 REGIME_TRADE_POLICY: Dict[int, Dict] = {         # STATUS: ACTIVE — backtest/engine.py, api/routers/signals.py
-    0: {"enabled": True,  "min_confidence": 0.0},  # trending_bull: always trade
-    1: {"enabled": True,  "min_confidence": 0.0},  # trending_bear: always trade
-    2: {"enabled": False, "min_confidence": 0.70},  # mean_reverting: suppress unless high conf
-    3: {"enabled": True,  "min_confidence": 0.60},  # high_volatility: trade only with confidence
+    k: dict(v) for k, v in _cfg.regime.trade_policy.items()
 }
 
 # Deprecated aliases — kept for backward-compatibility with API layer
@@ -621,25 +609,25 @@ SHOCK_MODE_UNCERTAINTY_THRESHOLD = 0.7           # STATUS: ACTIVE — backtest/e
 REGIME_STRATEGY_ALLOCATION_ENABLED = True            # STATUS: ACTIVE — autopilot/strategy_allocator.py; adapt parameters by regime
 
 # ── Drawdown Tiers ──────────────────────────────────────────────────
-DRAWDOWN_WARNING_THRESHOLD = -0.05                # STATUS: ACTIVE — risk/stop_loss.py; -5% drawdown: reduce sizing 50%
-DRAWDOWN_CAUTION_THRESHOLD = -0.10                # STATUS: ACTIVE — risk/stop_loss.py; -10% drawdown: no new entries, 25% sizing
-DRAWDOWN_CRITICAL_THRESHOLD = -0.15               # STATUS: ACTIVE — risk/stop_loss.py; -15% drawdown: force liquidate
-DRAWDOWN_DAILY_LOSS_LIMIT = -0.03                 # STATUS: ACTIVE — risk/stop_loss.py; -3% daily loss limit
-DRAWDOWN_WEEKLY_LOSS_LIMIT = -0.05                # STATUS: ACTIVE — risk/stop_loss.py; -5% weekly loss limit
-DRAWDOWN_RECOVERY_DAYS = 10                       # STATUS: ACTIVE — risk/stop_loss.py; days to return to full sizing after recovery
-DRAWDOWN_SIZE_MULT_WARNING = 0.50                 # STATUS: ACTIVE — risk/stop_loss.py; size multiplier during WARNING tier
-DRAWDOWN_SIZE_MULT_CAUTION = 0.25                 # STATUS: ACTIVE — risk/stop_loss.py; size multiplier during CAUTION tier
+DRAWDOWN_WARNING_THRESHOLD = _cfg.drawdown.warning_threshold  # STATUS: ACTIVE — risk/stop_loss.py; -5% drawdown: reduce sizing 50%
+DRAWDOWN_CAUTION_THRESHOLD = _cfg.drawdown.caution_threshold  # STATUS: ACTIVE — risk/stop_loss.py; -10% drawdown: no new entries, 25% sizing
+DRAWDOWN_CRITICAL_THRESHOLD = _cfg.drawdown.critical_threshold  # STATUS: ACTIVE — risk/stop_loss.py; -15% drawdown: force liquidate
+DRAWDOWN_DAILY_LOSS_LIMIT = _cfg.drawdown.daily_loss_limit  # STATUS: ACTIVE — risk/stop_loss.py; -3% daily loss limit
+DRAWDOWN_WEEKLY_LOSS_LIMIT = _cfg.drawdown.weekly_loss_limit  # STATUS: ACTIVE — risk/stop_loss.py; -5% weekly loss limit
+DRAWDOWN_RECOVERY_DAYS = _cfg.drawdown.recovery_days  # STATUS: ACTIVE — risk/stop_loss.py; days to return to full sizing after recovery
+DRAWDOWN_SIZE_MULT_WARNING = _cfg.drawdown.size_mult_warning  # STATUS: ACTIVE — risk/stop_loss.py; size multiplier during WARNING tier
+DRAWDOWN_SIZE_MULT_CAUTION = _cfg.drawdown.size_mult_caution  # STATUS: ACTIVE — risk/stop_loss.py; size multiplier during CAUTION tier
 
 # ── Covariance ────────────────────────────────────────────────────
 COVARIANCE_HALF_LIFE = 60                         # STATUS: ACTIVE — risk/covariance.py; EWMA half-life in trading days (60 ≈ 3 months)
 
 # ── Stop Loss ───────────────────────────────────────────────────────
 STOP_LOSS_SPREAD_BUFFER_BPS = 3.0                 # STATUS: ACTIVE — risk/stop_loss.py; bid-ask spread buffer for stop prices (bps)
-HARD_STOP_PCT = -0.08                             # STATUS: ACTIVE — risk/stop_loss.py; -8% hard stop loss
-ATR_STOP_MULTIPLIER = 2.0                         # STATUS: ACTIVE — risk/stop_loss.py; initial stop at 2x ATR
-TRAILING_ATR_MULTIPLIER = 1.5                     # STATUS: ACTIVE — risk/stop_loss.py; trailing stop at 1.5x ATR
-TRAILING_ACTIVATION_PCT = 0.02                    # STATUS: ACTIVE — risk/stop_loss.py; activate trailing stop after +2% gain
-MAX_HOLDING_DAYS = 30                             # STATUS: ACTIVE — risk/stop_loss.py, backtest/engine.py; time-based stop at 30 days
+HARD_STOP_PCT = _cfg.stop_loss.hard_stop_pct       # STATUS: ACTIVE — risk/stop_loss.py; -8% hard stop loss
+ATR_STOP_MULTIPLIER = _cfg.stop_loss.atr_stop_multiplier  # STATUS: ACTIVE — risk/stop_loss.py; initial stop at 2x ATR
+TRAILING_ATR_MULTIPLIER = _cfg.stop_loss.trailing_atr_multiplier  # STATUS: ACTIVE — risk/stop_loss.py; trailing stop at 1.5x ATR
+TRAILING_ACTIVATION_PCT = _cfg.stop_loss.trailing_activation_pct  # STATUS: ACTIVE — risk/stop_loss.py; activate trailing stop after +2% gain
+MAX_HOLDING_DAYS = _cfg.stop_loss.max_holding_days  # STATUS: ACTIVE — risk/stop_loss.py, backtest/engine.py; time-based stop at 30 days
 
 # ── Almgren-Chriss Parameters ─────────────────────────────────────
 ALMGREN_CHRISS_FALLBACK_VOL = 0.20                # STATUS: ACTIVE — backtest/engine.py; fallback annualized vol when realized unavailable
@@ -659,7 +647,7 @@ GOVERNANCE_SCORE_WEIGHTS = {                       # STATUS: ACTIVE — models/g
 }
 
 # ── Validation ──────────────────────────────────────────────────────
-IC_ROLLING_WINDOW = 60                            # STATUS: ACTIVE — backtest/validation.py; rolling window for Information Coefficient
+IC_ROLLING_WINDOW = _cfg.validation.ic_rolling_window  # STATUS: ACTIVE — backtest/validation.py; rolling window for Information Coefficient
 
 # ── Evaluation Layer (Spec 08) ──────────────────────────────────────
 # Walk-forward with embargo
@@ -672,6 +660,11 @@ EVAL_WF_SLIDE_FREQ = "weekly"                     # STATUS: ACTIVE — evaluatio
 EVAL_IC_ROLLING_WINDOW = 60                       # STATUS: ACTIVE — evaluation/engine.py; rolling IC window
 EVAL_IC_DECAY_THRESHOLD = 0.02                    # STATUS: ACTIVE — evaluation/engine.py; warn if IC falls below this
 EVAL_IC_DECAY_LOOKBACK = 20                       # STATUS: ACTIVE — evaluation/engine.py; days to check for sustained low IC
+
+# IC tracking for health system (SPEC-H01)
+IC_TRACKING_LOOKBACK = 20                         # STATUS: ACTIVE — health_service.py; number of recent cycles to consider
+IC_TRACKING_WARN_THRESHOLD = 0.01                 # STATUS: ACTIVE — health_service.py; WARNING if rolling IC mean < this
+IC_TRACKING_CRITICAL_THRESHOLD = 0.0              # STATUS: ACTIVE — health_service.py; CRITICAL if rolling IC mean < this
 
 # Decile spread
 EVAL_DECILE_SPREAD_MIN = 0.005                    # STATUS: ACTIVE — evaluation/metrics.py; minimum expected spread for a good predictor
