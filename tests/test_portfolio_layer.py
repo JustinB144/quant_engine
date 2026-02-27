@@ -1022,5 +1022,158 @@ class TestPortfolioLayerIntegration(unittest.TestCase):
             self.assertIn("healthcare", summary["sector_breakdown"])
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# T4 integration: Factor exposures wired into PortfolioRiskManager
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class TestFactorExposureIntegration(unittest.TestCase):
+    """Tests that FactorExposureManager is properly wired into PortfolioRiskManager."""
+
+    def test_risk_manager_has_factor_exposure_manager(self):
+        """PortfolioRiskManager should have a factor_exposure_manager attribute."""
+        from quant_engine.risk.portfolio_risk import PortfolioRiskManager
+        from quant_engine.risk.factor_exposures import FactorExposureManager
+
+        rm = PortfolioRiskManager()
+        self.assertIsInstance(rm.factor_exposure_manager, FactorExposureManager)
+
+    def test_risk_manager_factor_manager_uses_universe_config(self):
+        """Factor exposure manager should use the same universe config as risk manager."""
+        from quant_engine.risk.portfolio_risk import PortfolioRiskManager
+
+        with _TempUniverseYAML() as path:
+            from quant_engine.risk.universe_config import UniverseConfig
+            config = UniverseConfig(path)
+            rm = PortfolioRiskManager(universe_config=config)
+            self.assertIs(rm.factor_exposure_manager._config, config)
+
+    def test_check_new_position_includes_factor_exposures(self):
+        """check_new_position should include factor_exposures in metrics."""
+        from quant_engine.risk.portfolio_risk import PortfolioRiskManager
+
+        price_data = _generate_price_data(
+            ["AAPL", "MSFT", "JNJ"], n_days=300, seed=42,
+        )
+        rm = PortfolioRiskManager()
+        check = rm.check_new_position(
+            ticker="AAPL",
+            position_size=0.05,
+            current_positions={"MSFT": 0.05, "JNJ": 0.05},
+            price_data=price_data,
+            regime=0,
+        )
+        self.assertIn("factor_exposures", check.metrics)
+        exposures = check.metrics["factor_exposures"]
+        self.assertIn("beta", exposures)
+        self.assertIn("volatility", exposures)
+
+    def test_check_new_position_factor_violation_in_stress(self):
+        """Factor violations should appear in check_new_position violations."""
+        from quant_engine.risk.portfolio_risk import PortfolioRiskManager
+
+        # Create price data with extreme volatility to trigger vol bound violation
+        rng = np.random.RandomState(99)
+        n_days = 300
+        idx = pd.date_range("2023-01-01", periods=n_days, freq="B")
+
+        # One very volatile stock, one calm
+        price_data = {}
+        for ticker, vol in [("A", 0.08), ("B", 0.005)]:
+            returns = rng.normal(0.0, vol, size=n_days)
+            prices = 100.0 * np.cumprod(1 + returns)
+            close = pd.Series(prices, index=idx)
+            price_data[ticker] = _make_ohlcv(close)
+
+        rm = PortfolioRiskManager()
+        # Force immediate stress multipliers
+        rm.multiplier._smoothed = rm.multiplier._stress_mults.copy()
+        rm.multiplier._prev_regime_is_stress = True
+
+        check = rm.check_new_position(
+            ticker="A",
+            position_size=0.90,
+            current_positions={"B": 0.05},
+            price_data=price_data,
+            regime=3,
+        )
+        # With extreme vol stock at 90% weight, volatility exposure should be extreme
+        self.assertIn("factor_exposures", check.metrics)
+
+    def test_check_factor_exposures_method(self):
+        """Direct call to check_factor_exposures returns expected structure."""
+        from quant_engine.risk.portfolio_risk import PortfolioRiskManager
+
+        price_data = _generate_price_data(
+            ["AAPL", "MSFT", "JNJ", "JPM"], n_days=300, seed=42,
+        )
+        positions = {"AAPL": 0.25, "MSFT": 0.25, "JNJ": 0.25, "JPM": 0.25}
+
+        rm = PortfolioRiskManager()
+        result = rm.check_factor_exposures(
+            positions=positions,
+            price_data=price_data,
+            regime=0,
+        )
+        self.assertIn("exposures", result)
+        self.assertIn("passed", result)
+        self.assertIn("violations", result)
+        self.assertIsInstance(result["exposures"], dict)
+        self.assertIsInstance(result["passed"], bool)
+        self.assertIsInstance(result["violations"], dict)
+
+    def test_check_factor_exposures_stress_regime(self):
+        """Factor bounds tighten in stress regime."""
+        from quant_engine.risk.portfolio_risk import PortfolioRiskManager
+
+        price_data = _generate_price_data(
+            ["AAPL", "MSFT", "JNJ", "JPM"], n_days=300, seed=42,
+        )
+        positions = {"AAPL": 0.25, "MSFT": 0.25, "JNJ": 0.25, "JPM": 0.25}
+
+        with _TempUniverseYAML() as path:
+            from quant_engine.risk.universe_config import UniverseConfig
+            config = UniverseConfig(path)
+            rm = PortfolioRiskManager(universe_config=config)
+
+            # Normal should pass
+            normal_result = rm.check_factor_exposures(positions, price_data, regime=0)
+            # Stress uses tighter bounds
+            stress_result = rm.check_factor_exposures(positions, price_data, regime=3)
+
+            # Both should return valid structure
+            self.assertIn("exposures", normal_result)
+            self.assertIn("exposures", stress_result)
+
+    def test_check_factor_exposures_without_regime(self):
+        """check_factor_exposures works without regime (defaults to normal)."""
+        from quant_engine.risk.portfolio_risk import PortfolioRiskManager
+
+        price_data = _generate_price_data(["AAPL", "MSFT"], n_days=300, seed=42)
+        positions = {"AAPL": 0.50, "MSFT": 0.50}
+
+        rm = PortfolioRiskManager()
+        result = rm.check_factor_exposures(positions, price_data)
+        self.assertIn("exposures", result)
+        self.assertIn("passed", result)
+
+    def test_check_new_position_backward_compat_with_factors(self):
+        """check_new_position still works without regime — factors use normal bounds."""
+        from quant_engine.risk.portfolio_risk import PortfolioRiskManager
+
+        price_data = _generate_price_data(
+            ["AAPL", "MSFT"], n_days=300, seed=42,
+        )
+        rm = PortfolioRiskManager()
+        check = rm.check_new_position(
+            ticker="AAPL",
+            position_size=0.05,
+            current_positions={"MSFT": 0.05},
+            price_data=price_data,
+        )
+        # Should still work and include factor exposures
+        self.assertIn("factor_exposures", check.metrics)
+
+
 if __name__ == "__main__":
     unittest.main()

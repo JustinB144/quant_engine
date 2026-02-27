@@ -14,15 +14,15 @@ Prevents concentration risk across multiple dimensions:
 Spec 07: Regime-Conditioned Portfolio Risk Manager
 """
 import logging
-import math
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
 from ..config import MAX_PORTFOLIO_VOL, CORRELATION_STRESS_THRESHOLDS
 from .covariance import CovarianceEstimator, compute_regime_covariance, get_regime_covariance
+from .factor_exposures import FactorExposureManager
 from .universe_config import UniverseConfig, ConfigError
 
 logger = logging.getLogger(__name__)
@@ -226,6 +226,11 @@ class PortfolioRiskManager:
         # Regime-conditioned constraint multiplier
         self.multiplier = ConstraintMultiplier(self.universe_config)
 
+        # Factor exposure manager (Spec 07 T4)
+        self.factor_exposure_manager = FactorExposureManager(
+            universe_config=self.universe_config,
+        )
+
         # Cache for regime-conditional covariance matrices
         self._regime_cov_cache: Dict[int, pd.DataFrame] = {}
 
@@ -413,6 +418,18 @@ class PortfolioRiskManager:
                 f"Portfolio vol {portfolio_vol:.1%} > max {self.max_portfolio_vol:.1%}"
             )
 
+        # ── Factor exposure check (Spec 07 T4) ──
+        factor_result = self.check_factor_exposures(
+            positions=proposed_positions,
+            price_data=price_data,
+            benchmark_data=benchmark_data,
+            regime=regime,
+        )
+        metrics["factor_exposures"] = factor_result["exposures"]
+        if factor_result["violations"]:
+            for factor, msg in factor_result["violations"].items():
+                violations.append(f"Factor exposure: {msg}")
+
         # ── Compute sizing backoff recommendation ──
         recommended_weights = None
         if constraint_util:
@@ -496,6 +513,49 @@ class PortfolioRiskManager:
             util["sector_cap"] = max(sector_weights.values()) / eff_sector_cap
 
         return util
+
+    def check_factor_exposures(
+        self,
+        positions: Dict[str, float],
+        price_data: Dict[str, pd.DataFrame],
+        benchmark_data: Optional[pd.DataFrame] = None,
+        regime: Optional[int] = None,
+    ) -> Dict:
+        """Compute factor exposures and check against regime-conditioned bounds.
+
+        Parameters
+        ----------
+        positions : dict
+            {ticker: weight} of portfolio positions.
+        price_data : dict
+            {ticker: OHLCV DataFrame}.
+        benchmark_data : pd.DataFrame, optional
+            Benchmark OHLCV (e.g. SPY) for beta computation.
+        regime : int, optional
+            Current regime label (0-3).  If None, defaults to 0 (normal).
+
+        Returns
+        -------
+        dict
+            ``{"exposures": Dict[str, float], "passed": bool,
+            "violations": Dict[str, str]}``
+        """
+        exposures = self.factor_exposure_manager.compute_exposures(
+            weights=positions,
+            price_data=price_data,
+            benchmark_data=benchmark_data,
+        )
+
+        effective_regime = regime if regime is not None else 0
+        passed, violations = self.factor_exposure_manager.check_factor_bounds(
+            exposures, regime=effective_regime,
+        )
+
+        return {
+            "exposures": exposures,
+            "passed": passed,
+            "violations": violations,
+        }
 
     def _compute_backoff_factor(self, max_utilization: float) -> float:
         """Compute continuous backoff factor from constraint utilization.
