@@ -34,6 +34,8 @@ from ..config import (
     PROMOTION_MIN_STRESS_SHARPE,
     PROMOTION_MAX_TRANSITION_DRAWDOWN,
     PROMOTION_STRESS_REGIMES,
+    PROMOTION_MIN_STRESS_CAPACITY_USD,
+    PROMOTION_MIN_STRESS_CAPACITY_RATIO,
 )
 from .strategy_discovery import StrategyCandidate
 
@@ -87,6 +89,8 @@ class PromotionGate:
         min_stress_sharpe: float = PROMOTION_MIN_STRESS_SHARPE,
         max_transition_drawdown: float = PROMOTION_MAX_TRANSITION_DRAWDOWN,
         stress_regimes: Optional[List[int]] = None,
+        min_stress_capacity_usd: float = PROMOTION_MIN_STRESS_CAPACITY_USD,
+        min_stress_capacity_ratio: float = PROMOTION_MIN_STRESS_CAPACITY_RATIO,
     ):
         """Initialize PromotionGate."""
         self.min_trades = min_trades
@@ -115,6 +119,8 @@ class PromotionGate:
         self.min_stress_sharpe = min_stress_sharpe
         self.max_transition_drawdown = max_transition_drawdown
         self.stress_regimes = stress_regimes if stress_regimes is not None else list(PROMOTION_STRESS_REGIMES)
+        self.min_stress_capacity_usd = min_stress_capacity_usd
+        self.min_stress_capacity_ratio = min_stress_capacity_ratio
 
     def evaluate(
         self,
@@ -188,6 +194,25 @@ class PromotionGate:
                 reasons.append(
                     f"capacity_utilization>{self.max_capacity_utilization:.2f}",
                 )
+
+            # ── Stress-regime capacity gates (SPEC-V03) ──
+            stress_cap_usd = metrics.get("stress_capacity_usd")
+            overall_cap_usd = metrics.get("estimated_capacity_usd")
+            if stress_cap_usd is not None:
+                metrics["stress_capacity_usd"] = float(stress_cap_usd)
+                if float(stress_cap_usd) < self.min_stress_capacity_usd:
+                    reasons.append(
+                        f"stress_capacity(${float(stress_cap_usd):,.0f}"
+                        f" below ${self.min_stress_capacity_usd:,.0f})"
+                    )
+                if overall_cap_usd is not None and float(overall_cap_usd) > 0:
+                    stress_ratio = float(stress_cap_usd) / float(overall_cap_usd)
+                    metrics["stress_capacity_ratio"] = stress_ratio
+                    if stress_ratio < self.min_stress_capacity_ratio:
+                        reasons.append(
+                            f"stress_capacity_ratio({stress_ratio:.1%}"
+                            f" below {self.min_stress_capacity_ratio:.1%})"
+                        )
 
             if wf_oos < self.min_wf_oos_corr:
                 reasons.append(f"wf_oos_corr<{self.min_wf_oos_corr:.3f}")

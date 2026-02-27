@@ -38,6 +38,7 @@ from ..config import (
     CPCV_PARTITIONS,
     CPCV_TEST_PARTITIONS,
     EXEC_MAX_PARTICIPATION,
+    PROMOTION_STRESS_REGIMES,
     PORTFOLIO_TURNOVER_PENALTY,
     PORTFOLIO_TURNOVER_DYNAMIC,
     PORTFOLIO_TURNOVER_COST_MULTIPLIER,
@@ -823,6 +824,7 @@ class AutopilotEngine:
                 price_data=price_data,
                 capital_usd=BACKTEST_ASSUMED_CAPITAL_USD,
                 max_participation_rate=EXEC_MAX_PARTICIPATION,
+                stress_regimes=list(PROMOTION_STRESS_REGIMES),
             )
             if cap.estimated_capacity_usd > 0:
                 cap_util = float(BACKTEST_ASSUMED_CAPITAL_USD / cap.estimated_capacity_usd)
@@ -879,6 +881,7 @@ class AutopilotEngine:
                 "pbo": global_pbo,
                 "capacity_constrained": bool(cap.capacity_constrained),
                 "capacity_utilization": cap_util,
+                "estimated_capacity_usd": float(cap.estimated_capacity_usd),
                 "wf_oos_corr": wf_oos,
                 "wf_positive_fold_fraction": wf_pos_frac,
                 "wf_is_oos_gap": wf_gap,
@@ -888,6 +891,10 @@ class AutopilotEngine:
                 "spa_passes": spa_passes,
                 "spa_pvalue": spa_pvalue,
             }
+            # Stress-regime capacity (SPEC-V03)
+            if cap.stress_capacity_usd is not None:
+                contract_metrics["stress_capacity_usd"] = float(cap.stress_capacity_usd)
+                contract_metrics["stress_market_impact_bps"] = float(cap.stress_market_impact_bps)
             # Fold-level metrics for fold consistency scoring (Spec 04 T4/T5)
             if wf_fold_metrics:
                 contract_metrics["fold_metrics"] = wf_fold_metrics

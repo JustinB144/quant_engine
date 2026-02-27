@@ -1208,7 +1208,7 @@ PROMOTION_MAX_TRANSITION_DRAWDOWN = 0.10 # Max 10% drawdown near transitions
 
 ---
 
-## SPEC-V03: Make capacity analysis regime-dependent [MEDIUM]
+## SPEC-V03: Make capacity analysis regime-dependent [MEDIUM] ✅ COMPLETE
 
 **STATUS**: `backtest/advanced_validation.py` `capacity_analysis()` uses uniform volume and impact assumptions regardless of regime.
 

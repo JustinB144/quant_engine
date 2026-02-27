@@ -78,6 +78,12 @@ class CapacityResult:
     market_impact_bps: float        # Estimated market impact at full capacity
     trades_per_day: float
     capacity_constrained: bool
+    # Stress-regime capacity (SPEC-V03)
+    stress_capacity_usd: Optional[float] = None       # Capacity during stress regimes
+    stress_market_impact_bps: Optional[float] = None   # Market impact during stress
+    stress_participation_rate: Optional[float] = None   # Participation rate during stress
+    stress_trades_per_day: Optional[float] = None       # Trade frequency during stress
+    stress_avg_daily_volume: Optional[float] = None     # Volume during stress periods
 
 
 @dataclass
@@ -364,28 +370,22 @@ def monte_carlo_validation(
     )
 
 
-def capacity_analysis(
+def _compute_capacity_metrics(
     trades: list,
     price_data: Dict[str, pd.DataFrame],
-    capital_usd: float = 1_000_000,
-    max_participation_rate: float = 0.01,  # 1% of daily volume
-    impact_coefficient_bps: float = 30.0,  # impact at 100% participation
-) -> CapacityResult:
-    """
-    Estimate strategy capacity and market impact.
+    capital_usd: float,
+    max_participation_rate: float,
+    impact_coefficient_bps: float,
+) -> Optional[Dict[str, float]]:
+    """Compute raw capacity metrics for a set of trades.
 
-    Calculates how much capital the strategy can deploy before
-    market impact erodes returns.
-
-    Market impact model (square-root): impact = sigma * sqrt(Q / V)
-    where sigma = volatility, Q = order size, V = daily volume
+    Returns None if there is insufficient data (no trades, no price data,
+    or no matching volume information).  Otherwise returns a dict with keys:
+    estimated_capacity_usd, avg_daily_volume, participation_rate,
+    market_impact_bps, trades_per_day, capacity_constrained.
     """
     if not trades or not price_data:
-        return CapacityResult(
-            estimated_capacity_usd=0, avg_daily_volume=0,
-            participation_rate=0, market_impact_bps=0,
-            trades_per_day=0, capacity_constrained=False,
-        )
+        return None
 
     # Compute average daily dollar volume for traded tickers
     traded_tickers = set(
@@ -409,11 +409,7 @@ def capacity_analysis(
         daily_volumes.append(float(dollar_vol))
 
     if not daily_volumes:
-        return CapacityResult(
-            estimated_capacity_usd=0, avg_daily_volume=0,
-            participation_rate=0, market_impact_bps=0,
-            trades_per_day=0, capacity_constrained=False,
-        )
+        return None
 
     avg_daily_vol = np.mean(daily_volumes)
 
@@ -436,8 +432,6 @@ def capacity_analysis(
 
     # Market impact: square-root model
     # impact_bps = impact_coefficient_bps * sqrt(participation_rate)
-    # Example with default coefficient:
-    # 1% participation => ~3 bps, 4% participation => ~6 bps.
     market_impact = impact_coefficient_bps * np.sqrt(max(0.0, participation_rate))
 
     # Capacity estimate: capital where participation hits max_rate
@@ -447,14 +441,96 @@ def capacity_analysis(
     else:
         max_capital = 0
 
-    return CapacityResult(
-        estimated_capacity_usd=float(max_capital),
-        avg_daily_volume=float(avg_daily_vol),
-        participation_rate=float(participation_rate),
-        market_impact_bps=float(market_impact),
-        trades_per_day=float(trades_per_day),
-        capacity_constrained=participation_rate > max_participation_rate,
+    return {
+        "estimated_capacity_usd": float(max_capital),
+        "avg_daily_volume": float(avg_daily_vol),
+        "participation_rate": float(participation_rate),
+        "market_impact_bps": float(market_impact),
+        "trades_per_day": float(trades_per_day),
+        "capacity_constrained": participation_rate > max_participation_rate,
+    }
+
+
+def capacity_analysis(
+    trades: list,
+    price_data: Dict[str, pd.DataFrame],
+    capital_usd: float = 1_000_000,
+    max_participation_rate: float = 0.01,  # 1% of daily volume
+    impact_coefficient_bps: float = 30.0,  # impact at 100% participation
+    stress_regimes: Optional[List[int]] = None,
+    min_stress_trades: int = 10,
+) -> CapacityResult:
+    """
+    Estimate strategy capacity and market impact.
+
+    Calculates how much capital the strategy can deploy before
+    market impact erodes returns.  When ``stress_regimes`` is provided,
+    also computes capacity using only trades that occurred during those
+    regimes — liquidity typically collapses in stress, so stress capacity
+    is the binding constraint for position sizing.
+
+    Market impact model (square-root): impact = coeff * sqrt(Q / V)
+
+    Args:
+        trades: List of Trade objects (or dicts with compatible keys).
+        price_data: Dict mapping ticker -> OHLCV DataFrame.
+        capital_usd: Assumed capital base for participation calculation.
+        max_participation_rate: Maximum acceptable fraction of daily volume.
+        impact_coefficient_bps: Impact at 100% participation (basis points).
+        stress_regimes: Regime codes (e.g. [2, 3]) to isolate for stress
+            capacity.  ``None`` skips stress analysis.
+        min_stress_trades: Minimum number of stress trades required for
+            a meaningful stress capacity estimate.
+    """
+    empty = CapacityResult(
+        estimated_capacity_usd=0, avg_daily_volume=0,
+        participation_rate=0, market_impact_bps=0,
+        trades_per_day=0, capacity_constrained=False,
     )
+
+    overall = _compute_capacity_metrics(
+        trades, price_data, capital_usd,
+        max_participation_rate, impact_coefficient_bps,
+    )
+    if overall is None:
+        return empty
+
+    result = CapacityResult(
+        estimated_capacity_usd=overall["estimated_capacity_usd"],
+        avg_daily_volume=overall["avg_daily_volume"],
+        participation_rate=overall["participation_rate"],
+        market_impact_bps=overall["market_impact_bps"],
+        trades_per_day=overall["trades_per_day"],
+        capacity_constrained=overall["capacity_constrained"],
+    )
+
+    # ── Stress-regime capacity (SPEC-V03) ──
+    if stress_regimes is not None:
+        stress_regime_set = set(stress_regimes)
+        stress_trades = [
+            t for t in trades
+            if (t.regime if hasattr(t, 'regime') else t.get('regime', -1))
+            in stress_regime_set
+        ]
+        if len(stress_trades) >= min_stress_trades:
+            stress = _compute_capacity_metrics(
+                stress_trades, price_data, capital_usd,
+                max_participation_rate, impact_coefficient_bps,
+            )
+            if stress is not None:
+                result.stress_capacity_usd = stress["estimated_capacity_usd"]
+                result.stress_market_impact_bps = stress["market_impact_bps"]
+                result.stress_participation_rate = stress["participation_rate"]
+                result.stress_trades_per_day = stress["trades_per_day"]
+                result.stress_avg_daily_volume = stress["avg_daily_volume"]
+                # The binding constraint is the worst case
+                if result.stress_capacity_usd < result.estimated_capacity_usd:
+                    result.capacity_constrained = (
+                        result.capacity_constrained
+                        or stress["participation_rate"] > max_participation_rate
+                    )
+
+    return result
 
 
 def run_advanced_validation(
@@ -465,6 +541,7 @@ def run_advanced_validation(
     holding_days: int = 10,
     returns_matrix: Optional[pd.DataFrame] = None,
     verbose: bool = True,
+    stress_regimes: Optional[List[int]] = None,
 ) -> AdvancedValidationReport:
     """
     Run all advanced validation tests.
@@ -477,6 +554,7 @@ def run_advanced_validation(
         holding_days: average holding period
         returns_matrix: strategy variants for PBO (optional)
         verbose: print results
+        stress_regimes: regime codes for stress capacity analysis (SPEC-V03)
     """
     returns = np.array(trade_returns, dtype=float)
 
@@ -504,7 +582,7 @@ def run_advanced_validation(
     mc = monte_carlo_validation(returns, holding_days=holding_days)
 
     # ── Capacity ──
-    cap = capacity_analysis(trades, price_data)
+    cap = capacity_analysis(trades, price_data, stress_regimes=stress_regimes)
 
     # ── Overall assessment ──
     passes = (
@@ -576,6 +654,12 @@ def _print_report(report: AdvancedValidationReport):
         print(f"    Participation rate: {cap.participation_rate:.4%}")
         print(f"    Market impact: {cap.market_impact_bps:.1f} bps")
         print(f"    Capacity constrained: {cap.capacity_constrained}")
+        if cap.stress_capacity_usd is not None:
+            print(f"    Stress capacity: ${cap.stress_capacity_usd:,.0f}")
+            print(f"    Stress market impact: {cap.stress_market_impact_bps:.1f} bps")
+            print(f"    Stress participation: {cap.stress_participation_rate:.4%}")
+            ratio = cap.stress_capacity_usd / cap.estimated_capacity_usd if cap.estimated_capacity_usd > 0 else 0
+            print(f"    Stress/overall ratio: {ratio:.1%}")
 
     print(f"\n  OVERALL: {'PASS' if report.overall_passes else 'FAIL'}")
     print(f"  Summary: {report.summary}")

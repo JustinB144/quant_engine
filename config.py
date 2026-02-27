@@ -492,6 +492,10 @@ PROMOTION_MIN_STRESS_SHARPE = -0.50               # STATUS: ACTIVE — autopilot
 PROMOTION_MAX_TRANSITION_DRAWDOWN = 0.10          # STATUS: ACTIVE — autopilot/promotion_gate.py; max drawdown near regime transitions
 PROMOTION_STRESS_REGIMES = [2, 3]                 # STATUS: ACTIVE — autopilot/promotion_gate.py; regime codes considered stress buckets
 
+# ── Stress-Regime Capacity Gates (SPEC-V03) ──────────────────────
+PROMOTION_MIN_STRESS_CAPACITY_USD = 500_000       # STATUS: ACTIVE — autopilot/promotion_gate.py; min capacity during stress regimes
+PROMOTION_MIN_STRESS_CAPACITY_RATIO = 0.20        # STATUS: ACTIVE — autopilot/promotion_gate.py; min stress/overall capacity ratio
+
 # ── Signal Selection — Spec 04 ─────────────────────────────────────
 SIGNAL_TOPK_QUANTILE = 0.70                      # STATUS: ACTIVE — autopilot/engine.py; select top 70% by cross-sectional z-score
 SIGNAL_Z_THRESHOLD = 1.5                         # STATUS: DEPRECATED — superseded by SIGNAL_TOPK_QUANTILE; kept for backward compat
