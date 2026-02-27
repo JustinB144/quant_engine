@@ -1413,7 +1413,7 @@ Track this in health service. High disagreement = high uncertainty = signal unre
 
 ---
 
-## SPEC-H03: Add execution quality monitoring [MEDIUM]
+## SPEC-H03: Add execution quality monitoring [MEDIUM] ✅ COMPLETE
 
 **STATUS**: TCA report exists per backtest but no live monitoring of paper trade fill quality.
 
@@ -1425,6 +1425,13 @@ cost_surprise = actual_cost_bps - predicted_cost_bps
 Track rolling cost surprise distribution. Alert if systematically positive (model underestimates costs).
 
 **FILES**: `autopilot/paper_trader.py`, `api/services/health_service.py`
+
+**IMPLEMENTATION**:
+- `api/services/health_service.py`: Added SQLite-backed `exec_quality.db` with `save_execution_quality_fill()` / `get_execution_quality_history()`. Added `_check_cost_surprise()` health check in execution_quality domain with rolling mean, trend detection, and tiered scoring (90/70/40/15). Scores: surprise<=0→90 (conservative), <=2bps→70 (slight), <=5bps→40 (WARN), >5bps→15 (FAIL/CRITICAL).
+- `autopilot/paper_trader.py`: Added `_record_execution_quality()` method that persists each fill's predicted-vs-actual cost to the health monitoring DB. Wired into `_record_fill_feedback()` alongside existing SPEC-E04 cost calibrator feedback. Works independently of cost calibrator enablement.
+- `config.py`: Added `EXEC_QUALITY_LOOKBACK=50`, `EXEC_QUALITY_WARN_SURPRISE_BPS=2.0`, `EXEC_QUALITY_CRITICAL_SURPRISE_BPS=5.0`.
+- `config_structured.py`: Added corresponding fields to `HealthConfig`.
+- 39 tests in `tests/test_health_exec_quality.py` covering storage, health check scoring, trend detection, raw metrics, domain integration, paper trader wiring, config constants, and edge cases.
 
 ---
 
@@ -1591,8 +1598,8 @@ SPEC-A01 through SPEC-A02 (2 specs)
 **Phase 7 — Health & Monitoring (~8 hours)**:
 SPEC-H01 through SPEC-H03 (3 specs)
 - H01: IC tracking [MEDIUM] ✅ DONE (3h)
-- H02: Ensemble disagreement monitoring [MEDIUM] (2h)
-- H03: Execution quality monitoring [MEDIUM] (3h)
+- H02: Ensemble disagreement monitoring [MEDIUM] ✅ DONE (2h)
+- H03: Execution quality monitoring [MEDIUM] ✅ DONE (3h)
 
 ---
 

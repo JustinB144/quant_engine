@@ -454,14 +454,16 @@ class PaperTrader:
         regime: int,
         as_of: pd.Timestamp,
     ) -> None:
-        """Record predicted-vs-actual cost to the calibration feedback loop.
+        """Record predicted-vs-actual cost for calibration and health monitoring.
 
         SPEC-E04: Computes the actual execution cost from the fill slippage
         and records it alongside the model's predicted cost for later
         recalibration.
+
+        SPEC-H03: Also saves each fill's predicted-vs-actual cost to the
+        execution quality health monitoring database for rolling cost
+        surprise tracking.
         """
-        if self._cost_calibrator is None:
-            return
         if fill.fill_ratio <= 0 or fill.participation_rate <= 0:
             return
 
@@ -484,18 +486,62 @@ class PaperTrader:
         if not np.isfinite(actual_cost):
             return
 
-        # Estimate market cap from price * volume (rough proxy)
-        estimated_mcap = float(price * daily_volume * 200.0)
+        # SPEC-E04: Record to cost calibrator for coefficient recalibration
+        if self._cost_calibrator is not None:
+            # Estimate market cap from price * volume (rough proxy)
+            estimated_mcap = float(price * daily_volume * 200.0)
 
-        self._cost_calibrator.record_actual_fill(
+            self._cost_calibrator.record_actual_fill(
+                symbol=symbol,
+                market_cap=estimated_mcap,
+                predicted_cost_bps=float(predicted_cost),
+                actual_cost_bps=float(max(0.0, actual_cost)),
+                participation_rate=float(fill.participation_rate),
+                regime=int(regime),
+                fill_timestamp=str(as_of.isoformat()),
+            )
+
+        # SPEC-H03: Record to execution quality health monitoring DB
+        self._record_execution_quality(
             symbol=symbol,
-            market_cap=estimated_mcap,
+            side=side,
             predicted_cost_bps=float(predicted_cost),
             actual_cost_bps=float(max(0.0, actual_cost)),
+            fill_ratio=float(fill.fill_ratio),
             participation_rate=float(fill.participation_rate),
             regime=int(regime),
-            fill_timestamp=str(as_of.isoformat()),
         )
+
+    def _record_execution_quality(
+        self,
+        symbol: str,
+        side: str,
+        predicted_cost_bps: float,
+        actual_cost_bps: float,
+        fill_ratio: float,
+        participation_rate: float,
+        regime: int,
+    ) -> None:
+        """Persist a fill's execution quality to the health monitoring DB.
+
+        SPEC-H03: Saves predicted-vs-actual cost data for each paper-trade
+        fill to SQLite so the health service can track rolling cost surprise.
+        Non-blocking — silently drops records on failure.
+        """
+        try:
+            from ..api.services.health_service import HealthService
+            svc = HealthService()
+            svc.save_execution_quality_fill(
+                symbol=symbol,
+                side=side,
+                predicted_cost_bps=predicted_cost_bps,
+                actual_cost_bps=actual_cost_bps,
+                fill_ratio=fill_ratio,
+                participation_rate=participation_rate,
+                regime=regime,
+            )
+        except Exception as e:
+            logger.debug("SPEC-H03: execution quality recording failed: %s", e)
 
     def _get_volume(
         self,

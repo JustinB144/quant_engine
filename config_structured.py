@@ -269,6 +269,11 @@ class HealthConfig:
     ensemble_disagreement_warn_threshold: float = 0.015
     ensemble_disagreement_critical_threshold: float = 0.03
 
+    # Execution quality monitoring (SPEC-H03)
+    exec_quality_lookback: int = 50
+    exec_quality_warn_surprise_bps: float = 2.0
+    exec_quality_critical_surprise_bps: float = 5.0
+
 
 @dataclass
 class PaperTradingConfig:
