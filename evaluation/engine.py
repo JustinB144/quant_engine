@@ -74,6 +74,10 @@ class EvaluationResult:
     # Per-regime slice metrics
     regime_slice_metrics: Dict[str, Dict]
     individual_regime_metrics: Dict[str, Dict]
+    # Uncertainty quantile slice metrics
+    uncertainty_slice_metrics: Dict[str, Dict] = field(default_factory=dict)
+    # Regime transition slice metrics
+    transition_slice_metrics: Dict[str, Dict] = field(default_factory=dict)
     # Walk-forward with embargo
     walk_forward: Optional[Dict] = None
     # Rolling IC
@@ -148,6 +152,7 @@ class EvaluationEngine:
         predictions: np.ndarray,
         trades: Optional[List[Dict]] = None,
         regime_states: Optional[np.ndarray] = None,
+        regime_uncertainty: Optional[np.ndarray] = None,
         confidence_scores: Optional[np.ndarray] = None,
         volatility: Optional[pd.Series] = None,
         importance_matrices: Optional[Dict[str, np.ndarray]] = None,
@@ -166,6 +171,10 @@ class EvaluationEngine:
             Trade records (for PnL concentration).
         regime_states : np.ndarray, optional
             Regime labels per bar (0-3).
+        regime_uncertainty : np.ndarray, optional
+            Per-bar regime uncertainty (entropy of posterior probabilities, [0, 1]).
+            When provided alongside ``regime_states``, uncertainty quantile slices
+            and regime transition slices are automatically computed.
         confidence_scores : np.ndarray, optional
             Model confidence per prediction.
         volatility : pd.Series, optional
@@ -190,9 +199,13 @@ class EvaluationEngine:
         # ── 2. Regime slicing ──
         regime_slice_metrics = {}
         individual_regime_metrics = {}
+        uncertainty_slice_metrics = {}
+        transition_slice_metrics = {}
 
         if regime_states is not None:
-            metadata = SliceRegistry.build_metadata(returns, regime_states, volatility)
+            metadata = SliceRegistry.build_metadata(
+                returns, regime_states, volatility, uncertainty=regime_uncertainty,
+            )
             primary_slices = SliceRegistry.create_regime_slices(regime_states)
             individual_slices = SliceRegistry.create_individual_regime_slices()
 
@@ -209,6 +222,36 @@ class EvaluationEngine:
                     metrics = compute_slice_metrics(filtered, None)
                     metrics.update(info)
                     individual_regime_metrics[slc.name] = metrics
+
+            # ── 2a. Uncertainty quantile slicing (MANDATORY when uncertainty available) ──
+            if regime_uncertainty is not None:
+                try:
+                    unc_slices = SliceRegistry.create_uncertainty_slices(regime_uncertainty)
+                    for slc in unc_slices:
+                        filtered, info = slc.apply(returns, metadata)
+                        if info["n_samples"] > 0:
+                            metrics = compute_slice_metrics(filtered, None)
+                            metrics.update(info)
+                            uncertainty_slice_metrics[slc.name] = metrics
+                except Exception as e:
+                    logger.warning("Uncertainty quantile slicing failed: %s", e)
+            else:
+                logger.info(
+                    "regime_states provided without regime_uncertainty — "
+                    "uncertainty quantile slices skipped"
+                )
+
+            # ── 2b. Regime transition slicing (MANDATORY) ──
+            try:
+                transition_slices = SliceRegistry.create_transition_slices(regime_states)
+                for slc in transition_slices:
+                    filtered, info = slc.apply(returns, metadata)
+                    if info["n_samples"] > 0:
+                        metrics = compute_slice_metrics(filtered, None)
+                        metrics.update(info)
+                        transition_slice_metrics[slc.name] = metrics
+            except Exception as e:
+                logger.warning("Regime transition slicing failed: %s", e)
 
             # Red flag: regime Sharpes diverge > threshold
             sharpes = [m["sharpe"] for m in individual_regime_metrics.values() if m["n_samples"] >= 20]
@@ -428,6 +471,8 @@ class EvaluationEngine:
             aggregate_metrics=aggregate,
             regime_slice_metrics=regime_slice_metrics,
             individual_regime_metrics=individual_regime_metrics,
+            uncertainty_slice_metrics=uncertainty_slice_metrics,
+            transition_slice_metrics=transition_slice_metrics,
             walk_forward=wf_result,
             rolling_ic_data=ic_data,
             ic_decay=ic_decay_result,
@@ -482,6 +527,8 @@ class EvaluationEngine:
             "aggregate_metrics": results.aggregate_metrics,
             "regime_slice_metrics": results.regime_slice_metrics,
             "individual_regime_metrics": results.individual_regime_metrics,
+            "uncertainty_slice_metrics": results.uncertainty_slice_metrics,
+            "transition_slice_metrics": results.transition_slice_metrics,
             "walk_forward": results.walk_forward,
             "rolling_ic": results.rolling_ic_data,
             "ic_decay": results.ic_decay,
@@ -561,6 +608,25 @@ class EvaluationEngine:
             if chart.get("html"):
                 sections.append(chart["html"])
             sections.append(self._metrics_table(results.individual_regime_metrics))
+
+        # Uncertainty quantile slices
+        if results.uncertainty_slice_metrics:
+            chart = viz.plot_regime_slices(results.uncertainty_slice_metrics)
+            sections.append("<h2>Uncertainty Quantile Slices</h2>")
+            sections.append("<p>Performance breakdown by regime uncertainty level (entropy of posterior probabilities). "
+                            "Q1 = low uncertainty (confident regime assignment), Q3 = high uncertainty.</p>")
+            if chart.get("html"):
+                sections.append(chart["html"])
+            sections.append(self._metrics_table(results.uncertainty_slice_metrics))
+
+        # Regime transition slices
+        if results.transition_slice_metrics:
+            chart = viz.plot_regime_slices(results.transition_slice_metrics)
+            sections.append("<h2>Regime Transition Slices</h2>")
+            sections.append("<p>Performance near regime transitions vs. stable regime periods.</p>")
+            if chart.get("html"):
+                sections.append(chart["html"])
+            sections.append(self._metrics_table(results.transition_slice_metrics))
 
         # Walk-forward
         if results.walk_forward:

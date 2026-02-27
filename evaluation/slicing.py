@@ -209,10 +209,126 @@ class SliceRegistry:
         return slices
 
     @staticmethod
+    def create_uncertainty_slices(
+        uncertainty: np.ndarray,
+        n_quantiles: int = 3,
+    ) -> List[PerformanceSlice]:
+        """Create slices based on regime uncertainty quantiles.
+
+        Partitions bars by their regime-uncertainty level (entropy of posterior
+        probabilities), so that strategy performance can be evaluated separately
+        during low-, mid-, and high-uncertainty periods.
+
+        Parameters
+        ----------
+        uncertainty : np.ndarray
+            Per-bar uncertainty values (typically entropy in [0, 1]).
+        n_quantiles : int
+            Number of quantile buckets (default 3: low / mid / high).
+
+        Returns
+        -------
+        list[PerformanceSlice]
+            ``n_quantiles`` slices named ``uncertainty_q1`` … ``uncertainty_qN``.
+        """
+        unc = np.asarray(uncertainty, dtype=float)
+        quantile_edges = np.linspace(0, 1, n_quantiles + 1)
+        thresholds = np.nanquantile(unc, quantile_edges)
+
+        slices: List[PerformanceSlice] = []
+        for i in range(n_quantiles):
+            low = thresholds[i]
+            high = thresholds[i + 1]
+            label = f"uncertainty_q{i + 1}"
+            is_first = i == 0
+            is_last = i == n_quantiles - 1
+
+            def _make_cond(lo: float, hi: float, first: bool, last: bool):
+                def _cond(meta: pd.DataFrame) -> np.ndarray:
+                    if "uncertainty" in meta.columns:
+                        u = meta["uncertainty"].values
+                    else:
+                        u = unc[:len(meta)]
+                    if first and last:
+                        # Single quantile — select everything
+                        return np.ones(len(u), dtype=bool)
+                    elif first:
+                        # First quantile: capture all values below upper edge
+                        return u < hi
+                    elif last:
+                        # Last quantile: capture all values at or above lower edge
+                        return u >= lo
+                    else:
+                        return (u >= lo) & (u < hi)
+                return _cond
+
+            slices.append(
+                PerformanceSlice(
+                    name=label,
+                    condition=_make_cond(low, high, is_first, is_last),
+                )
+            )
+        return slices
+
+    @staticmethod
+    def create_transition_slices(
+        regimes: np.ndarray,
+        window: int = 5,
+    ) -> List[PerformanceSlice]:
+        """Create slices based on proximity to regime transitions.
+
+        A bar is ``near_transition`` if a regime change occurs within
+        ``window`` bars (centred) of that bar.  All other bars are
+        ``stable_regime``.
+
+        Parameters
+        ----------
+        regimes : np.ndarray
+            Integer regime labels per bar.
+        window : int
+            Lookback/lookahead window for transition proximity (default 5).
+
+        Returns
+        -------
+        list[PerformanceSlice]
+            Two slices: ``near_transition`` and ``stable_regime``.
+        """
+        regime_series = pd.Series(np.asarray(regimes, dtype=int))
+        changes = regime_series.diff().abs() > 0
+        near_transition = (
+            changes.rolling(window, center=True, min_periods=1)
+            .max()
+            .fillna(0)
+            .astype(bool)
+        )
+        near_mask = near_transition.values
+        stable_mask = ~near_mask
+
+        def _make_near_cond(mask: np.ndarray):
+            def _cond(meta: pd.DataFrame) -> np.ndarray:
+                if len(mask) == len(meta):
+                    return mask
+                return mask[:len(meta)]
+            return _cond
+
+        def _make_stable_cond(mask: np.ndarray):
+            def _cond(meta: pd.DataFrame) -> np.ndarray:
+                if len(mask) == len(meta):
+                    return mask
+                return mask[:len(meta)]
+            return _cond
+
+        return [
+            PerformanceSlice(name="near_transition", condition=_make_near_cond(near_mask)),
+            PerformanceSlice(name="stable_regime", condition=_make_stable_cond(stable_mask)),
+        ]
+
+    @staticmethod
     def build_metadata(
         returns: pd.Series,
         regime_states: np.ndarray,
         volatility: Optional[pd.Series] = None,
+        uncertainty: Optional[np.ndarray] = None,
     ) -> pd.DataFrame:
         """Build the metadata DataFrame expected by slice conditions.
 
@@ -224,12 +340,14 @@ class SliceRegistry:
             Regime labels per bar.
         volatility : pd.Series, optional
             Per-bar volatility (e.g., NATR or realized vol).
+        uncertainty : np.ndarray, optional
+            Per-bar regime uncertainty (entropy of posterior probabilities, [0, 1]).
 
         Returns
         -------
         pd.DataFrame
             Columns: regime, cumulative_return, drawdown, trailing_return_20d,
-            volatility, volatility_median.
+            volatility, volatility_median, and optionally uncertainty.
         """
         n = len(returns)
         meta = pd.DataFrame(index=returns.index)
@@ -266,6 +384,17 @@ class SliceRegistry:
             meta["volatility_median"] = vol.rolling(
                 252, min_periods=20
             ).median().values
+
+        # Uncertainty
+        if uncertainty is not None:
+            unc_arr = np.asarray(uncertainty, dtype=float)
+            if len(unc_arr) == n:
+                meta["uncertainty"] = unc_arr
+            else:
+                logger.warning(
+                    "Uncertainty length (%d) != returns length (%d); skipping",
+                    len(unc_arr), n,
+                )
 
         meta = meta.fillna(0.0)
         return meta

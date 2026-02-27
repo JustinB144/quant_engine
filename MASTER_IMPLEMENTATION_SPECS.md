@@ -1127,7 +1127,7 @@ dynamic_penalty = max(PORTFOLIO_TURNOVER_PENALTY, avg_cost_bps / 10000 * 2)  # 2
 
 # PHASE 4: EVALUATION LAYER IMPROVEMENTS
 
-## SPEC-V01: Add uncertainty quantile slicing [HIGH]
+## SPEC-V01: Add uncertainty quantile slicing [HIGH] ✅ COMPLETE
 
 **STATUS**: `evaluation/slicing.py` has regime-based slicing (5 primary + 4 individual regime slices). Missing: uncertainty quantile slicing, regime transition window slicing.
 
