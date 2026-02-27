@@ -14,13 +14,17 @@ Implements multiple sizing approaches that can be blended:
 
 Spec 05: Risk Governor + Kelly Unification + Uncertainty-Aware Sizing
 """
+import json
 import logging
 import math
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
+
+from ..regime.uncertainty_gate import UncertaintyGate
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +99,11 @@ class PositionSizer:
         # Global Bayesian counters (fallback for cold-start)
         self._bayesian_wins = 0
         self._bayesian_losses = 0
+
+        # SPEC-P02: Uncertainty gate for regime-entropy-aware Kelly scaling.
+        # Shared instance avoids re-creating per call.
+        self._uncertainty_gate = UncertaintyGate()
+
         # Per-regime Bayesian counters: {regime_id (int): {wins, losses}}
         self._bayesian_regime: Dict[int, Dict[str, int]] = {
             0: {"wins": 0, "losses": 0},  # trending_bull
@@ -118,6 +127,9 @@ class PositionSizer:
         # Load risk governor configuration with safe defaults
         self._load_risk_governor_config()
 
+        # Load persisted regime stats from disk (SPEC-P01)
+        self._load_regime_stats()
+
     def _load_risk_governor_config(self) -> None:
         """Load risk governor parameters from config with safe defaults."""
         try:
@@ -137,6 +149,8 @@ class PositionSizer:
                 KELLY_BAYESIAN_ALPHA,
                 KELLY_BAYESIAN_BETA,
                 KELLY_MIN_SAMPLES_FOR_UPDATE,
+                MIN_REGIME_TRADES_FOR_STATS,
+                REGIME_STATS_PERSIST_PATH,
             )
             self._shock_budget_pct = SHOCK_BUDGET_PCT
             self._concentration_limit_pct = CONCENTRATION_LIMIT_PCT
@@ -154,6 +168,9 @@ class PositionSizer:
             # Update Bayesian priors from config
             self.bayesian_alpha = KELLY_BAYESIAN_ALPHA
             self.bayesian_beta = KELLY_BAYESIAN_BETA
+            # Regime stats thresholds (SPEC-P01)
+            self._min_regime_trades_for_stats = MIN_REGIME_TRADES_FOR_STATS
+            self._regime_stats_persist_path = Path(REGIME_STATS_PERSIST_PATH)
         except ImportError:
             # Safe defaults if config params don't exist yet
             self._shock_budget_pct = 0.05
@@ -169,6 +186,8 @@ class PositionSizer:
             self._uncertainty_drift_weight = 0.30
             self._uncertainty_reduction_factor = 0.30
             self._kelly_min_samples = 10
+            self._min_regime_trades_for_stats = 30
+            self._regime_stats_persist_path = Path("trained_models/regime_trade_stats.json")
 
     # ── Core sizing methods ─────────────────────────────────────────────
 
@@ -193,6 +212,7 @@ class PositionSizer:
         drift_score: Optional[float] = None,
         portfolio_equity: Optional[float] = None,
         current_positions: Optional[Dict[str, float]] = None,
+        regime_uncertainty: float = 0.0,
     ) -> PositionSize:
         """
         Calculate position size using multiple methods and blend.
@@ -217,12 +237,15 @@ class PositionSizer:
             drift_score: 0-1, trend strength (0=no trend, 1=strong trend = high confidence)
             portfolio_equity: total portfolio equity for budget constraint calculations
             current_positions: {symbol: notional} dict for turnover budget calculations
+            regime_uncertainty: normalized entropy of regime posterior [0, 1].
+                When > 0, the UncertaintyGate multiplier is applied to Kelly
+                components before blending. (SPEC-P02)
         """
-        # Apply regime-conditional adjustments if regime is known
+        # Apply regime-conditional adjustments if regime is known (SPEC-P01)
         if regime is not None and regime in self.regime_stats:
             rs = self.regime_stats[regime]
-            if rs["n_trades"] >= 20:
-                # Use regime-specific stats when we have enough data
+            if rs["n_trades"] >= self._min_regime_trades_for_stats:
+                # Use learned regime-specific stats when we have enough data
                 win_rate = rs["win_rate"]
                 avg_win = rs["avg_win"]
                 avg_loss = rs["avg_loss"]
@@ -234,6 +257,17 @@ class PositionSizer:
 
         # Apply drawdown governor to Kelly
         half_kelly = self._apply_drawdown_governor(half_kelly, current_drawdown, self.max_portfolio_dd)
+
+        # SPEC-P02: Apply regime uncertainty gate to Kelly components.
+        # During uncertain regime transitions, shrink Kelly-derived sizes
+        # using the REGIME_UNCERTAINTY_SIZING_MAP interpolation.
+        regime_uncertainty_mult = 1.0
+        if regime_uncertainty > 0:
+            regime_uncertainty_mult = self._uncertainty_gate.compute_size_multiplier(
+                regime_uncertainty,
+            )
+            raw_kelly *= regime_uncertainty_mult
+            half_kelly *= regime_uncertainty_mult
 
         # ── Volatility-scaled ──
         vol_scaled = self._vol_scaled(realized_vol, holding_days, max_positions)
@@ -296,6 +330,8 @@ class PositionSizer:
                 "confidence_scalar": confidence_scalar,
                 "uncertainty_scale": uncertainty_scale,
                 "blend_regime": blend_regime,
+                "regime_uncertainty": regime_uncertainty,
+                "regime_uncertainty_mult": regime_uncertainty_mult,
             },
         )
 
@@ -318,6 +354,7 @@ class PositionSizer:
         signal_uncertainty: Optional[float] = None,
         regime_entropy: Optional[float] = None,
         drift_score: Optional[float] = None,
+        regime_uncertainty: float = 0.0,
     ) -> float:
         """Compute position size as % of equity for paper trader usage.
 
@@ -343,6 +380,8 @@ class PositionSizer:
             signal_uncertainty: 0-1, uncertainty of primary signal.
             regime_entropy: 0-1, normalized entropy of regime state.
             drift_score: 0-1, trend strength.
+            regime_uncertainty: normalized entropy of regime posterior [0, 1].
+                Forwarded to size_position() for SPEC-P02 Kelly scaling.
 
         Returns:
             Position size as fraction of equity (0-1).
@@ -391,6 +430,7 @@ class PositionSizer:
             signal_uncertainty=signal_uncertainty,
             regime_entropy=regime_entropy,
             drift_score=drift_score,
+            regime_uncertainty=regime_uncertainty,
             portfolio_equity=portfolio_equity,
             current_positions=positions,
         )
@@ -755,16 +795,26 @@ class PositionSizer:
 
     # ── Bayesian Kelly updating ─────────────────────────────────────────
 
-    def update_regime_stats(self, trades: pd.DataFrame, regime_col: str = "regime"):
+    def update_regime_stats(
+        self,
+        trades: pd.DataFrame,
+        regime_col: str = "regime",
+        persist: bool = True,
+    ):
         """Update regime-specific historical stats from completed trades.
 
         Accepts a full trade DataFrame with a ``regime`` column (integer IDs
-        0-3) and updates stats for every regime that has enough data. This
-        replaces the old interface that required pre-filtering by regime.
+        0-3) and updates stats for every regime that has enough data.  Only
+        overrides the Bayesian prior defaults when the number of trades for a
+        regime meets ``MIN_REGIME_TRADES_FOR_STATS`` (default 30).
+
+        After updating, persists the learned stats to disk so they survive
+        restarts (SPEC-P01).
 
         Args:
             trades: DataFrame with ``net_return`` and ``regime`` columns.
             regime_col: column name containing integer regime IDs.
+            persist: if True, save updated stats to disk after updating.
         """
         from ..config import REGIME_NAMES
 
@@ -773,19 +823,80 @@ class PositionSizer:
         if regime_col not in trades.columns:
             return
 
+        updated = False
         for regime_id, regime_name in REGIME_NAMES.items():
             regime_trades = trades[trades[regime_col] == regime_id]
             returns = regime_trades["net_return"].dropna().values
-            if len(returns) < 5:
+            if len(returns) < self._min_regime_trades_for_stats:
                 continue
             wins = returns[returns > 0]
-            losses = returns[returns < 0]
+            losses = returns[returns <= 0]
             self.regime_stats[regime_name] = {
                 "win_rate": float((returns > 0).mean()),
-                "avg_win": float(wins.mean()) if len(wins) > 0 else 0.01,
-                "avg_loss": float(losses.mean()) if len(losses) > 0 else -0.01,
-                "n_trades": len(returns),
+                "avg_win": float(wins.mean()) if len(wins) > 0 else 0.0,
+                "avg_loss": float(losses.mean()) if len(losses) > 0 else 0.0,
+                "n_trades": int(len(returns)),
             }
+            updated = True
+            logger.info(
+                "Regime stats updated for %s: n_trades=%d, win_rate=%.3f",
+                regime_name,
+                len(returns),
+                self.regime_stats[regime_name]["win_rate"],
+            )
+
+        if updated and persist:
+            self.save_regime_stats()
+
+    # ── Regime stats persistence (SPEC-P01) ──────────────────────────────
+
+    def save_regime_stats(self) -> None:
+        """Persist learned regime statistics to disk as JSON."""
+        path = self._regime_stats_persist_path
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w") as f:
+                json.dump(self.regime_stats, f, indent=2)
+            logger.info("Regime stats saved to %s", path)
+        except (OSError, TypeError) as exc:
+            logger.warning("Failed to save regime stats to %s: %s", path, exc)
+
+    def _load_regime_stats(self) -> None:
+        """Load persisted regime statistics from disk if available.
+
+        Only overwrites the hardcoded defaults for regimes where the
+        persisted data has ``n_trades >= MIN_REGIME_TRADES_FOR_STATS``.
+        This ensures cold-start still uses the Bayesian priors.
+        """
+        path = self._regime_stats_persist_path
+        if not path.exists():
+            return
+        try:
+            with open(path) as f:
+                persisted = json.load(f)
+            if not isinstance(persisted, dict):
+                logger.warning("Regime stats file has unexpected format; ignoring.")
+                return
+            for regime_name, stats in persisted.items():
+                if regime_name not in self.regime_stats:
+                    continue
+                if not isinstance(stats, dict):
+                    continue
+                n_trades = stats.get("n_trades", 0)
+                if n_trades >= self._min_regime_trades_for_stats:
+                    self.regime_stats[regime_name] = {
+                        "win_rate": float(stats.get("win_rate", 0.5)),
+                        "avg_win": float(stats.get("avg_win", 0.0)),
+                        "avg_loss": float(stats.get("avg_loss", 0.0)),
+                        "n_trades": int(n_trades),
+                    }
+                    logger.info(
+                        "Loaded persisted regime stats for %s: n_trades=%d",
+                        regime_name,
+                        n_trades,
+                    )
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            logger.warning("Failed to load regime stats from %s: %s", path, exc)
 
     def update_kelly_bayesian(self, trades: pd.DataFrame, regime_col: str = "regime"):
         """Update per-regime and global Bayesian posteriors from trade history.
@@ -819,7 +930,11 @@ class PositionSizer:
                     self._bayesian_regime[regime_id]["losses"] += losses
 
     def get_bayesian_kelly(
-        self, avg_win: float = 0.02, avg_loss: float = -0.02, regime: Optional[int] = None,
+        self,
+        avg_win: float = 0.02,
+        avg_loss: float = -0.02,
+        regime: Optional[int] = None,
+        regime_uncertainty: float = 0.0,
     ) -> float:
         """Compute Kelly fraction using regime-specific Bayesian posterior.
 
@@ -830,13 +945,20 @@ class PositionSizer:
         Uses configurable prior parameters (KELLY_BAYESIAN_ALPHA, KELLY_BAYESIAN_BETA)
         and minimum sample threshold (KELLY_MIN_SAMPLES_FOR_UPDATE).
 
+        SPEC-P02: When ``regime_uncertainty`` > 0, the result is scaled by the
+        UncertaintyGate multiplier so Kelly sizes shrink during uncertain
+        regime transitions.
+
         Args:
             avg_win: average winning trade return.
             avg_loss: average losing trade return (negative).
             regime: integer regime ID (0-3) or ``None`` for global.
+            regime_uncertainty: normalized entropy of regime posterior [0, 1].
+                When > 0, the UncertaintyGate multiplier scales the result.
 
         Returns:
-            Half-Kelly fraction from Bayesian posterior win rate.
+            Half-Kelly fraction from Bayesian posterior win rate,
+            scaled by the regime uncertainty gate when applicable.
         """
         min_samples = self._kelly_min_samples
 
@@ -848,7 +970,13 @@ class PositionSizer:
                 posterior_wr = (self.bayesian_alpha + wins) / (
                     self.bayesian_alpha + self.bayesian_beta + wins + losses
                 )
-                return self._kelly(posterior_wr, avg_win, avg_loss) * self.kelly_frac
+                result = self._kelly(posterior_wr, avg_win, avg_loss) * self.kelly_frac
+                # SPEC-P02: Apply uncertainty gate
+                if regime_uncertainty > 0:
+                    result *= self._uncertainty_gate.compute_size_multiplier(
+                        regime_uncertainty,
+                    )
+                return result
 
         # Fallback to global posterior
         total_trades = self._bayesian_wins + self._bayesian_losses
@@ -864,7 +992,13 @@ class PositionSizer:
                 "Insufficient trades (%d < %d). Using prior estimate %.3f.",
                 total_trades, min_samples, prior_mode,
             )
-            return self._kelly(prior_mode, avg_win, avg_loss) * self.kelly_frac
+            result = self._kelly(prior_mode, avg_win, avg_loss) * self.kelly_frac
+            # SPEC-P02: Apply uncertainty gate
+            if regime_uncertainty > 0:
+                result *= self._uncertainty_gate.compute_size_multiplier(
+                    regime_uncertainty,
+                )
+            return result
 
         alpha = self.bayesian_alpha + self._bayesian_wins
         beta = self.bayesian_beta + self._bayesian_losses
@@ -877,7 +1011,13 @@ class PositionSizer:
             total_trades, alpha, beta, posterior_win_rate, raw_kelly * self.kelly_frac,
         )
 
-        return raw_kelly * self.kelly_frac
+        result = raw_kelly * self.kelly_frac
+        # SPEC-P02: Apply uncertainty gate
+        if regime_uncertainty > 0:
+            result *= self._uncertainty_gate.compute_size_multiplier(
+                regime_uncertainty,
+            )
+        return result
 
     # ── Portfolio-aware sizing ──────────────────────────────────────────
 

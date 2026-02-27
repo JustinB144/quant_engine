@@ -1708,6 +1708,16 @@ class Backtester:
                 else:
                     win_rate, avg_win, avg_loss = 0.50, 0.02, -0.02
 
+                # SPEC-P02: Thread regime uncertainty into position sizer
+                # so Kelly sizes shrink during uncertain regime transitions.
+                from ..config import REGIME_NAMES
+                _regime_uncertainty = (
+                    float(shock.hmm_uncertainty)
+                    if shock is not None and shock.hmm_uncertainty is not None
+                    else 0.0
+                )
+                _regime_label = REGIME_NAMES.get(int(signal["regime"]))
+
                 ps = self._position_sizer.size_position(
                     ticker=ticker,
                     win_rate=float(win_rate),
@@ -1720,21 +1730,13 @@ class Backtester:
                     confidence=float(signal["confidence"]),
                     n_current_positions=len(open_positions),
                     max_positions=self.max_positions,
+                    regime=_regime_label,
+                    regime_uncertainty=_regime_uncertainty,
                 )
 
                 # Apply drawdown size multiplier
                 regime_mult = float(REGIME_RISK_MULTIPLIER.get(int(signal["regime"]), 1.0))
                 position_size = ps.final_size * dd_status.size_multiplier * regime_mult
-
-                # SPEC-W03: Apply uncertainty gate to position size.
-                # When regime entropy is high, reduce position size to limit
-                # exposure during uncertain regime transitions.
-                # (shock already looked up by SPEC-E01 gate above)
-                if shock is not None and shock.hmm_uncertainty is not None:
-                    size_mult = self._uncertainty_gate.compute_size_multiplier(
-                        shock.hmm_uncertainty,
-                    )
-                    position_size *= size_mult
 
                 if position_size <= 0:
                     continue

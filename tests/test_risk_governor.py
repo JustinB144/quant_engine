@@ -565,14 +565,20 @@ class TestBackwardCompatibility:
     def test_update_regime_stats_unchanged(self):
         """update_regime_stats should still work as before."""
         ps = PositionSizer()
+        # Reset to pristine defaults to isolate from persisted disk state
+        ps.regime_stats["trending_bull"] = {
+            "win_rate": 0.55, "avg_win": 0.03, "avg_loss": -0.02, "n_trades": 0,
+        }
+        # Need >= MIN_REGIME_TRADES_FOR_STATS (30) trades to trigger update
+        returns = [0.03, 0.02, -0.01, 0.04, 0.01,
+                   0.02, -0.02, 0.03, 0.01, 0.02] * 4  # 40 trades
         trades = pd.DataFrame({
-            "net_return": [0.03, 0.02, -0.01, 0.04, 0.01,
-                           0.02, -0.02, 0.03, 0.01, 0.02],
-            "regime": [0] * 10,
+            "net_return": returns,
+            "regime": [0] * len(returns),
         })
-        ps.update_regime_stats(trades)
+        ps.update_regime_stats(trades, persist=False)
         stats = ps.regime_stats["trending_bull"]
-        assert stats["n_trades"] == 10
+        assert stats["n_trades"] == 40
 
     def test_update_kelly_bayesian_unchanged(self):
         """update_kelly_bayesian should still work as before."""
