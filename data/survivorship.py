@@ -669,8 +669,7 @@ class DelistingHandler:
             return pd.DataFrame()
 
         df = pd.DataFrame(results, columns=['date', 'Open', 'High', 'Low', 'Close', 'Volume'])
-        df.loc[:, 'date'] = pd.to_datetime(df['date'])
-        df.index = pd.DatetimeIndex(df.pop('date'))
+        df.index = pd.DatetimeIndex(pd.to_datetime(df.pop('date')))
         return df
 
     def get_delisting_event(self, symbol: str) -> Optional[DelistingEvent]:
