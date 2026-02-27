@@ -1,12 +1,15 @@
 """
 Structured configuration for the quant engine using typed dataclasses.
 
-Provides IDE autocomplete, type checking, and organized namespacing
-over the flat config.py module. Each subsystem gets its own dataclass.
+This is the AUTHORITATIVE source of truth for all configuration values.
+``config.py`` imports from here for backward compatibility.
+
+Provides IDE autocomplete, type checking, and organized namespacing.
+Each subsystem gets its own dataclass.
 
 Usage:
-    from config_structured import SystemConfig
-    cfg = SystemConfig()
+    from config_structured import get_config
+    cfg = get_config()
     cfg.regime.n_states        # IDE knows the type and offers autocomplete
     cfg.kelly.max_portfolio_dd  # Clearly scoped to Kelly subsystem
 """
@@ -86,7 +89,7 @@ class DataConfig:
 
     cache_dir: Path = Path("data/cache")
     wrds_enabled: bool = True
-    optionmetrics_enabled: bool = True
+    optionmetrics_enabled: bool = False
     kalshi_enabled: bool = False
     default_universe_source: str = "wrds"
     lookback_years: int = 15
@@ -104,7 +107,7 @@ class DataConfig:
 class RegimeConfig:
     """Regime detection configuration."""
 
-    model_type: str = "hmm"  # "hmm", "rule", "jump", or "ensemble" via ensemble_enabled
+    model_type: str = "jump"  # "hmm", "rule", "jump", or "ensemble" via ensemble_enabled
     n_states: int = 4
     hmm_max_iter: int = 60
     hmm_stickiness: float = 0.92
@@ -235,7 +238,7 @@ class PromotionConfig:
     max_active_strategies: int = 5
     require_advanced_contract: bool = True
     max_dsr_pvalue: float = 0.05
-    max_pbo: float = 0.50
+    max_pbo: float = 0.45
     require_statistical_tests: bool = True
     require_cpcv: bool = True
     require_spa: bool = False
@@ -284,7 +287,7 @@ class ExecutionConfig:
     impact_coeff_bps: float = 25.0
     min_fill_ratio: float = 0.20
     dynamic_costs: bool = True
-    almgren_chriss_enabled: bool = True
+    almgren_chriss_enabled: bool = False
     almgren_chriss_adv_threshold: float = 0.05
 
 
@@ -310,3 +313,21 @@ class SystemConfig:
     health: HealthConfig = field(default_factory=HealthConfig)
     paper_trading: PaperTradingConfig = field(default_factory=PaperTradingConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
+
+
+# ── Module-level singleton ──────────────────────────────────────────
+
+_CONFIG: Optional[SystemConfig] = None
+
+
+def get_config() -> SystemConfig:
+    """Return the singleton SystemConfig instance.
+
+    On first call, instantiates the default SystemConfig. Subsequent
+    calls return the same instance so all callers share one source of
+    truth.
+    """
+    global _CONFIG
+    if _CONFIG is None:
+        _CONFIG = SystemConfig()
+    return _CONFIG
