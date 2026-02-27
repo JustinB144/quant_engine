@@ -589,6 +589,8 @@ class WRDSProvider:
                     df.at[eff_dt, 'dlret'] = float(dlret)
                     df.at[eff_dt, 'total_ret'] = float(total_ret)
                     df.at[eff_dt, 'delist_event'] = 1
+                    if pd.notna(row.get('dlstcd', None)):
+                        df.at[eff_dt, 'dlstcd'] = int(row['dlstcd'])
                     if pd.notna(row.get('ticker', None)):
                         df.at[eff_dt, 'ticker'] = str(row['ticker']).strip()
                     prices[permno_key] = df.sort_index()

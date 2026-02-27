@@ -26,8 +26,32 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from quant_engine.config import DATA_CACHE_DIR, UNIVERSE_FULL, BENCHMARK
+from quant_engine.config import DATA_CACHE_DIR, UNIVERSE_FULL, BENCHMARK, SURVIVORSHIP_DB
 from quant_engine.data.local_cache import list_cached_tickers, load_ohlcv_with_meta, save_ohlcv
+from quant_engine.data.survivorship import DelistingHandler, DelistingEvent, DelistingReason
+
+
+def _crsp_dlstcd_to_reason(dlstcd) -> DelistingReason:
+    """Map CRSP delisting code to DelistingReason enum."""
+    try:
+        code = int(dlstcd)
+    except (ValueError, TypeError):
+        return DelistingReason.UNKNOWN
+    if 200 <= code < 300:
+        if code in (233, 241, 242, 243, 244):
+            return DelistingReason.MERGER_CASH
+        return DelistingReason.MERGER_STOCK
+    if 300 <= code < 400:
+        return DelistingReason.EXCHANGE_DELISTING
+    if 400 <= code < 500:
+        if 450 <= code < 460:
+            return DelistingReason.GOING_PRIVATE
+        return DelistingReason.BANKRUPTCY
+    if 500 <= code < 600:
+        if 570 <= code < 580:
+            return DelistingReason.SPINOFF
+        return DelistingReason.VOLUNTARY
+    return DelistingReason.UNKNOWN
 
 
 def _build_ticker_list(tickers_arg, skip_terminal=True):
@@ -404,6 +428,9 @@ def main():
         sys.exit(1)
     print("  WRDS connection established.")
 
+    # Initialize DelistingHandler for persisting delisting events
+    delist_handler = DelistingHandler(db_path=str(SURVIVORSHIP_DB))
+
     # Download in batches
     start_date = f"{datetime.now().year - args.years}-01-01"
     end_date = datetime.now().strftime("%Y-%m-%d")
@@ -412,6 +439,7 @@ def main():
     downloaded = []
     failed = []
     not_found = []
+    delisted_recorded = []
     batch_size = args.batch_size
     t0 = time.time()
 
@@ -482,6 +510,37 @@ def main():
                 downloaded.append(ticker_val)
                 print(f"    {ticker_val} (permno={permno_key}): {len(df)} bars, "
                       f"{start} → {end}, O!=C on {pct:.1f}% of rows")
+
+                # Persist delisting event to DelistingHandler DB
+                if "delist_event" in df.columns:
+                    delist_col = pd.to_numeric(df["delist_event"], errors="coerce").fillna(0)
+                    if int(delist_col.max()) == 1:
+                        delist_rows = df[delist_col == 1]
+                        delist_idx = delist_rows.index.max()
+                        delist_row = df.loc[delist_idx]
+                        dlret_val = float(delist_row.get("dlret", 0) or 0)
+                        dlstcd_val = delist_row.get("dlstcd", None)
+                        if pd.isna(dlstcd_val):
+                            dlstcd_val = None
+                        last_price = float(delist_row.get("Close", 0) or 0)
+                        delist_date = pd.to_datetime(delist_idx).date()
+                        reason = _crsp_dlstcd_to_reason(dlstcd_val)
+                        meta_dict = {"permno": permno_key}
+                        if dlstcd_val is not None:
+                            meta_dict["dlstcd"] = int(dlstcd_val)
+                        event = DelistingEvent(
+                            symbol=ticker_val,
+                            delisting_date=delist_date,
+                            reason=reason,
+                            last_price=last_price,
+                            delisting_return=dlret_val,
+                            metadata=meta_dict,
+                        )
+                        delist_handler.record_delisting(event)
+                        delist_handler.preserve_price_history(ticker_val, df)
+                        delisted_recorded.append(ticker_val)
+                        print(f"      ↳ DELISTED on {delist_date} (dlret={dlret_val:.4f}, "
+                              f"reason={reason.value}, dlstcd={dlstcd_val})")
             except ValueError as e:
                 print(f"    {ticker_val}: save_ohlcv failed — {e}")
                 failed.append((ticker_val, str(e)))
@@ -515,6 +574,9 @@ def main():
     if failed:
         for t, err in failed:
             print(f"    {t}: {err}")
+    print(f"  Delisting events recorded: {len(delisted_recorded)}")
+    if delisted_recorded:
+        print(f"    {', '.join(delisted_recorded)}")
     print(f"  Old daily files removed: {removed}")
     print(f"  New _1d.parquet files created: {len(downloaded)}")
     print(f"  Elapsed: {elapsed:.1f}s")
