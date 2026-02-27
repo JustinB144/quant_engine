@@ -18,7 +18,7 @@ class EventWalkForwardConfig:
     train_min_events: int = 40
     test_events_per_fold: int = 20
     step_events: int = 20
-    purge_window: str = "7d"
+    purge_window: str = "7D"
     embargo_events: int = 0
     alphas: Sequence[float] = (0.1, 1.0, 10.0)
     # E3: Event-type aware purge windows (days)
@@ -369,7 +369,7 @@ def run_event_walkforward(
                 (cfg.purge_window_by_event.get(et, cfg.default_purge_days) for et in test_event_types_set),
                 default=cfg.default_purge_days,
             )
-            effective_purge = pd.to_timedelta(f"{max_purge_days}d")
+            effective_purge = pd.to_timedelta(f"{max_purge_days}D")
         else:
             effective_purge = purge_delta
 

@@ -54,7 +54,7 @@ class NoLeakageTests(unittest.TestCase):
             macro_events=macro_events,
             event_market_map=mapping,
             kalshi_distributions=dists,
-            config=EventFeatureConfig(snapshot_horizons=["15m", "1h"]),
+            config=EventFeatureConfig(snapshot_horizons=["15min", "1h"]),
         )
 
     def test_all_asof_before_release(self):
@@ -99,7 +99,7 @@ class NoLeakageTests(unittest.TestCase):
             macro_events=macro_events,
             event_market_map=mapping,
             kalshi_distributions=dists,
-            config=EventFeatureConfig(snapshot_horizons=["15m"]),
+            config=EventFeatureConfig(snapshot_horizons=["15min"]),
         )
         if panel.empty:
             self.skipTest("Panel empty")

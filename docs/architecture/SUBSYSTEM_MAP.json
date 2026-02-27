@@ -1,0 +1,752 @@
+{
+  "metadata": {
+    "generated": "2026-02-27",
+    "total_files": 214,
+    "total_subsystems": 11,
+    "verification_method": "Import tracing (top-level + lazy) across all .py files"
+  },
+  "subsystems": {
+    "shared_infrastructure": {
+      "display_name": "Shared Infrastructure",
+      "audit_order": 1,
+      "files": [
+        "__init__.py",
+        "config.py",
+        "config_structured.py",
+        "config_data/__init__.py",
+        "reproducibility.py",
+        "utils/__init__.py",
+        "utils/logging.py"
+      ],
+      "file_count": 7,
+      "depends_on": [],
+      "depended_on_by": [
+        "data_ingestion_quality",
+        "feature_engineering",
+        "regime_detection",
+        "backtesting_risk",
+        "model_training_prediction",
+        "evaluation_diagnostics",
+        "autopilot",
+        "kalshi",
+        "api_frontend",
+        "entry_points_scripts"
+      ],
+      "key_risk_files": ["config.py", "config_structured.py"],
+      "estimated_audit_hours": "8-12"
+    },
+    "data_ingestion_quality": {
+      "display_name": "Data Ingestion & Quality",
+      "audit_order": 2,
+      "files": [
+        "data/__init__.py",
+        "data/loader.py",
+        "data/local_cache.py",
+        "data/provider_base.py",
+        "data/provider_registry.py",
+        "data/providers/__init__.py",
+        "data/providers/alpaca_provider.py",
+        "data/providers/alpha_vantage_provider.py",
+        "data/quality.py",
+        "data/cross_source_validator.py",
+        "data/intraday_quality.py",
+        "data/survivorship.py",
+        "data/alternative.py",
+        "data/feature_store.py",
+        "data/wrds_provider.py",
+        "validation/__init__.py",
+        "validation/data_integrity.py",
+        "validation/leakage_detection.py",
+        "validation/feature_redundancy.py"
+      ],
+      "file_count": 19,
+      "depends_on": ["shared_infrastructure"],
+      "depended_on_by": [
+        "feature_engineering",
+        "autopilot",
+        "api_frontend",
+        "entry_points_scripts"
+      ],
+      "cross_module_files": {
+        "validation/data_integrity.py": "Imported by data/loader.py (lazy)",
+        "validation/leakage_detection.py": "Data-quality focused, no external consumers",
+        "validation/feature_redundancy.py": "Data-quality focused, no external consumers"
+      },
+      "key_risk_files": ["data/loader.py", "data/local_cache.py", "data/provider_registry.py"],
+      "estimated_audit_hours": "12-16"
+    },
+    "feature_engineering": {
+      "display_name": "Feature Engineering",
+      "audit_order": 3,
+      "files": [
+        "features/__init__.py",
+        "features/pipeline.py",
+        "features/research_factors.py",
+        "features/options_factors.py",
+        "features/lob_features.py",
+        "features/intraday.py",
+        "features/macro.py",
+        "features/harx_spillovers.py",
+        "features/wave_flow.py",
+        "features/version.py",
+        "indicators/__init__.py",
+        "indicators/indicators.py",
+        "indicators/spectral.py",
+        "indicators/eigenvalue.py",
+        "indicators/ot_divergence.py",
+        "indicators/ssa.py",
+        "indicators/tail_risk.py"
+      ],
+      "file_count": 17,
+      "depends_on": [
+        "shared_infrastructure",
+        "data_ingestion_quality"
+      ],
+      "optional_depends_on": ["regime_detection"],
+      "optional_depends_on_note": "features/pipeline.py lazily imports regime/correlation.py with try/except — optional, feature computation works without it",
+      "depended_on_by": [
+        "model_training_prediction",
+        "autopilot",
+        "kalshi",
+        "api_frontend",
+        "entry_points_scripts"
+      ],
+      "cross_module_files": {
+        "indicators/*": "indicators/ has zero external consumers outside features/pipeline.py"
+      },
+      "key_risk_files": ["features/pipeline.py", "indicators/indicators.py"],
+      "estimated_audit_hours": "16-24"
+    },
+    "regime_detection": {
+      "display_name": "Regime Detection",
+      "audit_order": 4,
+      "files": [
+        "regime/__init__.py",
+        "regime/detector.py",
+        "regime/hmm.py",
+        "regime/jump_model.py",
+        "regime/jump_model_legacy.py",
+        "regime/jump_model_pypi.py",
+        "regime/bocpd.py",
+        "regime/correlation.py",
+        "regime/confidence_calibrator.py",
+        "regime/consensus.py",
+        "regime/shock_vector.py",
+        "regime/uncertainty_gate.py",
+        "regime/online_update.py"
+      ],
+      "file_count": 13,
+      "depends_on": ["shared_infrastructure"],
+      "depended_on_by": [
+        "feature_engineering",
+        "backtesting_risk",
+        "autopilot",
+        "entry_points_scripts"
+      ],
+      "cross_subsystem_exports": {
+        "regime/shock_vector.py": "Consumed by backtest/engine.py, backtest/execution.py, autopilot/engine.py",
+        "regime/uncertainty_gate.py": "Consumed by backtest/engine.py, risk/position_sizer.py, autopilot/engine.py",
+        "regime/correlation.py": "Consumed by features/pipeline.py (lazy)"
+      },
+      "key_risk_files": ["regime/detector.py", "regime/shock_vector.py", "regime/uncertainty_gate.py"],
+      "estimated_audit_hours": "12-16"
+    },
+    "backtesting_risk": {
+      "display_name": "Backtesting + Risk (Execution Layer)",
+      "audit_order": 5,
+      "files": [
+        "backtest/__init__.py",
+        "backtest/engine.py",
+        "backtest/validation.py",
+        "backtest/advanced_validation.py",
+        "backtest/execution.py",
+        "backtest/cost_calibrator.py",
+        "backtest/cost_stress.py",
+        "backtest/optimal_execution.py",
+        "backtest/null_models.py",
+        "backtest/adv_tracker.py",
+        "backtest/survivorship_comparison.py",
+        "risk/__init__.py",
+        "risk/position_sizer.py",
+        "risk/portfolio_risk.py",
+        "risk/drawdown.py",
+        "risk/stop_loss.py",
+        "risk/metrics.py",
+        "risk/covariance.py",
+        "risk/portfolio_optimizer.py",
+        "risk/factor_portfolio.py",
+        "risk/factor_exposures.py",
+        "risk/factor_monitor.py",
+        "risk/attribution.py",
+        "risk/stress_test.py",
+        "risk/cost_budget.py",
+        "risk/constraint_replay.py",
+        "risk/universe_config.py",
+        "validation/preconditions.py"
+      ],
+      "file_count": 28,
+      "depends_on": [
+        "shared_infrastructure",
+        "regime_detection"
+      ],
+      "depended_on_by": [
+        "model_training_prediction",
+        "evaluation_diagnostics",
+        "autopilot",
+        "kalshi",
+        "api_frontend",
+        "entry_points_scripts"
+      ],
+      "cross_module_files": {
+        "validation/preconditions.py": "Execution contract imported by backtest/engine.py AND models/trainer.py (both lazy)"
+      },
+      "size_note": "28 files slightly exceeds 25-file target; tight backtest-risk coupling prevents splitting",
+      "key_risk_files": [
+        "backtest/engine.py",
+        "backtest/execution.py",
+        "risk/position_sizer.py",
+        "risk/portfolio_risk.py",
+        "risk/drawdown.py",
+        "validation/preconditions.py"
+      ],
+      "estimated_audit_hours": "24-32"
+    },
+    "model_training_prediction": {
+      "display_name": "Model Training & Prediction",
+      "audit_order": 6,
+      "files": [
+        "models/__init__.py",
+        "models/trainer.py",
+        "models/predictor.py",
+        "models/versioning.py",
+        "models/governance.py",
+        "models/calibration.py",
+        "models/conformal.py",
+        "models/walk_forward.py",
+        "models/online_learning.py",
+        "models/feature_stability.py",
+        "models/shift_detection.py",
+        "models/retrain_trigger.py",
+        "models/cross_sectional.py",
+        "models/neural_net.py",
+        "models/iv/__init__.py",
+        "models/iv/models.py"
+      ],
+      "file_count": 16,
+      "depends_on": [
+        "shared_infrastructure",
+        "feature_engineering",
+        "backtesting_risk"
+      ],
+      "depended_on_by": [
+        "evaluation_diagnostics",
+        "autopilot",
+        "api_frontend",
+        "entry_points_scripts"
+      ],
+      "key_risk_files": ["models/trainer.py", "models/predictor.py", "models/versioning.py"],
+      "estimated_audit_hours": "16-20"
+    },
+    "evaluation_diagnostics": {
+      "display_name": "Evaluation & Diagnostics",
+      "audit_order": 7,
+      "files": [
+        "evaluation/__init__.py",
+        "evaluation/engine.py",
+        "evaluation/metrics.py",
+        "evaluation/slicing.py",
+        "evaluation/fragility.py",
+        "evaluation/calibration_analysis.py",
+        "evaluation/ml_diagnostics.py",
+        "evaluation/visualization.py"
+      ],
+      "file_count": 8,
+      "depends_on": [
+        "shared_infrastructure",
+        "backtesting_risk",
+        "model_training_prediction"
+      ],
+      "depended_on_by": [],
+      "key_risk_files": ["evaluation/engine.py"],
+      "estimated_audit_hours": "6-10"
+    },
+    "autopilot": {
+      "display_name": "Autopilot (Strategy Discovery)",
+      "audit_order": 8,
+      "files": [
+        "autopilot/__init__.py",
+        "autopilot/engine.py",
+        "autopilot/strategy_discovery.py",
+        "autopilot/promotion_gate.py",
+        "autopilot/registry.py",
+        "autopilot/paper_trader.py",
+        "autopilot/meta_labeler.py",
+        "autopilot/strategy_allocator.py"
+      ],
+      "file_count": 8,
+      "depends_on": [
+        "shared_infrastructure",
+        "data_ingestion_quality",
+        "feature_engineering",
+        "regime_detection",
+        "backtesting_risk",
+        "model_training_prediction"
+      ],
+      "optional_depends_on": ["api_frontend"],
+      "optional_depends_on_note": "paper_trader.py and engine.py lazily import api/services with try/except — optional, autopilot works without API health integration",
+      "depended_on_by": [
+        "kalshi",
+        "api_frontend",
+        "entry_points_scripts"
+      ],
+      "architectural_concerns": [
+        "autopilot→api circular coupling via paper_trader.py lazy imports of health_service, health_risk_feedback, ab_testing"
+      ],
+      "key_risk_files": ["autopilot/engine.py", "autopilot/paper_trader.py", "autopilot/promotion_gate.py"],
+      "estimated_audit_hours": "16-24"
+    },
+    "kalshi": {
+      "display_name": "Kalshi (Event Markets)",
+      "audit_order": 9,
+      "files": [
+        "kalshi/__init__.py",
+        "kalshi/provider.py",
+        "kalshi/client.py",
+        "kalshi/pipeline.py",
+        "kalshi/storage.py",
+        "kalshi/events.py",
+        "kalshi/distribution.py",
+        "kalshi/options.py",
+        "kalshi/promotion.py",
+        "kalshi/walkforward.py",
+        "kalshi/quality.py",
+        "kalshi/mapping_store.py",
+        "kalshi/microstructure.py",
+        "kalshi/disagreement.py",
+        "kalshi/regimes.py",
+        "kalshi/router.py",
+        "kalshi/tests/__init__.py",
+        "kalshi/tests/test_bin_validity.py",
+        "kalshi/tests/test_distribution.py",
+        "kalshi/tests/test_leakage.py",
+        "kalshi/tests/test_no_leakage.py",
+        "kalshi/tests/test_signature_kat.py",
+        "kalshi/tests/test_stale_quotes.py",
+        "kalshi/tests/test_threshold_direction.py",
+        "kalshi/tests/test_walkforward_purge.py"
+      ],
+      "file_count": 25,
+      "depends_on": [
+        "shared_infrastructure",
+        "feature_engineering",
+        "backtesting_risk",
+        "autopilot"
+      ],
+      "depended_on_by": [
+        "data_ingestion_quality",
+        "api_frontend",
+        "entry_points_scripts"
+      ],
+      "key_risk_files": ["kalshi/provider.py", "kalshi/distribution.py", "kalshi/promotion.py", "kalshi/storage.py"],
+      "estimated_audit_hours": "12-16"
+    },
+    "api_frontend": {
+      "display_name": "API & Frontend",
+      "audit_order": 10,
+      "files": [
+        "api/__init__.py",
+        "api/main.py",
+        "api/config.py",
+        "api/errors.py",
+        "api/ab_testing.py",
+        "api/orchestrator.py",
+        "api/deps/__init__.py",
+        "api/deps/providers.py",
+        "api/cache/__init__.py",
+        "api/cache/manager.py",
+        "api/cache/invalidation.py",
+        "api/jobs/__init__.py",
+        "api/jobs/store.py",
+        "api/jobs/runner.py",
+        "api/jobs/models.py",
+        "api/jobs/autopilot_job.py",
+        "api/jobs/backtest_job.py",
+        "api/jobs/predict_job.py",
+        "api/jobs/train_job.py",
+        "api/routers/__init__.py",
+        "api/routers/autopilot.py",
+        "api/routers/backtests.py",
+        "api/routers/benchmark.py",
+        "api/routers/config_mgmt.py",
+        "api/routers/dashboard.py",
+        "api/routers/data_explorer.py",
+        "api/routers/diagnostics.py",
+        "api/routers/iv_surface.py",
+        "api/routers/jobs.py",
+        "api/routers/logs.py",
+        "api/routers/model_lab.py",
+        "api/routers/regime.py",
+        "api/routers/risk.py",
+        "api/routers/signals.py",
+        "api/routers/system_health.py",
+        "api/schemas/__init__.py",
+        "api/schemas/autopilot.py",
+        "api/schemas/backtests.py",
+        "api/schemas/compute.py",
+        "api/schemas/dashboard.py",
+        "api/schemas/data_explorer.py",
+        "api/schemas/envelope.py",
+        "api/schemas/model_lab.py",
+        "api/schemas/signals.py",
+        "api/schemas/system_health.py",
+        "api/services/__init__.py",
+        "api/services/autopilot_service.py",
+        "api/services/backtest_service.py",
+        "api/services/data_helpers.py",
+        "api/services/data_service.py",
+        "api/services/diagnostics.py",
+        "api/services/health_alerts.py",
+        "api/services/health_confidence.py",
+        "api/services/health_risk_feedback.py",
+        "api/services/health_service.py",
+        "api/services/kalshi_service.py",
+        "api/services/model_service.py",
+        "api/services/regime_service.py",
+        "api/services/results_service.py"
+      ],
+      "file_count": 59,
+      "depends_on": [
+        "shared_infrastructure",
+        "data_ingestion_quality",
+        "feature_engineering",
+        "regime_detection",
+        "backtesting_risk",
+        "model_training_prediction",
+        "autopilot",
+        "kalshi"
+      ],
+      "depended_on_by": [
+        "autopilot",
+        "entry_points_scripts"
+      ],
+      "import_pattern_note": "Nearly all cross-module imports are lazy (inside function bodies with try/except). Internal layering: routers → services → (lazy) core engine + config.",
+      "key_risk_files": [
+        "api/services/health_service.py",
+        "api/orchestrator.py",
+        "api/jobs/autopilot_job.py",
+        "api/schemas/envelope.py"
+      ],
+      "estimated_audit_hours": "24-32"
+    },
+    "entry_points_scripts": {
+      "display_name": "Entry Points & Scripts",
+      "audit_order": 11,
+      "files": [
+        "run_train.py",
+        "run_backtest.py",
+        "run_predict.py",
+        "run_autopilot.py",
+        "run_retrain.py",
+        "run_server.py",
+        "run_kalshi_event_pipeline.py",
+        "run_wrds_daily_refresh.py",
+        "run_rehydrate_cache_metadata.py",
+        "scripts/alpaca_intraday_download.py",
+        "scripts/ibkr_intraday_download.py",
+        "scripts/ibkr_daily_gapfill.py",
+        "scripts/compare_regime_models.py",
+        "scripts/generate_types.py"
+      ],
+      "file_count": 14,
+      "depends_on": [
+        "shared_infrastructure",
+        "data_ingestion_quality",
+        "feature_engineering",
+        "regime_detection",
+        "backtesting_risk",
+        "model_training_prediction",
+        "autopilot",
+        "kalshi",
+        "api_frontend"
+      ],
+      "depended_on_by": [],
+      "key_risk_files": ["run_backtest.py", "run_train.py", "run_autopilot.py"],
+      "estimated_audit_hours": "8-12"
+    }
+  },
+  "cross_subsystem_dependencies": [
+    {
+      "from": "data_ingestion_quality",
+      "to": "shared_infrastructure",
+      "coupling_strength": "tight",
+      "file_count": 10
+    },
+    {
+      "from": "data_ingestion_quality",
+      "to": "kalshi",
+      "coupling_strength": "moderate",
+      "note": "data/provider_registry.py lazily imports kalshi/provider.py"
+    },
+    {
+      "from": "feature_engineering",
+      "to": "shared_infrastructure",
+      "coupling_strength": "moderate",
+      "note": "All config imports are lazy in pipeline.py (6 sites)"
+    },
+    {
+      "from": "feature_engineering",
+      "to": "data_ingestion_quality",
+      "coupling_strength": "moderate",
+      "note": "pipeline.py lazily imports wrds_provider, local_cache, loader"
+    },
+    {
+      "from": "feature_engineering",
+      "to": "regime_detection",
+      "coupling_strength": "moderate",
+      "note": "pipeline.py lazily imports regime/correlation.py"
+    },
+    {
+      "from": "regime_detection",
+      "to": "shared_infrastructure",
+      "coupling_strength": "tight",
+      "file_count": 5
+    },
+    {
+      "from": "backtesting_risk",
+      "to": "shared_infrastructure",
+      "coupling_strength": "tight",
+      "file_count": 8
+    },
+    {
+      "from": "backtesting_risk",
+      "to": "regime_detection",
+      "coupling_strength": "tight",
+      "note": "backtest/engine.py imports shock_vector.py and uncertainty_gate.py; risk/position_sizer.py imports uncertainty_gate.py"
+    },
+    {
+      "from": "model_training_prediction",
+      "to": "shared_infrastructure",
+      "coupling_strength": "tight",
+      "file_count": 6
+    },
+    {
+      "from": "model_training_prediction",
+      "to": "feature_engineering",
+      "coupling_strength": "tight",
+      "note": "predictor.py imports get_feature_type from features/pipeline.py"
+    },
+    {
+      "from": "model_training_prediction",
+      "to": "backtesting_risk",
+      "coupling_strength": "moderate",
+      "note": "trainer.py lazily imports validation/preconditions.py"
+    },
+    {
+      "from": "evaluation_diagnostics",
+      "to": "shared_infrastructure",
+      "coupling_strength": "tight",
+      "file_count": 6
+    },
+    {
+      "from": "evaluation_diagnostics",
+      "to": "backtesting_risk",
+      "coupling_strength": "moderate",
+      "note": "engine.py lazily imports backtest/validation.py"
+    },
+    {
+      "from": "evaluation_diagnostics",
+      "to": "model_training_prediction",
+      "coupling_strength": "moderate",
+      "note": "calibration_analysis.py lazily imports models/calibration.py"
+    },
+    {
+      "from": "autopilot",
+      "to": "shared_infrastructure",
+      "coupling_strength": "tight",
+      "file_count": 7
+    },
+    {
+      "from": "autopilot",
+      "to": "data_ingestion_quality",
+      "coupling_strength": "tight",
+      "note": "engine.py imports data/loader.py and data/survivorship.py"
+    },
+    {
+      "from": "autopilot",
+      "to": "feature_engineering",
+      "coupling_strength": "tight",
+      "note": "engine.py imports features/pipeline.py"
+    },
+    {
+      "from": "autopilot",
+      "to": "regime_detection",
+      "coupling_strength": "tight",
+      "note": "engine.py imports regime/detector.py and uncertainty_gate.py"
+    },
+    {
+      "from": "autopilot",
+      "to": "backtesting_risk",
+      "coupling_strength": "tight",
+      "note": "engine.py imports 7 backtest+risk files; paper_trader.py imports 7 backtest+risk files; promotion_gate.py imports BacktestResult",
+      "file_count": 15
+    },
+    {
+      "from": "autopilot",
+      "to": "model_training_prediction",
+      "coupling_strength": "tight",
+      "note": "engine.py imports trainer, predictor, walk_forward, cross_sectional"
+    },
+    {
+      "from": "autopilot",
+      "to": "api_frontend",
+      "coupling_strength": "moderate",
+      "note": "ARCHITECTURAL CONCERN: engine.py and paper_trader.py lazily import health_service, health_risk_feedback, ab_testing"
+    },
+    {
+      "from": "kalshi",
+      "to": "shared_infrastructure",
+      "coupling_strength": "tight",
+      "note": "provider.py imports 17 config constants"
+    },
+    {
+      "from": "kalshi",
+      "to": "feature_engineering",
+      "coupling_strength": "tight",
+      "note": "options.py imports features/options_factors.py"
+    },
+    {
+      "from": "kalshi",
+      "to": "backtesting_risk",
+      "coupling_strength": "tight",
+      "note": "walkforward.py imports backtest/advanced_validation.py; promotion.py imports BacktestResult"
+    },
+    {
+      "from": "kalshi",
+      "to": "autopilot",
+      "coupling_strength": "tight",
+      "note": "pipeline.py and promotion.py import autopilot/promotion_gate.py; promotion.py imports strategy_discovery.py"
+    },
+    {
+      "from": "api_frontend",
+      "to": "shared_infrastructure",
+      "coupling_strength": "moderate",
+      "note": "All cross-module imports are lazy"
+    },
+    {
+      "from": "api_frontend",
+      "to": "data_ingestion_quality",
+      "coupling_strength": "moderate",
+      "note": "orchestrator.py and services lazily import data/loader.py"
+    },
+    {
+      "from": "api_frontend",
+      "to": "feature_engineering",
+      "coupling_strength": "moderate",
+      "note": "orchestrator.py lazily imports features/pipeline.py"
+    },
+    {
+      "from": "api_frontend",
+      "to": "regime_detection",
+      "coupling_strength": "moderate",
+      "note": "orchestrator.py lazily imports regime/detector.py"
+    },
+    {
+      "from": "api_frontend",
+      "to": "backtesting_risk",
+      "coupling_strength": "moderate",
+      "note": "orchestrator.py lazily imports backtest/engine.py; risk router lazily imports risk/factor_monitor.py"
+    },
+    {
+      "from": "api_frontend",
+      "to": "model_training_prediction",
+      "coupling_strength": "moderate",
+      "note": "orchestrator.py and services lazily import models/trainer, predictor, governance, versioning"
+    },
+    {
+      "from": "api_frontend",
+      "to": "autopilot",
+      "coupling_strength": "moderate",
+      "note": "jobs/autopilot_job.py lazily imports autopilot/engine.py"
+    },
+    {
+      "from": "api_frontend",
+      "to": "kalshi",
+      "coupling_strength": "moderate",
+      "note": "services/kalshi_service.py lazily imports kalshi/storage.py"
+    },
+    {
+      "from": "entry_points_scripts",
+      "to": "shared_infrastructure",
+      "coupling_strength": "tight",
+      "note": "All run_*.py import config and reproducibility"
+    },
+    {
+      "from": "entry_points_scripts",
+      "to": "data_ingestion_quality",
+      "coupling_strength": "tight",
+      "note": "run_train/backtest/predict/retrain import data/loader; run_wrds imports data/local_cache+survivorship; scripts import data/*"
+    },
+    {
+      "from": "entry_points_scripts",
+      "to": "feature_engineering",
+      "coupling_strength": "tight",
+      "note": "run_train/backtest/predict/retrain import features/pipeline"
+    },
+    {
+      "from": "entry_points_scripts",
+      "to": "regime_detection",
+      "coupling_strength": "tight",
+      "note": "run_train/backtest/predict/retrain import regime/detector"
+    },
+    {
+      "from": "entry_points_scripts",
+      "to": "backtesting_risk",
+      "coupling_strength": "tight",
+      "note": "run_backtest imports backtest/engine+validation+advanced_validation"
+    },
+    {
+      "from": "entry_points_scripts",
+      "to": "model_training_prediction",
+      "coupling_strength": "tight",
+      "note": "run_backtest/predict import models/predictor; run_train/retrain import models/trainer+governance+versioning"
+    },
+    {
+      "from": "entry_points_scripts",
+      "to": "autopilot",
+      "coupling_strength": "tight",
+      "note": "run_autopilot imports autopilot/engine"
+    },
+    {
+      "from": "entry_points_scripts",
+      "to": "kalshi",
+      "coupling_strength": "tight",
+      "note": "run_kalshi_event_pipeline imports kalshi/distribution+events+pipeline+promotion+walkforward"
+    },
+    {
+      "from": "entry_points_scripts",
+      "to": "api_frontend",
+      "coupling_strength": "tight",
+      "note": "run_server imports api/config+api/main"
+    }
+  ],
+  "scc_analysis": {
+    "true_file_level_sccs": 0,
+    "architectural_cycles": [
+      {
+        "name": "autopilot_api_cycle",
+        "severity": "architectural_concern",
+        "forward_path": "autopilot/paper_trader.py →(lazy)→ api/services/health_service.py, api/services/health_risk_feedback.py, api/ab_testing.py; autopilot/engine.py →(lazy)→ api/services/health_service.py",
+        "reverse_path": "api/jobs/autopilot_job.py →(lazy)→ autopilot/engine.py",
+        "is_true_scc": false,
+        "reason": "No file-level cycle; api files do not import back from autopilot"
+      },
+      {
+        "name": "features_data_kalshi_cycle",
+        "severity": "monitor",
+        "path": "features/pipeline.py →(lazy)→ data/wrds_provider.py; data/provider_registry.py →(lazy)→ kalshi/provider.py; kalshi/options.py →(top)→ features/options_factors.py",
+        "is_true_scc": false,
+        "reason": "No file-level cycle; different files involved at each hop"
+      }
+    ]
+  }
+}

@@ -22,7 +22,7 @@ class EventTimestampMeta:
 class EventFeatureConfig:
     """Configuration for event snapshot horizons and event-panel quality filtering."""
     snapshot_horizons: List[str] = field(
-        default_factory=lambda: ["7d", "1d", "4h", "1h", "15m", "5m"],
+        default_factory=lambda: ["7D", "1D", "4h", "1h", "15min", "5min"],
     )
     min_quality_score: float = 0.0
 

@@ -35,7 +35,7 @@ class LeakageLocalTests(unittest.TestCase):
             macro_events=macro_events,
             event_market_map=mapping,
             kalshi_distributions=dists,
-            config=EventFeatureConfig(snapshot_horizons=["15m"]),
+            config=EventFeatureConfig(snapshot_horizons=["15min"]),
         )
         self.assertEqual(len(panel), 1)
         row = panel.reset_index().iloc[0]

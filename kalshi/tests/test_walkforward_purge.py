@@ -48,7 +48,7 @@ class WalkForwardPurgeTests(unittest.TestCase):
             train_min_events=30,
             test_events_per_fold=10,
             step_events=10,
-            purge_window="14d",
+            purge_window="14D",
             embargo_events=0,
         )
 
@@ -99,7 +99,7 @@ class WalkForwardPurgeTests(unittest.TestCase):
             train_min_events=30,
             test_events_per_fold=10,
             step_events=10,
-            purge_window="7d",
+            purge_window="7D",
             purge_window_by_event={"CPI": 14, "FOMC": 21},
             default_purge_days=10,
         )
@@ -116,14 +116,14 @@ class WalkForwardPurgeTests(unittest.TestCase):
             train_min_events=30,
             test_events_per_fold=10,
             step_events=10,
-            purge_window="7d",
+            purge_window="7D",
             embargo_events=0,
         )
         cfg_with_embargo = EventWalkForwardConfig(
             train_min_events=30,
             test_events_per_fold=10,
             step_events=10,
-            purge_window="7d",
+            purge_window="7D",
             embargo_events=3,
         )
 
@@ -147,7 +147,7 @@ class WalkForwardPurgeTests(unittest.TestCase):
             train_min_events=30,
             test_events_per_fold=10,
             step_events=10,
-            purge_window="7d",
+            purge_window="7D",
             alphas=[0.1, 1.0, 10.0],
         )
 

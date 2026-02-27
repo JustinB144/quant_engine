@@ -74,7 +74,7 @@ KALSHI_HISTORICAL_CUTOFF_TS = None                # STATUS: ACTIVE — optional 
 KALSHI_RATE_LIMIT_RPS = 6.0                       # STATUS: ACTIVE — kalshi/provider.py rate limiter
 KALSHI_RATE_LIMIT_BURST = 2                       # STATUS: ACTIVE — kalshi/provider.py burst allowance
 KALSHI_DB_PATH = ROOT_DIR / "data" / "kalshi.duckdb"  # STATUS: ACTIVE — DuckDB path for Kalshi snapshots
-KALSHI_SNAPSHOT_HORIZONS = ["7d", "1d", "4h", "1h", "15m", "5m"]  # STATUS: ACTIVE — kalshi/provider.py, run_kalshi_event_pipeline.py
+KALSHI_SNAPSHOT_HORIZONS = ["7D", "1D", "4h", "1h", "15min", "5min"]  # STATUS: ACTIVE — kalshi/provider.py, run_kalshi_event_pipeline.py
 KALSHI_DISTRIBUTION_FREQ = "5min"                 # STATUS: ACTIVE — kalshi/provider.py distribution resampling
 KALSHI_STALE_AFTER_MINUTES = 30                   # STATUS: ACTIVE — kalshi/provider.py staleness detection
 KALSHI_NEAR_EVENT_MINUTES = 30.0                  # STATUS: ACTIVE — kalshi/provider.py near-event window
@@ -91,7 +91,7 @@ KALSHI_STALE_LIQUIDITY_LOW_THRESHOLD = 2.0        # STATUS: ACTIVE — kalshi/pr
 KALSHI_STALE_LIQUIDITY_HIGH_THRESHOLD = 6.0       # STATUS: ACTIVE — kalshi/provider.py high-liquidity threshold
 KALSHI_STALE_LOW_LIQUIDITY_MULTIPLIER = 1.35      # STATUS: ACTIVE — tighten staleness for illiquid markets
 KALSHI_STALE_HIGH_LIQUIDITY_MULTIPLIER = 0.80     # STATUS: ACTIVE — relax staleness for liquid markets
-KALSHI_DISTANCE_LAGS = ["1h", "1d"]               # STATUS: ACTIVE — kalshi/provider.py distance lag features
+KALSHI_DISTANCE_LAGS = ["1h", "1D"]               # STATUS: ACTIVE — kalshi/provider.py distance lag features
 KALSHI_TAIL_THRESHOLDS = {                         # STATUS: ACTIVE — kalshi/provider.py tail-risk thresholds
     "CPI": [3.0, 3.5, 4.0],
     "UNEMPLOYMENT": [4.0, 4.2, 4.5],

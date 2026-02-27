@@ -57,7 +57,7 @@ class DistributionConfig:
             "_default": [0.0, 0.5, 1.0],
         },
     )
-    distance_lags: List[str] = field(default_factory=lambda: ["1h", "1d"])
+    distance_lags: List[str] = field(default_factory=lambda: ["1h", "1D"])
 
 
 def _to_utc_timestamp(value: object) -> pd.Timestamp:
