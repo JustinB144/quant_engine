@@ -173,7 +173,7 @@ Notes:
 |---|---|---|---|---|
 | `REGIME_NAMES` | `{                                   # STATUS: ACTIVE — used in 15+ files; canonical regime label mapping
     0: "tren...` | `ACTIVE` | used in 15+ files; canonical regime label mapping | 208 |
-| `MIN_REGIME_SAMPLES` | `50` | `ACTIVE` | models/trainer.py; minimum training samples per regime model (reduced from 500 for short regimes, SPEC_10) | 214 |
+| `MIN_REGIME_SAMPLES` | `50` | `ACTIVE` | models/trainer.py; minimum training samples per regime model (reduced from 100 for short regimes, SPEC_10 T7) | 222 |
 | `REGIME_MODEL_TYPE` | `"jump"` | `ACTIVE` | regime/detector.py; "jump", "hmm", or "rule" | 215 |
 | `REGIME_HMM_STATES` | `4` | `ACTIVE` | regime/hmm.py; number of hidden states | 216 |
 | `REGIME_HMM_MAX_ITER` | `60` | `ACTIVE` | regime/hmm.py; EM iteration limit | 217 |

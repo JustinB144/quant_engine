@@ -303,8 +303,8 @@ class TestRegimeMinSamples:
 
         # Force regime distribution: most in regime 0, very few in regime 3
         regimes = pd.Series(0, index=X.index, name="regime")
-        # Last 50 rows get regime 3
-        regimes.iloc[-50:] = 3
+        # Last 30 rows get regime 3 (below MIN_REGIME_SAMPLES=50)
+        regimes.iloc[-30:] = 3
 
         trainer = ModelTrainer(
             model_params={
@@ -326,9 +326,9 @@ class TestRegimeMinSamples:
             versioned=False,
         )
 
-        # Regime 3 with only 50 samples should NOT have a trained model
+        # Regime 3 with only 30 samples should NOT have a trained model (< MIN_REGIME_SAMPLES=50)
         assert 3 not in result.regime_models, (
-            "Regime 3 with only 50 samples should be skipped"
+            "Regime 3 with only 30 samples should be skipped (below MIN_REGIME_SAMPLES=50)"
         )
 
     def test_regime_fallback_to_global(self):
