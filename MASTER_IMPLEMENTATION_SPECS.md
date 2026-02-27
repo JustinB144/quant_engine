@@ -1166,7 +1166,7 @@ Wire into `evaluation/engine.py`:
 
 ---
 
-## SPEC-V02: Add worst-case bucket promotion gates [HIGH]
+## SPEC-V02: Add worst-case bucket promotion gates [HIGH] ✅ COMPLETE
 
 **STATUS**: `autopilot/promotion_gate.py` checks `regime_positive_fraction` and `worst_event_loss` but does NOT check max drawdown within specific stress buckets.
 

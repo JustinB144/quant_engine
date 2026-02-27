@@ -30,6 +30,10 @@ from ..config import (
     PROMOTION_REQUIRE_CPCV,
     PROMOTION_REQUIRE_SPA,
     FOLD_CONSISTENCY_PENALTY_WEIGHT,
+    PROMOTION_MAX_STRESS_DRAWDOWN,
+    PROMOTION_MIN_STRESS_SHARPE,
+    PROMOTION_MAX_TRANSITION_DRAWDOWN,
+    PROMOTION_STRESS_REGIMES,
 )
 from .strategy_discovery import StrategyCandidate
 
@@ -79,6 +83,10 @@ class PromotionGate:
         require_cpcv: bool = PROMOTION_REQUIRE_CPCV,
         require_spa: bool = PROMOTION_REQUIRE_SPA,
         weight_fold_consistency: float = FOLD_CONSISTENCY_PENALTY_WEIGHT,
+        max_stress_drawdown: float = PROMOTION_MAX_STRESS_DRAWDOWN,
+        min_stress_sharpe: float = PROMOTION_MIN_STRESS_SHARPE,
+        max_transition_drawdown: float = PROMOTION_MAX_TRANSITION_DRAWDOWN,
+        stress_regimes: Optional[List[int]] = None,
     ):
         """Initialize PromotionGate."""
         self.min_trades = min_trades
@@ -103,6 +111,10 @@ class PromotionGate:
         self.require_cpcv = require_cpcv
         self.require_spa = require_spa
         self.weight_fold_consistency = weight_fold_consistency
+        self.max_stress_drawdown = max_stress_drawdown
+        self.min_stress_sharpe = min_stress_sharpe
+        self.max_transition_drawdown = max_transition_drawdown
+        self.stress_regimes = stress_regimes if stress_regimes is not None else list(PROMOTION_STRESS_REGIMES)
 
     def evaluate(
         self,
@@ -207,6 +219,39 @@ class PromotionGate:
                     spa_p = float(metrics.get("spa_pvalue", 1.0))
                     reasons.append(f"spa_failed(p={spa_p:.4f})")
 
+            # ── Stress-regime bucket gates (SPEC-V02) ──
+            # Reject strategies with catastrophic losses during shock periods
+            # even if overall metrics look acceptable.
+            regime_perf = result.regime_performance
+            if regime_perf:
+                for regime_code in self.stress_regimes:
+                    rp = regime_perf.get(regime_code)
+                    if rp is None:
+                        continue
+                    # Only gate when there are enough trades for meaningful statistics
+                    if rp.get("n_trades", 0) < 5:
+                        continue
+                    regime_dd = rp.get("max_drawdown", 0.0)
+                    regime_sharpe = rp.get("sharpe", 0.0)
+                    # max_drawdown values are negative; compare magnitude
+                    if regime_dd < -self.max_stress_drawdown:
+                        reasons.append(
+                            f"stress_regime_{regime_code}_drawdown"
+                            f"({regime_dd:.1%} exceeds -{self.max_stress_drawdown:.1%})"
+                        )
+                    if regime_sharpe < self.min_stress_sharpe:
+                        reasons.append(
+                            f"stress_regime_{regime_code}_sharpe"
+                            f"({regime_sharpe:.2f} below {self.min_stress_sharpe:.2f})"
+                        )
+                # Store stress regime metrics for diagnostics
+                for regime_code in self.stress_regimes:
+                    rp = regime_perf.get(regime_code)
+                    if rp is not None:
+                        metrics[f"stress_regime_{regime_code}_drawdown"] = rp.get("max_drawdown", 0.0)
+                        metrics[f"stress_regime_{regime_code}_sharpe"] = rp.get("sharpe", 0.0)
+                        metrics[f"stress_regime_{regime_code}_n_trades"] = rp.get("n_trades", 0)
+
         # Event-strategy contract checks (only enforced when metrics are supplied).
         if "worst_event_loss" in metrics:
             worst_event_loss = float(metrics.get("worst_event_loss", -np.inf))
@@ -250,6 +295,23 @@ class PromotionGate:
             score += 0.35
         if bool(metrics.get("spa_passes", False)):
             score += 0.40
+
+        # Stress resilience bonus (SPEC-V02): strategies that survive
+        # stress regimes with positive Sharpe receive a ranking bonus.
+        stress_sharpes = []
+        regime_perf = result.regime_performance
+        if regime_perf:
+            for rc in self.stress_regimes:
+                rp = regime_perf.get(rc)
+                if rp is not None and rp.get("n_trades", 0) >= 5:
+                    stress_sharpes.append(rp.get("sharpe", 0.0))
+        if stress_sharpes:
+            avg_stress_sharpe = float(np.mean(stress_sharpes))
+            # Clamp contribution: reward up to +0.50, penalize down to -0.30
+            stress_bonus = float(np.clip(0.25 * avg_stress_sharpe, -0.30, 0.50))
+            score += stress_bonus
+            metrics["avg_stress_sharpe"] = avg_stress_sharpe
+            metrics["stress_resilience_bonus"] = stress_bonus
 
         # Fold consistency reward (Spec 04): strategies with stable
         # performance across walk-forward folds receive a score bonus.

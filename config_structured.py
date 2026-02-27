@@ -243,6 +243,10 @@ class PromotionConfig:
     min_wf_positive_fold_fraction: float = 0.60
     max_wf_is_oos_gap: float = 0.20
     min_regime_positive_fraction: float = 0.50
+    max_stress_drawdown: float = 0.15
+    min_stress_sharpe: float = -0.50
+    max_transition_drawdown: float = 0.10
+    stress_regimes: List[int] = field(default_factory=lambda: [2, 3])
 
 
 @dataclass

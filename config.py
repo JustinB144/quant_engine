@@ -486,6 +486,12 @@ PROMOTION_REQUIRE_STATISTICAL_TESTS = True        # STATUS: ACTIVE — autopilot
 PROMOTION_REQUIRE_CPCV = True                     # STATUS: ACTIVE — autopilot/promotion_gate.py; require CPCV to pass
 PROMOTION_REQUIRE_SPA = False                     # STATUS: ACTIVE — autopilot/promotion_gate.py; SPA is informational by default
 
+# ── Stress-Regime Promotion Gates (SPEC-V02) ─────────────────────
+PROMOTION_MAX_STRESS_DRAWDOWN = 0.15              # STATUS: ACTIVE — autopilot/promotion_gate.py; max drawdown in stress regimes (2, 3)
+PROMOTION_MIN_STRESS_SHARPE = -0.50               # STATUS: ACTIVE — autopilot/promotion_gate.py; min Sharpe in stress regimes (not deeply negative)
+PROMOTION_MAX_TRANSITION_DRAWDOWN = 0.10          # STATUS: ACTIVE — autopilot/promotion_gate.py; max drawdown near regime transitions
+PROMOTION_STRESS_REGIMES = [2, 3]                 # STATUS: ACTIVE — autopilot/promotion_gate.py; regime codes considered stress buckets
+
 # ── Signal Selection — Spec 04 ─────────────────────────────────────
 SIGNAL_TOPK_QUANTILE = 0.70                      # STATUS: ACTIVE — autopilot/engine.py; select top 70% by cross-sectional z-score
 SIGNAL_Z_THRESHOLD = 1.5                         # STATUS: DEPRECATED — superseded by SIGNAL_TOPK_QUANTILE; kept for backward compat
