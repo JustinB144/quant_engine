@@ -160,6 +160,10 @@ class ModelConfig:
     forward_horizons: List[int] = field(default_factory=lambda: [5, 10, 20])
     max_model_versions: int = 5
     feature_mode: str = "core"
+    structural_weight_enabled: bool = True
+    structural_weight_changepoint_penalty: float = 0.5
+    structural_weight_jump_penalty: float = 0.5
+    structural_weight_stress_penalty: float = 0.3
 
 
 @dataclass

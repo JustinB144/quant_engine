@@ -286,9 +286,9 @@ class TestRegimeMinSamples:
         """Regime with fewer than MIN_REGIME_SAMPLES should be skipped."""
         from quant_engine.config import MIN_REGIME_SAMPLES
 
-        assert MIN_REGIME_SAMPLES >= 100, (
+        assert MIN_REGIME_SAMPLES >= 50, (
             f"MIN_REGIME_SAMPLES={MIN_REGIME_SAMPLES} is too low — "
-            "regime models need substantial data"
+            "regime models need substantial data (SPEC_10 T7: 50 minimum)"
         )
 
     def test_regime_model_skipped_for_low_samples(self):

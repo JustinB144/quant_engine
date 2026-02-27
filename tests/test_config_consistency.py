@@ -319,6 +319,30 @@ class TestModelConsistency:
 
         assert FEATURE_MODE_DEFAULT == get_config().model.feature_mode
 
+    def test_structural_weight_enabled(self):
+        from quant_engine.config import STRUCTURAL_WEIGHT_ENABLED
+        from quant_engine.config_structured import get_config
+
+        assert STRUCTURAL_WEIGHT_ENABLED == get_config().model.structural_weight_enabled
+
+    def test_structural_weight_changepoint_penalty(self):
+        from quant_engine.config import STRUCTURAL_WEIGHT_CHANGEPOINT_PENALTY
+        from quant_engine.config_structured import get_config
+
+        assert STRUCTURAL_WEIGHT_CHANGEPOINT_PENALTY == get_config().model.structural_weight_changepoint_penalty
+
+    def test_structural_weight_jump_penalty(self):
+        from quant_engine.config import STRUCTURAL_WEIGHT_JUMP_PENALTY
+        from quant_engine.config_structured import get_config
+
+        assert STRUCTURAL_WEIGHT_JUMP_PENALTY == get_config().model.structural_weight_jump_penalty
+
+    def test_structural_weight_stress_penalty(self):
+        from quant_engine.config import STRUCTURAL_WEIGHT_STRESS_PENALTY
+        from quant_engine.config_structured import get_config
+
+        assert STRUCTURAL_WEIGHT_STRESS_PENALTY == get_config().model.structural_weight_stress_penalty
+
 
 class TestBacktestConsistency:
     """Backtest values must match."""

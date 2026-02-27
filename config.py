@@ -219,7 +219,7 @@ REGIME_NAMES = {                                   # STATUS: ACTIVE — used in 
     2: "mean_reverting",
     3: "high_volatility",
 }
-MIN_REGIME_SAMPLES = 100                          # STATUS: ACTIVE — models/trainer.py; minimum training samples per regime model (SPEC-B08: 100 for reliable covariance/mean estimation)
+MIN_REGIME_SAMPLES = 50                           # STATUS: ACTIVE — models/trainer.py; minimum training samples per regime model (SPEC_10 T7: reduced from 100 to 50 for short regimes like crashes)
 REGIME_MODEL_TYPE = _cfg.regime.model_type         # STATUS: ACTIVE — regime/detector.py; "jump", "hmm", or "rule"
 REGIME_HMM_STATES = _cfg.regime.n_states           # STATUS: ACTIVE — regime/hmm.py; number of hidden states
 REGIME_HMM_MAX_ITER = _cfg.regime.hmm_max_iter     # STATUS: ACTIVE — regime/hmm.py; EM iteration limit
@@ -294,6 +294,12 @@ BOCPD_CHANGEPOINT_THRESHOLD = 0.50                # STATUS: ACTIVE — regime/de
 # ── Shock Vector Schema ────────────────────────────────────────────────
 SHOCK_VECTOR_SCHEMA_VERSION = "1.0"               # STATUS: ACTIVE — regime/shock_vector.py; schema version for backward compatibility
 SHOCK_VECTOR_INCLUDE_STRUCTURAL = True            # STATUS: ACTIVE — regime/shock_vector.py; include structural features in vector
+
+# ── Structural Sample Weighting (SPEC_03 T4) ──────────────────────────
+STRUCTURAL_WEIGHT_ENABLED = _cfg.model.structural_weight_enabled            # STATUS: ACTIVE — models/trainer.py; enable structural-state-aware sample weighting
+STRUCTURAL_WEIGHT_CHANGEPOINT_PENALTY = _cfg.model.structural_weight_changepoint_penalty  # STATUS: ACTIVE — models/trainer.py; max weight reduction near changepoints (0.0=none, 1.0=zero weight)
+STRUCTURAL_WEIGHT_JUMP_PENALTY = _cfg.model.structural_weight_jump_penalty  # STATUS: ACTIVE — models/trainer.py; weight multiplier for jump events (0.0=exclude, 1.0=no penalty)
+STRUCTURAL_WEIGHT_STRESS_PENALTY = _cfg.model.structural_weight_stress_penalty  # STATUS: ACTIVE — models/trainer.py; max weight reduction for high systemic stress
 
 # ── Kalshi Purge/Embargo by Event Type (E3) ─────────────────────────────
 KALSHI_PURGE_WINDOW_BY_EVENT = {"CPI": 14, "FOMC": 21, "NFP": 14, "GDP": 14}  # STATUS: PLACEHOLDER — defined but never imported

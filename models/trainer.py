@@ -80,6 +80,8 @@ from ..config import (
     MIN_REGIME_DAYS,
     REGIME_NAMES, RECENCY_DECAY, REGIME_SOFT_ASSIGNMENT_THRESHOLD,
     ENSEMBLE_DIVERSIFY, WF_MAX_TRAIN_DATES,
+    STRUCTURAL_WEIGHT_ENABLED, STRUCTURAL_WEIGHT_CHANGEPOINT_PENALTY,
+    STRUCTURAL_WEIGHT_JUMP_PENALTY, STRUCTURAL_WEIGHT_STRESS_PENALTY,
 )
 from .feature_stability import FeatureStabilityTracker
 from .versioning import ModelVersion, ModelRegistry
@@ -563,6 +565,116 @@ class ModelTrainer:
         selected, _ = self._select_features(X_dev, y_dev, max_feats=max_feats)
         return selected
 
+    @staticmethod
+    def _compute_structural_weights(
+        index: pd.Index,
+        shock_vectors: Dict,
+        changepoint_penalty: float = STRUCTURAL_WEIGHT_CHANGEPOINT_PENALTY,
+        jump_penalty: float = STRUCTURAL_WEIGHT_JUMP_PENALTY,
+        stress_penalty: float = STRUCTURAL_WEIGHT_STRESS_PENALTY,
+    ) -> np.ndarray:
+        """Compute per-sample weights from ShockVector structural signals.
+
+        Samples near regime changepoints, jumps, or high systemic stress
+        are downweighted to reduce the influence of structurally unstable
+        periods on model training.  Samples in confident, stable regimes
+        are upweighted.
+
+        Weight formula per sample i:
+            w_i = confidence_factor * changepoint_factor * jump_factor * stress_factor
+
+        Where:
+            confidence_factor  = hmm_confidence  (in [0, 1])
+            changepoint_factor = 1 - penalty * bocpd_changepoint_prob
+            jump_factor        = (1 - penalty) if jump_detected else 1.0
+            stress_factor      = 1 - penalty * systemic_stress
+
+        Parameters
+        ----------
+        index : pd.Index
+            Row index of the training data (used to align shock vectors).
+        shock_vectors : dict
+            Mapping from index key to ShockVector.  Keys may be timestamps
+            or (ticker, timestamp) tuples matching the training index.
+        changepoint_penalty : float
+            Maximum weight reduction near changepoints.
+        jump_penalty : float
+            Weight multiplier for jump events (0.0=exclude, 1.0=no penalty).
+        stress_penalty : float
+            Maximum weight reduction for high systemic stress.
+
+        Returns
+        -------
+        np.ndarray
+            Per-sample weights of shape ``(len(index),)``, normalised
+            to mean 1.0.
+        """
+        n = len(index)
+        weights = np.ones(n, dtype=float)
+
+        if not shock_vectors:
+            return weights
+
+        # Build a lookup-friendly set of shock vectors.
+        # The training index may be a MultiIndex (ticker, date) or a simple
+        # DatetimeIndex.  shock_vectors may be keyed by date, (ticker, date),
+        # or similar.  We try several match strategies.
+        for i in range(n):
+            idx_val = index[i]
+
+            # Try direct lookup first
+            sv = shock_vectors.get(idx_val)
+
+            # For MultiIndex rows: try the date component (last level)
+            if sv is None and isinstance(index, pd.MultiIndex):
+                date_val = index.get_level_values(-1)[i]
+                sv = shock_vectors.get(date_val)
+
+                # Try (ticker, date) tuple
+                if sv is None and index.nlevels >= 2:
+                    ticker_val = index.get_level_values(0)[i]
+                    sv = shock_vectors.get((ticker_val, date_val))
+
+            if sv is None:
+                continue
+
+            # Confidence factor: upweight high-confidence regime states
+            confidence_factor = float(
+                getattr(sv, "hmm_confidence", 0.5)
+            )
+            confidence_factor = max(0.1, confidence_factor)  # floor at 0.1
+
+            # Changepoint factor: downweight near regime transitions
+            cp_prob = float(getattr(sv, "bocpd_changepoint_prob", 0.0))
+            changepoint_factor = 1.0 - changepoint_penalty * cp_prob
+
+            # Jump factor: downweight jump events (noisy, outlier-driven)
+            jump_detected = bool(getattr(sv, "jump_detected", False))
+            jump_factor = (1.0 - jump_penalty) if jump_detected else 1.0
+
+            # Stress factor: downweight during systemic stress
+            structural = getattr(sv, "structural_features", {}) or {}
+            systemic_stress = float(structural.get("systemic_stress", 0.0))
+            stress_factor = 1.0 - stress_penalty * systemic_stress
+
+            weights[i] = (
+                confidence_factor
+                * changepoint_factor
+                * jump_factor
+                * stress_factor
+            )
+
+        # Clip to prevent negative or zero weights
+        weights = np.clip(weights, 0.05, 10.0)
+
+        # Normalise to mean 1.0 so downstream sample_weight interpretation
+        # is consistent with the recency-weight path.
+        w_sum = weights.sum()
+        if w_sum > 1e-10:
+            weights = weights * (n / w_sum)
+
+        return weights
+
     def train_ensemble(
         self,
         features: pd.DataFrame,
@@ -575,6 +687,7 @@ class ModelTrainer:
         survivorship_mode: bool = False,
         universe_as_of: Optional[str] = None,
         recency_weight: bool = False,
+        shock_vectors: Optional[Dict] = None,
     ) -> EnsembleResult:
         """
         Train the full regime-conditional ensemble.
@@ -584,6 +697,10 @@ class ModelTrainer:
             survivorship_mode: Universe was constructed with survivorship-bias-free data
             universe_as_of: Point-in-time universe date (for versioning metadata)
             recency_weight: Apply exponential recency weighting to training samples
+            shock_vectors: Optional dict of ShockVectors keyed by index value or
+                (ticker, date) tuple.  When provided and STRUCTURAL_WEIGHT_ENABLED,
+                samples are weighted by structural state signals (BOCPD changepoint
+                probability, jump flags, systemic stress, HMM confidence).
         """
         t0 = time.time()
 
@@ -596,6 +713,7 @@ class ModelTrainer:
 
         # Compute sample weights for recency weighting
         sample_weights = None
+        structural_weights_applied = False
         train_dates = self._extract_dates(X.index)
         train_data_start = str(train_dates.min().date()) if len(train_dates) > 0 else None
         train_data_end = str(train_dates.max().date()) if len(train_dates) > 0 else None
@@ -604,6 +722,20 @@ class ModelTrainer:
             max_date = train_dates.max()
             days_ago = (max_date - train_dates).dt.days
             sample_weights = np.exp(-RECENCY_DECAY * days_ago.values)
+
+        # ── Structural sample weighting (SPEC_03 T4) ──
+        # Downweight samples near regime changepoints, jumps, and high stress.
+        if STRUCTURAL_WEIGHT_ENABLED and shock_vectors:
+            struct_weights = self._compute_structural_weights(
+                index=X.index,
+                shock_vectors=shock_vectors,
+            )
+            # Combine with recency weights multiplicatively
+            if sample_weights is not None:
+                sample_weights = sample_weights * struct_weights
+            else:
+                sample_weights = struct_weights
+            structural_weights_applied = True
 
         if verbose:
             print(f"\n{'='*60}")
@@ -614,6 +746,9 @@ class ModelTrainer:
             print(f"  Regimes: {r.value_counts().to_dict()}")
             if recency_weight:
                 print(f"  Recency weighting: ON (λ={RECENCY_DECAY})")
+            if structural_weights_applied:
+                matched = int(np.sum(sample_weights != 1.0)) if sample_weights is not None else 0
+                print(f"  Structural weighting: ON ({matched} samples matched)")
             if survivorship_mode:
                 print(f"  Survivorship-bias-free universe")
 
@@ -736,6 +871,7 @@ class ModelTrainer:
                 universe_as_of=universe_as_of,
                 train_data_start=train_data_start,
                 train_data_end=train_data_end,
+                structural_weights_applied=structural_weights_applied,
             )
             # Fit and save confidence calibrator on holdout predictions vs outcomes
             cal_metrics = self._fit_calibrator(
@@ -1350,6 +1486,7 @@ class ModelTrainer:
         universe_as_of: Optional[str] = None,
         train_data_start: Optional[str] = None,
         train_data_end: Optional[str] = None,
+        structural_weights_applied: bool = False,
     ):
         """Save all model artifacts to disk using joblib (safe serialization)."""
         # Determine save directory
@@ -1391,7 +1528,14 @@ class ModelTrainer:
             "regime_models": {},
             "train_time_seconds": ensemble_result.train_time_seconds,
             "total_samples": ensemble_result.total_samples,
+            "structural_weights_applied": structural_weights_applied,
         }
+        if structural_weights_applied:
+            meta["structural_weight_config"] = {
+                "changepoint_penalty": STRUCTURAL_WEIGHT_CHANGEPOINT_PENALTY,
+                "jump_penalty": STRUCTURAL_WEIGHT_JUMP_PENALTY,
+                "stress_penalty": STRUCTURAL_WEIGHT_STRESS_PENALTY,
+            }
         for code, result in regime_results.items():
             meta["regime_models"][str(code)] = {
                 "name": REGIME_NAMES[code],
