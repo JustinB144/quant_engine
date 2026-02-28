@@ -51,9 +51,9 @@
         "feat_6"
       ],
       "cv_corr": 0.9114190933110479,
-      "holdout_r2": 0.8727956337049425,
-      "holdout_corr": 0.945443022105835,
-      "target_std": 0.030017758025480692,
+      "holdout_r2": 0.874172638792527,
+      "holdout_corr": 0.9418141592920355,
+      "target_std": 0.029972326172705774,
       "feature_medians": {
         "feat_0": -0.030010816095710637,
         "feat_1": -0.021830876582860256,
@@ -78,6 +78,7 @@
       }
     }
   },
-  "train_time_seconds": 2.334506034851074,
-  "total_samples": 1700
+  "train_time_seconds": 2.2936460971832275,
+  "total_samples": 1700,
+  "structural_weights_applied": false
 }

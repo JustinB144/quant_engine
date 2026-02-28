@@ -6,6 +6,7 @@ IBKR is always ground truth. If sources disagree, IBKR wins.
 
 import logging
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -104,6 +105,10 @@ class CrossSourceValidator:
         "4h": "4 hours",
     }
 
+    # Higher sampling density for 1m validation (~3% coverage of 10yr range)
+    _1M_SAMPLE_WINDOWS = 15
+    _1M_DAYS_PER_WINDOW = 5
+
     def __init__(
         self,
         ib: IB,
@@ -198,8 +203,19 @@ class CrossSourceValidator:
         if not isinstance(primary_df.index, pd.DatetimeIndex):
             primary_df.index = pd.to_datetime(primary_df.index)
 
+        # For 1m data, use higher sampling density (more windows/days)
+        # to get thorough coverage across the full date range
+        if timeframe == "1m":
+            eff_windows = self._1M_SAMPLE_WINDOWS
+            eff_days = self._1M_DAYS_PER_WINDOW
+        else:
+            eff_windows = self.sample_windows
+            eff_days = self.days_per_window
+
         # Select sample dates from primary data
-        sample_dates = self._select_sample_dates(primary_df)
+        sample_dates = self._select_sample_dates(
+            primary_df, windows_override=eff_windows, days_override=eff_days
+        )
         report.sample_days = len(sample_dates)
 
         if not sample_dates:
@@ -266,15 +282,22 @@ class CrossSourceValidator:
 
         return primary_df_corrected, report
 
-    def _select_sample_dates(self, primary_df: pd.DataFrame) -> List[pd.Timestamp]:
+    def _select_sample_dates(
+        self,
+        primary_df: pd.DataFrame,
+        windows_override: Optional[int] = None,
+        days_override: Optional[int] = None,
+    ) -> List[pd.Timestamp]:
         """
         Select stratified sample of trading dates.
 
-        Divides date range into sample_windows equal windows,
-        selects days_per_window random trading days from each window.
+        Divides date range into equal windows, selects random trading days
+        from each window.
 
         Args:
             primary_df: Input DataFrame with datetime index
+            windows_override: Override number of windows (for 1m higher density)
+            days_override: Override days per window (for 1m higher density)
 
         Returns:
             List of sampled dates
@@ -282,20 +305,23 @@ class CrossSourceValidator:
         if primary_df.empty:
             return []
 
-        dates = primary_df.index.unique()
-        if len(dates) < self.sample_windows:
+        n_windows = windows_override or self.sample_windows
+        n_days = days_override or self.days_per_window
+
+        dates = primary_df.index.normalize().unique()
+        if len(dates) < n_windows:
             return list(dates)
 
         # Divide into windows
-        window_size = len(dates) // self.sample_windows
+        window_size = len(dates) // n_windows
         sample_dates = []
 
-        for i in range(self.sample_windows):
+        for i in range(n_windows):
             start_idx = i * window_size
-            end_idx = (i + 1) * window_size if i < self.sample_windows - 1 else len(dates)
+            end_idx = (i + 1) * window_size if i < n_windows - 1 else len(dates)
 
             window_dates = dates[start_idx:end_idx].tolist()
-            num_to_sample = min(self.days_per_window, len(window_dates))
+            num_to_sample = min(n_days, len(window_dates))
 
             sampled = random.sample(window_dates, num_to_sample)
             sample_dates.extend(sampled)
@@ -339,24 +365,43 @@ class CrossSourceValidator:
             ranges = self._group_dates_into_ranges(dates_sorted)
 
             all_bars = []
+            _RETRY_BACKOFFS = [5, 10]  # seconds to wait on empty returns
 
             for start_date, end_date in ranges:
                 logger.debug(f"Downloading IBKR {ticker} {start_date} to {end_date}")
 
+                duration_days = max((end_date - start_date).days + 1, 1)
+
                 try:
                     contract = Stock(ticker, "SMART", "USD")
-                    bars = self.ib.reqHistoricalData(
-                        contract,
-                        endDateTime=end_date.strftime("%Y%m%d %H:%M:%S"),
-                        durationStr=f"{(end_date - start_date).days + 1} D",
-                        barSizeSetting=ibkr_barsize,
-                        whatToShow="TRADES",
-                        useRTH=True,
-                        formatDate=1,
-                        keepUpToDate=False,
-                    )
 
-                    if bars:
+                    # Retry with backoff on empty returns (Error 162 produces
+                    # a truthy BarDataList with len==0, not an exception)
+                    bars = None
+                    for attempt in range(1 + len(_RETRY_BACKOFFS)):
+                        bars = self.ib.reqHistoricalData(
+                            contract,
+                            endDateTime=end_date.strftime("%Y%m%d %H:%M:%S"),
+                            durationStr=f"{duration_days} D",
+                            barSizeSetting=ibkr_barsize,
+                            whatToShow="TRADES",
+                            useRTH=True,
+                            formatDate=1,
+                            keepUpToDate=False,
+                            timeout=30,
+                        )
+                        # bars is a BarDataList — truthy even when empty
+                        if bars is not None and len(bars) > 0:
+                            break
+                        if attempt < len(_RETRY_BACKOFFS):
+                            backoff = _RETRY_BACKOFFS[attempt]
+                            logger.debug(
+                                f"IBKR returned empty for {ticker} "
+                                f"{start_date}-{end_date}, retry in {backoff}s"
+                            )
+                            time.sleep(backoff)
+
+                    if bars is not None and len(bars) > 0:
                         df = ib_util.df(bars)
                         # Normalize IBKR columns to canonical title-case
                         df = df.rename(columns={
@@ -367,9 +412,13 @@ class CrossSourceValidator:
                             df["Date"] = pd.to_datetime(df["Date"])
                             df = df.set_index("Date")
                         all_bars.append(df)
+                    else:
+                        logger.warning(
+                            f"IBKR empty after retries for {ticker} "
+                            f"{start_date}-{end_date}, skipping range"
+                        )
 
                     # Pace requests
-                    import time
                     time.sleep(self.ibkr_pace)
 
                 except Exception as e:

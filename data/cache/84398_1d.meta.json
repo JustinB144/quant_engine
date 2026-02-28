@@ -3,7 +3,7 @@
   "format": "parquet",
   "n_bars": 3484,
   "permno": "84398",
-  "saved_at_utc": "2026-02-27T03:55:58.792473+00:00",
+  "saved_at_utc": "2026-02-27T19:30:25.349556+00:00",
   "source": "wrds",
   "start_date": "2011-02-28",
   "ticker": "SPY",

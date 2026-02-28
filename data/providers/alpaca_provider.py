@@ -116,7 +116,7 @@ class AlpacaProvider:
 
         all_chunks: List[pd.DataFrame] = []
         remaining_days = target_days
-        current_end = datetime.now(timezone.utc)
+        current_end = datetime.now(timezone.utc) - timedelta(minutes=20)  # SIP free tier: 15min delay + buffer
         consec_failures = 0
 
         while remaining_days > 0:

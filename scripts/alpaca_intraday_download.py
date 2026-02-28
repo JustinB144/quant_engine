@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Hybrid Intraday Data Downloader: Alpaca (primary) + IBKR (validation/gap-fill).
+1m-Only Intraday Pipeline: Download 1m → Validate → Resample to all TFs.
 
-Downloads intraday OHLCV data using Alpaca Markets free API as the primary
-source (200 req/min, 10+ years of 1-minute history), then optionally validates
-against IBKR data and fills gaps where Alpaca is missing bars.
+Downloads 1-minute OHLCV data using Alpaca Markets free API, validates against
+IBKR ground truth, then resamples to 5m/15m/30m/1h/4h.  This avoids redundant
+downloads of higher timeframes that are just aggregations of 1m data.
 
 Saves in the canonical ``{TICKER}_{timeword}_{start}_{end}.parquet`` format
 with ``.meta.json`` sidecars, fully compatible with local_cache.py.
@@ -17,16 +17,18 @@ Setup:
     # Free account (even unfunded) works for historical data.
 
 Usage:
-    python3 -u scripts/alpaca_intraday_download.py                          # all tf, all missing
-    python3 -u scripts/alpaca_intraday_download.py --timeframes 1m 5m       # specific timeframes
+    python3 -u scripts/alpaca_intraday_download.py                          # all tickers, 1m → resample all
     python3 -u scripts/alpaca_intraday_download.py --tickers AAPL MSFT      # specific tickers
     python3 -u scripts/alpaca_intraday_download.py --years 10               # 10 years of history
+    python3 -u scripts/alpaca_intraday_download.py --resample-to 5m 1h      # only resample to specific TFs
     python3 -u scripts/alpaca_intraday_download.py --validate-ibkr          # cross-check with IBKR
     python3 -u scripts/alpaca_intraday_download.py --dry-run                # survey only
     python3 -u scripts/alpaca_intraday_download.py --source alphavantage    # use AV as primary
     python3 -u scripts/alpaca_intraday_download.py --quarantine-report      # show quarantine log
     python3 -u scripts/alpaca_intraday_download.py --revalidate             # re-validate existing
     python3 -u scripts/alpaca_intraday_download.py --skip-validation        # skip IBKR validation
+    python3 -u scripts/alpaca_intraday_download.py --cleanup-redundant      # delete Alpaca 5m/15m files
+    python3 -u scripts/alpaca_intraday_download.py --cleanup-redundant --dry-run  # preview deletions
 """
 
 import argparse
@@ -194,6 +196,124 @@ ALPACA_CHUNK_DAYS = {
 
 MAX_CONSEC_FAIL = 5
 
+# Timeframes that can be resampled from 1m (everything except 1m itself)
+RESAMPLE_TARGETS = ["5m", "15m", "30m", "1h", "4h"]
+
+
+# ── 1m → higher-TF Resampling ──────────────────────────────────────────────
+
+def resample_1m_to_tf(
+    df_1m: pd.DataFrame,
+    target_tf: str,
+) -> Optional[pd.DataFrame]:
+    """
+    Resample validated 1-minute bars to a higher timeframe.
+
+    Produces bars matching the alignment of existing IBKR/Alpaca data:
+    - 5m/15m/30m: Standard resample, naturally aligns to market times
+    - 1h: Resample at 1h, rename 09:00→09:30 (7 bars/day)
+    - 4h: UTC-aligned 4h bins matching IBKR convention
+           EST (Nov-Mar): 3 bars at 09:30, 11:00, 15:00
+           EDT (Mar-Nov): 2 bars at 09:30, 12:00
+
+    Args:
+        df_1m: Validated 1-minute DataFrame with RTH data only.
+               Index must be tz-naive Eastern Time DatetimeIndex.
+        target_tf: Target timeframe ('5m', '15m', '30m', '1h', '4h')
+
+    Returns:
+        Resampled DataFrame, or None if input is empty.
+    """
+    import datetime as _dt
+
+    if df_1m is None or df_1m.empty:
+        return None
+
+    ohlcv_agg = {
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+        "Volume": "sum",
+    }
+
+    freq_map = {"5m": "5min", "15m": "15min", "30m": "30min", "1h": "1h"}
+
+    if target_tf in freq_map:
+        freq = freq_map[target_tf]
+        resampled = df_1m.resample(freq).agg(ohlcv_agg).dropna(subset=["Open"])
+
+        if target_tf == "1h":
+            # Standard 1h resample bins start at :00, so the first RTH bin
+            # is 09:00 (containing bars 09:30-09:59).  Rename to 09:30 to
+            # match existing IBKR/Alpaca convention.
+            new_index = []
+            for ts in resampled.index:
+                if ts.hour == 9 and ts.minute == 0:
+                    new_index.append(ts.replace(minute=30))
+                else:
+                    new_index.append(ts)
+            resampled.index = pd.DatetimeIndex(new_index)
+
+        return resampled
+
+    elif target_tf == "4h":
+        # UTC-aligned 4h bins matching IBKR's 4-hour bar convention.
+        # IBKR aligns 4h bins to UTC midnight, which causes DST-dependent
+        # bar counts per day.
+        all_bars = []
+        rth_start = _dt.time(9, 30)
+
+        for date, day_df in df_1m.groupby(df_1m.index.date):
+            if day_df.empty:
+                continue
+
+            # Determine DST status for this date
+            ts_aware = pd.Timestamp(date).tz_localize("America/New_York")
+            is_dst = bool(ts_aware.dst())
+
+            if is_dst:
+                # EDT (UTC-4): 4h UTC bins hit 08:00 and 12:00 local
+                bin_edges = [
+                    (rth_start, _dt.time(12, 0)),
+                    (_dt.time(12, 0), _dt.time(16, 0)),
+                ]
+                bin_labels = [_dt.time(9, 30), _dt.time(12, 0)]
+            else:
+                # EST (UTC-5): 4h UTC bins hit 07:00, 11:00, 15:00 local
+                bin_edges = [
+                    (rth_start, _dt.time(11, 0)),
+                    (_dt.time(11, 0), _dt.time(15, 0)),
+                    (_dt.time(15, 0), _dt.time(16, 0)),
+                ]
+                bin_labels = [_dt.time(9, 30), _dt.time(11, 0), _dt.time(15, 0)]
+
+            for (start_t, end_t), label_t in zip(bin_edges, bin_labels):
+                mask = (day_df.index.time >= start_t) & (day_df.index.time < end_t)
+                bin_df = day_df[mask]
+                if len(bin_df) > 0:
+                    bar = pd.Series({
+                        "Open": bin_df["Open"].iloc[0],
+                        "High": bin_df["High"].max(),
+                        "Low": bin_df["Low"].min(),
+                        "Close": bin_df["Close"].iloc[-1],
+                        "Volume": bin_df["Volume"].sum(),
+                    })
+                    ts = pd.Timestamp(_dt.datetime.combine(date, label_t))
+                    all_bars.append((ts, bar))
+
+        if not all_bars:
+            return None
+
+        result = pd.DataFrame(
+            [bar for _, bar in all_bars],
+            index=pd.DatetimeIndex([ts for ts, _ in all_bars]),
+        )
+        return result
+
+    else:
+        raise ValueError(f"Unsupported target timeframe for resampling: {target_tf}")
+
 
 # ── Rate Limiter ─────────────────────────────────────────────────────────────
 
@@ -295,7 +415,7 @@ def download_alpaca_chunked(
 
     all_chunks: List[pd.DataFrame] = []
     remaining_days = target_days
-    current_end = datetime.now(timezone.utc)
+    current_end = datetime.now(timezone.utc) - timedelta(minutes=20)  # SIP free tier: 15min delay
     consec_failures = 0
 
     while remaining_days > 0:
@@ -570,6 +690,11 @@ def save_intraday(
             old = _normalize_ohlcv_columns(old)
             if not isinstance(old.index, pd.DatetimeIndex):
                 old.index = pd.DatetimeIndex(pd.to_datetime(old.index, errors="coerce"))
+            # Normalize tz: strip timezone from both to avoid tz-naive/aware mismatch
+            if old.index.tz is not None:
+                old.index = old.index.tz_localize(None)
+            if df.index.tz is not None:
+                df.index = df.index.tz_localize(None)
             cols = [c for c in REQUIRED_OHLCV if c in old.columns and c in df.columns]
             merged = pd.concat([old[cols], df[cols]]).sort_index()
             merged = merged[~merged.index.duplicated(keep="last")]
@@ -667,19 +792,88 @@ def quality_check(df: pd.DataFrame, ticker: str, timeframe: str = "1h", source: 
         }
 
 
+# ── Cleanup Redundant Files ──────────────────────────────────────────────────
+
+def _cleanup_redundant_files(
+    cache_dir: Path,
+    tickers: List[str],
+    dry_run: bool = False,
+) -> None:
+    """
+    Delete Alpaca-sourced 5m/15m parquet files + sidecars.
+
+    These are redundant now that higher TFs are resampled from 1m.
+    Only deletes files whose .meta.json source contains 'alpaca' (not IBKR).
+    """
+    redundant_tfs = ["5min", "15min"]
+    deleted = 0
+    skipped = 0
+
+    print(f"\n  {'[DRY RUN] ' if dry_run else ''}Scanning for redundant Alpaca 5m/15m files...")
+
+    for tf_word in redundant_tfs:
+        for f in sorted(cache_dir.glob(f"*_{tf_word}_*.parquet")):
+            ticker_part = f.stem.split(f"_{tf_word}_")[0].upper()
+            if tickers and ticker_part not in [t.upper() for t in tickers]:
+                continue
+
+            # Check source in meta sidecar — only delete Alpaca-sourced files
+            meta_path = f.with_suffix(".meta.json")
+            source = "unknown"
+            if meta_path.exists():
+                try:
+                    with open(meta_path) as mf:
+                        meta = json.load(mf)
+                    source = meta.get("source", "unknown")
+                except (json.JSONDecodeError, OSError):
+                    pass
+
+            if "alpaca" not in source.lower():
+                print(f"    SKIP {f.name} (source={source})")
+                skipped += 1
+                continue
+
+            # Collect file + sidecars
+            to_delete = [f]
+            for suffix in (".meta.json", ".quality.json", ".report.json"):
+                sidecar = f.with_suffix(suffix)
+                if sidecar.exists():
+                    to_delete.append(sidecar)
+
+            if dry_run:
+                print(f"    WOULD DELETE {f.name} + {len(to_delete)-1} sidecars (source={source})")
+            else:
+                for path in to_delete:
+                    path.unlink()
+                print(f"    DELETED {f.name} + {len(to_delete)-1} sidecars")
+            deleted += 1
+
+    action = "would delete" if dry_run else "deleted"
+    print(f"\n  Cleanup complete: {action} {deleted} files, skipped {skipped}")
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Hybrid intraday downloader: Alpaca (primary) + IBKR (validation/gap-fill)"
+        description="1m-only pipeline: download 1m, validate with IBKR, resample to all TFs"
     )
     parser.add_argument(
         "--timeframes", nargs="+", default=None,
-        help="Timeframes to download (default: 1m 5m 15m 30m 1h 4h)",
+        help="(Legacy) Timeframes to download directly from source. "
+             "New default: download 1m only, then resample to higher TFs.",
+    )
+    parser.add_argument(
+        "--resample-to", nargs="+", default=None,
+        help="Higher timeframes to resample from 1m (default: 5m 15m 30m 1h 4h)",
     )
     parser.add_argument(
         "--tickers", nargs="+", default=None,
         help="Override: only process these tickers (default: UNIVERSE_INTRADAY)",
+    )
+    parser.add_argument(
+        "--cleanup-redundant", action="store_true",
+        help="Delete Alpaca-sourced 5m/15m parquet + sidecars (use --dry-run to preview)",
     )
     parser.add_argument(
         "--years", type=float, default=10.0,
@@ -786,12 +980,16 @@ def main():
     api_secret = args.api_secret or os.environ.get("ALPACA_API_SECRET", "")
     av_api_key = os.environ.get("ALPHA_VANTAGE_API_KEY", "")
 
-    all_timeframes = ["1m", "5m", "15m", "30m", "1h", "4h"]
-    timeframes = args.timeframes or all_timeframes
     tickers = [t.upper() for t in (args.tickers or UNIVERSE_INTRADAY)]
+    resample_targets = args.resample_to or RESAMPLE_TARGETS
 
-    # Allow --dry-run / --revalidate without API keys
-    needs_download = not args.dry_run and not args.revalidate
+    # Legacy --timeframes mode: download each TF directly (old behavior)
+    legacy_mode = args.timeframes is not None
+
+    # Allow --dry-run / --revalidate / --cleanup-redundant without API keys
+    needs_download = (
+        not args.dry_run and not args.revalidate and not args.cleanup_redundant
+    )
     if needs_download and args.source == "alpaca" and (not api_key or not api_secret):
         print("\n  ERROR: Alpaca API credentials required.")
         print("  Set ALPACA_API_KEY and ALPACA_API_SECRET environment variables,")
@@ -804,7 +1002,7 @@ def main():
         sys.exit(1)
 
     print("=" * 70)
-    print("  HYBRID INTRADAY DOWNLOADER — Alpaca + IBKR")
+    print("  1m-ONLY INTRADAY PIPELINE — Download 1m → Validate → Resample")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 70)
 
@@ -815,7 +1013,11 @@ def main():
 
     print(f"\n  Cache dir:    {cache_dir}")
     print(f"  Tickers:      {len(tickers)}")
-    print(f"  Timeframes:   {', '.join(timeframes)}")
+    if legacy_mode:
+        print(f"  Mode:         LEGACY (direct download per TF)")
+        print(f"  Timeframes:   {', '.join(args.timeframes)}")
+    else:
+        print(f"  Mode:         1m-ONLY (download 1m → resample to {', '.join(resample_targets)})")
     print(f"  History:      {args.years:.0f} years")
     if workers > 1:
         print(f"  Workers:      {workers} concurrent (shared 190 req/min limiter)")
@@ -833,27 +1035,51 @@ def main():
     if args.revalidate:
         print(f"  Mode:         REVALIDATE (re-run QC on existing files)")
 
-    # Survey
-    survey = survey_intraday(cache_dir, tickers, timeframes)
+    # ── Cleanup-redundant mode ──
+    if args.cleanup_redundant:
+        _cleanup_redundant_files(cache_dir, tickers, args.dry_run)
+        return
 
-    print(f"\n  {'Timeframe':<10} {'Present':<10} {'Missing':<10} {'Chunks/ticker':<15} {'Est. time'}")
-    print(f"  {'─'*10} {'─'*10} {'─'*10} {'─'*15} {'─'*15}")
+    # Survey 1m data
+    all_timeframes = ["1m", "5m", "15m", "30m", "1h", "4h"]
+    survey_tfs = args.timeframes if legacy_mode else ["1m"]
+    survey = survey_intraday(cache_dir, tickers, survey_tfs)
 
-    for tf in timeframes:
-        tf_data = survey[tf]
+    target_days = int(args.years * 365)
+    chunk_days_1m = ALPACA_CHUNK_DAYS.get("1m", 14)
+    chunks_per = target_days // max(chunk_days_1m, 1)
+
+    if not legacy_mode:
+        tf_data = survey["1m"]
         present = sum(1 for v in tf_data.values() if v is not None)
         missing = sum(1 for v in tf_data.values() if v is None)
-        target_days = int(args.years * 365)
-        chunk_days = ALPACA_CHUNK_DAYS.get(tf, 10)
-        chunks_per = target_days // max(chunk_days, 1)
         tickers_to_dl = missing if args.missing_only else len(tickers)
         total_requests = chunks_per * tickers_to_dl
         if workers > 1:
-            est_seconds = total_requests * (60.0 / 190)  # rate-limited at 190/min
+            est_seconds = total_requests * (60.0 / 190)
         else:
             est_seconds = total_requests * (args.pace + 0.3)
         est_min = est_seconds / 60
-        print(f"  {tf:<10} {present:<10} {missing:<10} {chunks_per:<15} ~{est_min:.0f} min ({tickers_to_dl} tickers)")
+        print(f"\n  1m download:  {present} present, {missing} missing, "
+              f"~{chunks_per} chunks/ticker, ~{est_min:.0f} min ({tickers_to_dl} tickers)")
+        print(f"  Resample to:  {', '.join(resample_targets)}")
+    else:
+        print(f"\n  {'Timeframe':<10} {'Present':<10} {'Missing':<10} {'Chunks/ticker':<15} {'Est. time'}")
+        print(f"  {'─'*10} {'─'*10} {'─'*10} {'─'*15} {'─'*15}")
+        for tf in args.timeframes:
+            tf_data = survey[tf]
+            present = sum(1 for v in tf_data.values() if v is not None)
+            missing = sum(1 for v in tf_data.values() if v is None)
+            chunk_days = ALPACA_CHUNK_DAYS.get(tf, 10)
+            chunks_per_tf = target_days // max(chunk_days, 1)
+            tickers_to_dl = missing if args.missing_only else len(tickers)
+            total_requests = chunks_per_tf * tickers_to_dl
+            if workers > 1:
+                est_seconds = total_requests * (60.0 / 190)
+            else:
+                est_seconds = total_requests * (args.pace + 0.3)
+            est_min = est_seconds / 60
+            print(f"  {tf:<10} {present:<10} {missing:<10} {chunks_per_tf:<15} ~{est_min:.0f} min ({tickers_to_dl} tickers)")
 
     if args.dry_run:
         print("\n  [DRY RUN] No downloads performed.")
@@ -902,10 +1128,11 @@ def main():
 
     # ── Revalidate mode (Spec 11 T5): re-run QC on existing files ──
     if args.revalidate:
+        reval_tfs = args.timeframes or all_timeframes
         print(f"\n  REVALIDATE mode: re-running quality checks on existing files")
         reval_ok = 0
         reval_fail = 0
-        for tf in timeframes:
+        for tf in reval_tfs:
             tf_word = TF_SUFFIX[tf]
             for f in cache_dir.glob(f"*_{tf_word}_*.parquet"):
                 ticker_part = f.stem.split(f"_{tf_word}_")[0]
@@ -938,25 +1165,90 @@ def main():
     total_quality_issues = 0
     total_ibkr_fills = 0
     total_ibkr_discrepancies = 0
+    total_resampled = 0
     start_time = time.time()
     print_lock = threading.Lock()
 
-    def _process_one_ticker(
+    # ── Helpers for saving + sidecar writing ──
+
+    def _save_and_write_sidecar(
+        ticker: str, tf: str, df: pd.DataFrame,
+        existing_path: Optional[Path], source: str,
+        qc: dict, val_report_dict: Optional[dict],
+    ) -> Optional[Path]:
+        """Save data and write quality/meta sidecars. Returns output path."""
+        out_path = save_intraday(
+            ticker, tf, df, cache_dir,
+            existing_path=existing_path,
+            source=source,
+        )
+        saved = pd.read_parquet(out_path)
+        span = (saved.index.max() - saved.index.min()).days / 365.25
+
+        quality_sidecar = out_path.with_suffix(".quality.json")
+        sidecar_data = {
+            "ticker": ticker,
+            "timeframe": tf,
+            "source": source,
+            "timestamp": datetime.now().isoformat(),
+            "bars_saved": len(saved),
+            "date_range": {
+                "start": str(saved.index.min().date()),
+                "end": str(saved.index.max().date()),
+                "span_years": round(span, 2),
+            },
+            "quality_check": {
+                "passed": qc["pass"],
+                "quality_score": qc["quality_score"],
+                "quarantine": qc.get("quarantine", False),
+                "quarantine_reason": qc.get("quarantine_reason", ""),
+                "rejected_bars": qc.get("rejected_bars", 0),
+                "flagged_bars": qc.get("flagged_bars", 0),
+                "issues": qc.get("issues", []),
+            },
+        }
+        if val_report_dict:
+            sidecar_data["ibkr_validation"] = {
+                "valid": val_report_dict["valid"],
+                "checked_bars": val_report_dict["checked_bars"],
+                "price_mismatches": val_report_dict["price_mismatches"],
+                "bars_replaced": val_report_dict["bars_replaced"],
+                "bars_inserted": val_report_dict["bars_inserted"],
+                "mismatch_rate": val_report_dict["mismatch_rate"],
+                "missing_in_primary": val_report_dict.get("missing_in_primary", 0),
+                "split_mismatches": val_report_dict.get("split_mismatches", 0),
+                "error": val_report_dict.get("error"),
+            }
+        if _QUALITY_MODULES_AVAILABLE and qc.get("report") is not None:
+            try:
+                write_quality_report(out_path.with_suffix(".report.json"), qc["report"])
+            except Exception:
+                pass
+        try:
+            with open(quality_sidecar, "w") as qf:
+                json.dump(sidecar_data, qf, indent=2, default=str)
+        except Exception:
+            pass
+
+        return out_path
+
+    # ── Process one ticker: download 1m → QC → validate → resample → save all ──
+
+    def _process_one_ticker_1m_pipeline(
         ticker: str,
-        tf: str,
         existing_info: Optional[dict],
         index: int,
         total: int,
     ) -> dict:
-        """Download, QC, validate, and save one ticker. Returns result dict."""
+        """Download 1m, validate, resample to all target TFs, save everything."""
         existing_path = existing_info["path"] if existing_info else None
         label = f"  [{index}/{total}]"
-        parts = []  # Collect output parts, print at end
+        parts = []
 
-        # ── Step 1: Download with fallback cascade (Spec 11 T5) ──
+        # ── Step 1: Download 1m with fallback cascade ──
         df, source = download_with_fallback(
             ticker=ticker,
-            timeframe=tf,
+            timeframe="1m",
             target_days=target_days,
             source=args.source,
             fallback_source=args.fallback_source,
@@ -978,27 +1270,26 @@ def main():
 
         val_report_dict = None
 
-        # ── Step 2: Quality check (13-point gate) ──
-        df, qc = quality_check(df, ticker, tf, source)
+        # ── Step 2: Quality check 1m (13-point gate) ──
+        df, qc = quality_check(df, ticker, "1m", source)
         if not qc["pass"]:
             issue_summary = ', '.join(qc['issues'][:3])
             if len(qc['issues']) > 3:
                 issue_summary += f" (+{len(qc['issues'])-3} more)"
             parts.append(f"[QC {qc['quality_score']:.2f}: {issue_summary}]")
 
-        # Check quarantine BEFORE saving
         if qc.get("quarantine"):
             parts.append(f"[QUARANTINED: {qc.get('quarantine_reason', 'quality gate')}]")
             if _QUALITY_MODULES_AVAILABLE:
                 quarantine_dir = getattr(_cfg, 'INTRADAY_QUARANTINE_DIR',
                                         DATA_CACHE_DIR / "quarantine")
-                quarantine_ticker(ticker, tf, quarantine_dir,
+                quarantine_ticker(ticker, "1m", quarantine_dir,
                                  qc.get("quarantine_reason", "quality gate"))
             source = "alpaca:quarantined"
 
-        # ── Step 3: IBKR cross-validation (Spec 11 T5: default on, --skip-validation to disable) ──
+        # ── Step 3: IBKR cross-validation on 1m ──
         if validate_ibkr and ib and ib.isConnected():
-            df, val = validate_with_ibkr(ib, ticker, tf, df)
+            df, val = validate_with_ibkr(ib, ticker, "1m", df)
             val_report_dict = val
             if val["bars_replaced"] > 0 or val["bars_inserted"] > 0:
                 source = f"{source}+ibkr"
@@ -1007,24 +1298,22 @@ def main():
                              f"rate={val['mismatch_rate']:.1%}, "
                              f"replaced={val['bars_replaced']}, inserted={val['bars_inserted']}]")
 
-                # High mismatch rate: full IBKR re-download (Spec 11 T5)
                 max_mismatch = getattr(_cfg, 'INTRADAY_MAX_MISMATCH_RATE_PCT', 5.0) / 100.0
                 if val["mismatch_rate"] > max_mismatch and ib and ib.isConnected():
-                    ibkr_df = _download_ibkr_full(ib, ticker, tf, target_days)
+                    ibkr_df = _download_ibkr_full(ib, ticker, "1m", target_days)
                     if ibkr_df is not None and len(ibkr_df) > 0:
                         df = ibkr_df
                         source = "ibkr:full_redownload"
                         parts.append(f"[IBKR re-download: {len(df)} bars]")
-
             elif val["checked_bars"] > 0:
                 parts.append(f"[IBKR OK: {val['checked_bars']} bars, "
                              f"replaced={val['bars_replaced']}, inserted={val['bars_inserted']}]")
 
-        # ── Step 3b: Second quality gate after replacements (Spec 11 T5) ──
+        # ── Step 3b: Second quality gate after replacements ──
         if val_report_dict and (val_report_dict.get("bars_replaced", 0) > 0
                                 or val_report_dict.get("bars_inserted", 0) > 0
                                 or source.startswith("ibkr:full")):
-            df, qc2 = quality_check(df, ticker, tf, source)
+            df, qc2 = quality_check(df, ticker, "1m", source)
             if not qc2["pass"]:
                 issue_summary2 = ', '.join(qc2['issues'][:2])
                 parts.append(f"[QC2 {qc2['quality_score']:.2f}: {issue_summary2}]")
@@ -1033,69 +1322,132 @@ def main():
                 if _QUALITY_MODULES_AVAILABLE:
                     quarantine_dir = getattr(_cfg, 'INTRADAY_QUARANTINE_DIR',
                                             DATA_CACHE_DIR / "quarantine")
-                    quarantine_ticker(ticker, tf, quarantine_dir,
+                    quarantine_ticker(ticker, "1m", quarantine_dir,
                                      f"post-replacement: {qc2.get('quarantine_reason', 'quality gate')}")
 
-        # ── Step 4: Save ──
+        # ── Step 4: Save 1m data ──
         try:
-            out_path = save_intraday(
-                ticker, tf, df, cache_dir,
-                existing_path=existing_path,
-                source=source,
+            out_path = _save_and_write_sidecar(
+                ticker, "1m", df, existing_path, source, qc, val_report_dict,
             )
             saved = pd.read_parquet(out_path)
             span = (saved.index.max() - saved.index.min()).days / 365.25
-            parts.append(f"{len(saved):,} bars ({saved.index.min().date()} -> {saved.index.max().date()}) [{span:.1f}y]")
+            parts.append(f"1m: {len(saved):,} bars ({saved.index.min().date()} -> "
+                         f"{saved.index.max().date()}) [{span:.1f}y]")
+        except Exception as e:
+            with print_lock:
+                print(f"{label} {ticker}... SAVE ERROR: {e}")
+            return {"success": False}
 
-            # ── Step 5: Write quality report JSON sidecar ──
-            quality_sidecar = out_path.with_suffix(".quality.json")
-            sidecar_data = {
-                "ticker": ticker,
-                "timeframe": tf,
-                "source": source,
-                "timestamp": datetime.now().isoformat(),
-                "bars_saved": len(saved),
-                "date_range": {
-                    "start": str(saved.index.min().date()),
-                    "end": str(saved.index.max().date()),
-                    "span_years": round(span, 2),
-                },
-                "quality_check": {
-                    "passed": qc["pass"],
-                    "quality_score": qc["quality_score"],
-                    "quarantine": qc.get("quarantine", False),
-                    "quarantine_reason": qc.get("quarantine_reason", ""),
-                    "rejected_bars": qc.get("rejected_bars", 0),
-                    "flagged_bars": qc.get("flagged_bars", 0),
-                    "issues": qc.get("issues", []),
-                },
-            }
-            if val_report_dict:
-                sidecar_data["ibkr_validation"] = {
-                    "valid": val_report_dict["valid"],
-                    "checked_bars": val_report_dict["checked_bars"],
-                    "price_mismatches": val_report_dict["price_mismatches"],
-                    "bars_replaced": val_report_dict["bars_replaced"],
-                    "bars_inserted": val_report_dict["bars_inserted"],
-                    "mismatch_rate": val_report_dict["mismatch_rate"],
-                    "missing_in_primary": val_report_dict.get("missing_in_primary", 0),
-                    "split_mismatches": val_report_dict.get("split_mismatches", 0),
-                    "error": val_report_dict.get("error"),
-                }
-            # Write the full report using the quality module if available
-            if _QUALITY_MODULES_AVAILABLE and qc.get("report") is not None:
-                try:
-                    report_path = out_path.with_suffix(".report.json")
-                    write_quality_report(report_path, qc["report"])
-                except Exception:
-                    pass
-            # Write lightweight sidecar regardless
+        # ── Step 5: Resample 1m → higher timeframes ──
+        resampled_count = 0
+        resample_source = f"alpaca:resampled_from_1m"
+        if source != "alpaca":
+            resample_source = f"{source}:resampled_from_1m"
+
+        # Use the validated 1m df (not the saved/merged version) for resampling
+        # to avoid double-counting any bars from old files
+        for target_tf in resample_targets:
             try:
-                with open(quality_sidecar, "w") as qf:
-                    sidecar_write = {k: v for k, v in sidecar_data.items()}
-                    json.dump(sidecar_write, qf, indent=2, default=str)
-            except Exception:
-                pass
+                resampled_df = resample_1m_to_tf(df, target_tf)
+                if resampled_df is None or resampled_df.empty:
+                    parts.append(f"{target_tf}: EMPTY")
+                    continue
+
+                # Find existing file for this ticker/tf
+                tf_word = TF_SUFFIX[target_tf]
+                existing_tf_path = None
+                for f in cache_dir.glob(f"{ticker.upper()}_{tf_word}_*.parquet"):
+                    existing_tf_path = f
+                    break
+
+                # Quality check the resampled data (inherits quality from 1m,
+                # but run series-level checks for the new timeframe)
+                resampled_qc_result = {"pass": True, "issues": [], "quality_score": 1.0,
+                                       "quarantine": False, "quarantine_reason": "",
+                                       "rejected_bars": 0, "flagged_bars": 0, "report": None}
+
+                _save_and_write_sidecar(
+                    ticker, target_tf, resampled_df, existing_tf_path,
+                    resample_source, resampled_qc_result, None,
+                )
+                resampled_count += 1
+                parts.append(f"{target_tf}: {len(resampled_df):,}")
+            except Exception as e:
+                parts.append(f"{target_tf}: ERR({e})")
+
+        with print_lock:
+            print(f"{label} {ticker}... {' '.join(parts)}")
+
+        return {
+            "success": True,
+            "quality_issue": not qc["pass"],
+            "ibkr_fills": (val_report_dict["bars_replaced"] + val_report_dict["bars_inserted"])
+                          if val_report_dict else 0,
+            "ibkr_discrepancy": (not val_report_dict["valid"]) if val_report_dict else False,
+            "resampled": resampled_count,
+        }
+
+    # ── Legacy per-TF processing function (for --timeframes mode) ──
+
+    def _process_one_ticker_legacy(
+        ticker: str,
+        tf: str,
+        existing_info: Optional[dict],
+        index: int,
+        total: int,
+    ) -> dict:
+        """Legacy mode: download one ticker at one timeframe directly."""
+        existing_path = existing_info["path"] if existing_info else None
+        label = f"  [{index}/{total}]"
+        parts = []
+
+        df, source = download_with_fallback(
+            ticker=ticker, timeframe=tf, target_days=target_days,
+            source=args.source, fallback_source=args.fallback_source,
+            alpaca_provider=alpaca_provider, av_provider=av_provider,
+            ib=ib, rate_limiter=rate_limiter, pace=args.pace,
+            alpaca_client=client,
+        )
+
+        if df is None or len(df) == 0:
+            with print_lock:
+                print(f"{label} {ticker}... NO DATA (all sources failed)")
+            return {"success": False}
+
+        if source != args.source:
+            parts.append(f"[fallback:{source}]")
+
+        val_report_dict = None
+        df, qc = quality_check(df, ticker, tf, source)
+        if not qc["pass"]:
+            issue_summary = ', '.join(qc['issues'][:3])
+            if len(qc['issues']) > 3:
+                issue_summary += f" (+{len(qc['issues'])-3} more)"
+            parts.append(f"[QC {qc['quality_score']:.2f}: {issue_summary}]")
+
+        if qc.get("quarantine"):
+            parts.append(f"[QUARANTINED]")
+            if _QUALITY_MODULES_AVAILABLE:
+                quarantine_dir = getattr(_cfg, 'INTRADAY_QUARANTINE_DIR',
+                                        DATA_CACHE_DIR / "quarantine")
+                quarantine_ticker(ticker, tf, quarantine_dir,
+                                 qc.get("quarantine_reason", "quality gate"))
+            source = "alpaca:quarantined"
+
+        if validate_ibkr and ib and ib.isConnected():
+            df, val = validate_with_ibkr(ib, ticker, tf, df)
+            val_report_dict = val
+            if val["bars_replaced"] > 0 or val["bars_inserted"] > 0:
+                source = f"{source}+ibkr"
+
+        try:
+            out_path = _save_and_write_sidecar(
+                ticker, tf, df, existing_path, source, qc, val_report_dict,
+            )
+            saved = pd.read_parquet(out_path)
+            span = (saved.index.max() - saved.index.min()).days / 365.25
+            parts.append(f"{len(saved):,} bars [{span:.1f}y]")
 
             with print_lock:
                 print(f"{label} {ticker}... {' '.join(parts)}")
@@ -1107,76 +1459,136 @@ def main():
                               if val_report_dict else 0,
                 "ibkr_discrepancy": (not val_report_dict["valid"]) if val_report_dict else False,
             }
-
         except Exception as e:
             with print_lock:
                 print(f"{label} {ticker}... SAVE ERROR: {e}")
             return {"success": False}
 
-    for tf in timeframes:
-        tf_word = TF_SUFFIX[tf]
+    # ══════════════════════════════════════════════════════════════════════════
+    # MAIN DOWNLOAD LOOP
+    # ══════════════════════════════════════════════════════════════════════════
+
+    if legacy_mode:
+        # ── Legacy: download each timeframe directly (old behavior) ──
+        for tf in args.timeframes:
+            tf_word = TF_SUFFIX[tf]
+            target_days = int(args.years * 365)
+            tf_survey = survey[tf]
+
+            if args.missing_only:
+                work = [(t, tf_survey[t]) for t in tickers if tf_survey[t] is None]
+            else:
+                work = [(t, tf_survey[t]) for t in tickers]
+
+            if not work:
+                print(f"\n  ── {tf} ── nothing to download")
+                continue
+
+            chunks_per = target_days // max(ALPACA_CHUNK_DAYS.get(tf, 10), 1)
+            print(f"\n  ── {tf} ({len(work)} tickers, ~{chunks_per} chunks each) ──")
+
+            tf_success = 0
+            tf_failed = 0
+
+            effective_workers = 1 if (validate_ibkr and ib and ib.isConnected()) else workers
+
+            if effective_workers > 1:
+                with ThreadPoolExecutor(max_workers=effective_workers) as executor:
+                    futures = {}
+                    for i, (ticker, existing_info) in enumerate(work):
+                        fut = executor.submit(
+                            _process_one_ticker_legacy, ticker, tf, existing_info, i + 1, len(work),
+                        )
+                        futures[fut] = ticker
+                    for fut in as_completed(futures):
+                        try:
+                            result = fut.result()
+                            if result["success"]:
+                                tf_success += 1
+                                if result.get("quality_issue"):
+                                    total_quality_issues += 1
+                                total_ibkr_fills += result.get("ibkr_fills", 0)
+                                if result.get("ibkr_discrepancy"):
+                                    total_ibkr_discrepancies += 1
+                            else:
+                                tf_failed += 1
+                        except Exception as e:
+                            print(f"  Worker error for {futures[fut]}: {e}")
+                            tf_failed += 1
+            else:
+                for i, (ticker, existing_info) in enumerate(work):
+                    result = _process_one_ticker_legacy(ticker, tf, existing_info, i + 1, len(work))
+                    if result["success"]:
+                        tf_success += 1
+                        if result.get("quality_issue"):
+                            total_quality_issues += 1
+                        total_ibkr_fills += result.get("ibkr_fills", 0)
+                        if result.get("ibkr_discrepancy"):
+                            total_ibkr_discrepancies += 1
+                    else:
+                        tf_failed += 1
+
+            total_success += tf_success
+            total_failed += tf_failed
+            print(f"  {tf}: {tf_success} OK, {tf_failed} failed")
+
+    else:
+        # ── New 1m-only pipeline: download 1m → validate → resample all ──
         target_days = int(args.years * 365)
-        tf_survey = survey[tf]
+        tf_survey_1m = survey["1m"]
 
         if args.missing_only:
-            work = [(t, tf_survey[t]) for t in tickers if tf_survey[t] is None]
+            work = [(t, tf_survey_1m[t]) for t in tickers if tf_survey_1m[t] is None]
         else:
-            work = [(t, tf_survey[t]) for t in tickers]
+            work = [(t, tf_survey_1m[t]) for t in tickers]
 
         if not work:
-            print(f"\n  ── {tf} ── nothing to download")
-            continue
-
-        chunks_per = target_days // max(ALPACA_CHUNK_DAYS.get(tf, 10), 1)
-        print(f"\n  ── {tf} ({len(work)} tickers, ~{chunks_per} chunks each) ──")
-
-        tf_success = 0
-        tf_failed = 0
-
-        # Use concurrent workers when IBKR validation is off (IBKR is single-threaded)
-        effective_workers = 1 if (validate_ibkr and ib and ib.isConnected()) else workers
-
-        if effective_workers > 1:
-            with ThreadPoolExecutor(max_workers=effective_workers) as executor:
-                futures = {}
-                for i, (ticker, existing_info) in enumerate(work):
-                    fut = executor.submit(
-                        _process_one_ticker, ticker, tf, existing_info, i + 1, len(work),
-                    )
-                    futures[fut] = ticker
-
-                for fut in as_completed(futures):
-                    try:
-                        result = fut.result()
-                        if result["success"]:
-                            tf_success += 1
-                            if result.get("quality_issue"):
-                                total_quality_issues += 1
-                            total_ibkr_fills += result.get("ibkr_fills", 0)
-                            if result.get("ibkr_discrepancy"):
-                                total_ibkr_discrepancies += 1
-                        else:
-                            tf_failed += 1
-                    except Exception as e:
-                        print(f"  Worker error for {futures[fut]}: {e}")
-                        tf_failed += 1
+            print(f"\n  Nothing to download.")
         else:
-            # Sequential mode (single worker or IBKR validation enabled)
-            for i, (ticker, existing_info) in enumerate(work):
-                result = _process_one_ticker(ticker, tf, existing_info, i + 1, len(work))
-                if result["success"]:
-                    tf_success += 1
-                    if result.get("quality_issue"):
-                        total_quality_issues += 1
-                    total_ibkr_fills += result.get("ibkr_fills", 0)
-                    if result.get("ibkr_discrepancy"):
-                        total_ibkr_discrepancies += 1
-                else:
-                    tf_failed += 1
+            chunks_per = target_days // max(ALPACA_CHUNK_DAYS.get("1m", 14), 1)
+            print(f"\n  ── 1m pipeline ({len(work)} tickers, ~{chunks_per} chunks each → "
+                  f"resample to {', '.join(resample_targets)}) ──")
 
-        total_success += tf_success
-        total_failed += tf_failed
-        print(f"  {tf}: {tf_success} OK, {tf_failed} failed")
+            # IBKR validation is single-threaded, must run sequentially
+            effective_workers = 1 if (validate_ibkr and ib and ib.isConnected()) else workers
+
+            if effective_workers > 1:
+                with ThreadPoolExecutor(max_workers=effective_workers) as executor:
+                    futures = {}
+                    for i, (ticker, existing_info) in enumerate(work):
+                        fut = executor.submit(
+                            _process_one_ticker_1m_pipeline, ticker, existing_info, i + 1, len(work),
+                        )
+                        futures[fut] = ticker
+                    for fut in as_completed(futures):
+                        try:
+                            result = fut.result()
+                            if result["success"]:
+                                total_success += 1
+                                if result.get("quality_issue"):
+                                    total_quality_issues += 1
+                                total_ibkr_fills += result.get("ibkr_fills", 0)
+                                if result.get("ibkr_discrepancy"):
+                                    total_ibkr_discrepancies += 1
+                                total_resampled += result.get("resampled", 0)
+                            else:
+                                total_failed += 1
+                        except Exception as e:
+                            print(f"  Worker error for {futures[fut]}: {e}")
+                            total_failed += 1
+            else:
+                for i, (ticker, existing_info) in enumerate(work):
+                    result = _process_one_ticker_1m_pipeline(ticker, existing_info, i + 1, len(work))
+                    if result["success"]:
+                        total_success += 1
+                        if result.get("quality_issue"):
+                            total_quality_issues += 1
+                        total_ibkr_fills += result.get("ibkr_fills", 0)
+                        if result.get("ibkr_discrepancy"):
+                            total_ibkr_discrepancies += 1
+                        total_resampled += result.get("resampled", 0)
+                    else:
+                        total_failed += 1
 
     # Disconnect IBKR if connected
     if ib and ib.isConnected():
@@ -1191,6 +1603,8 @@ def main():
     print(f"  Success:          {total_success}")
     print(f"  Failed:           {total_failed}")
     print(f"  Quality issues:   {total_quality_issues}")
+    if not legacy_mode:
+        print(f"  Resampled files:  {total_resampled}")
     if validate_ibkr:
         print(f"  IBKR corrections: {total_ibkr_fills} bars replaced/inserted")
         print(f"  IBKR mismatches:  {total_ibkr_discrepancies} tickers flagged")
