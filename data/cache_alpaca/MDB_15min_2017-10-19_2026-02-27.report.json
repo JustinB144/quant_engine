@@ -1,0 +1,260 @@
+{
+  "ticker": "MDB",
+  "timeframe": "15m",
+  "source": "alpaca",
+  "timestamp": "2026-02-27T22:39:50.876775+00:00",
+  "total_bars_input": 53889,
+  "date_range": "2017-10-19 to 2026-02-27",
+  "checks": [
+    {
+      "check_name": "ohlc_consistency",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Rejected 0 bars with invalid OHLC relationships",
+      "details": {}
+    },
+    {
+      "check_name": "non_negative_volume",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Rejected 0 bars with negative volume",
+      "details": {}
+    },
+    {
+      "check_name": "non_negative_prices",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Rejected 0 bars with zero or negative prices",
+      "details": {}
+    },
+    {
+      "check_name": "timestamp_in_rth",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Rejected 0 bars outside RTH or non-trading days",
+      "details": {}
+    },
+    {
+      "check_name": "extreme_bar_return",
+      "passed": false,
+      "rejected_count": 0,
+      "flagged_count": 5,
+      "message": "Flagged 5 bars with return > 25.0% (timeframe: 15m)",
+      "details": {
+        "threshold": 0.25,
+        "timeframe": "15m"
+      }
+    },
+    {
+      "check_name": "stale_price",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Flagged 0 bars in 3+ consecutive stale bar sequences",
+      "details": {}
+    },
+    {
+      "check_name": "zero_volume_liquid",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "No zero-volume bars (median daily volume: 1042371)",
+      "details": {
+        "median_daily_volume": 1042371.0
+      }
+    },
+    {
+      "check_name": "missing_bar_ratio",
+      "passed": false,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Expected 56732 bars, got 53889 (5.0% missing, threshold: 5%)",
+      "details": {
+        "expected": 56732,
+        "actual": 53889,
+        "missing": 2843,
+        "missing_ratio": 0.05011281111189452,
+        "trading_days": 2182,
+        "timeframe": "15m"
+      }
+    },
+    {
+      "check_name": "duplicate_timestamps",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Found 0 duplicate timestamps",
+      "details": {
+        "duplicate_count": 0
+      }
+    },
+    {
+      "check_name": "monotonic_index",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Timestamps are strictly increasing",
+      "details": {}
+    },
+    {
+      "check_name": "overnight_gap",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Found 17 overnight gaps > 10% (expected for splits/news/weekends)",
+      "details": {
+        "gaps": [
+          {
+            "prev_date": "2019-01-09",
+            "prev_close": 86.64,
+            "date": "2019-01-10",
+            "first_open": 77.82,
+            "gap_pct": 0.10180055401662058
+          },
+          {
+            "prev_date": "2019-03-13",
+            "prev_close": 104.1,
+            "date": "2019-03-14",
+            "first_open": 126.94,
+            "gap_pct": 0.21940441882804995
+          },
+          {
+            "prev_date": "2019-12-09",
+            "prev_close": 131.01,
+            "date": "2019-12-10",
+            "first_open": 144.77,
+            "gap_pct": 0.10503015037020091
+          },
+          {
+            "prev_date": "2020-03-11",
+            "prev_close": 123.84,
+            "date": "2020-03-12",
+            "first_open": 109.44,
+            "gap_pct": 0.11627906976744196
+          },
+          {
+            "prev_date": "2020-03-17",
+            "prev_close": 114.32,
+            "date": "2020-03-18",
+            "first_open": 97.4,
+            "gap_pct": 0.14800559832050375
+          },
+          {
+            "prev_date": "2021-09-02",
+            "prev_close": 402.01,
+            "date": "2021-09-03",
+            "first_open": 462.77,
+            "gap_pct": 0.15114051889256475
+          },
+          {
+            "prev_date": "2021-12-06",
+            "prev_close": 428.27,
+            "date": "2021-12-07",
+            "first_open": 521.95,
+            "gap_pct": 0.2187405141616272
+          },
+          {
+            "prev_date": "2022-08-31",
+            "prev_close": 322.87,
+            "date": "2022-09-01",
+            "first_open": 266.94,
+            "gap_pct": 0.173227614829498
+          },
+          {
+            "prev_date": "2022-12-06",
+            "prev_close": 144.96,
+            "date": "2022-12-07",
+            "first_open": 184.6,
+            "gap_pct": 0.27345474613686527
+          },
+          {
+            "prev_date": "2023-03-08",
+            "prev_close": 228.91,
+            "date": "2023-03-09",
+            "first_open": 203.85,
+            "gap_pct": 0.10947533965313883
+          },
+          {
+            "prev_date": "2023-06-01",
+            "prev_close": 294.35,
+            "date": "2023-06-02",
+            "first_open": 380.75,
+            "gap_pct": 0.2935281127908951
+          },
+          {
+            "prev_date": "2024-05-30",
+            "prev_close": 309.9,
+            "date": "2024-05-31",
+            "first_open": 237.07,
+            "gap_pct": 0.23501129396579534
+          },
+          {
+            "prev_date": "2024-08-29",
+            "prev_close": 245.86,
+            "date": "2024-08-30",
+            "first_open": 290.1,
+            "gap_pct": 0.17993980313999836
+          },
+          {
+            "prev_date": "2025-03-05",
+            "prev_close": 264.71,
+            "date": "2025-03-06",
+            "first_open": 206.595,
+            "gap_pct": 0.21954214045559284
+          },
+          {
+            "prev_date": "2025-06-04",
+            "prev_close": 199.84,
+            "date": "2025-06-05",
+            "first_open": 234.75,
+            "gap_pct": 0.1746897518014412
+          },
+          {
+            "prev_date": "2025-08-26",
+            "prev_close": 214.37,
+            "date": "2025-08-27",
+            "first_open": 282.05,
+            "gap_pct": 0.31571581844474506
+          },
+          {
+            "prev_date": "2025-12-01",
+            "prev_close": 328.85,
+            "date": "2025-12-02",
+            "first_open": 406.82,
+            "gap_pct": 0.2370989812984643
+          }
+        ]
+      }
+    },
+    {
+      "check_name": "volume_distribution",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Median daily volume 1042371 shares (OK)",
+      "details": {
+        "median_daily_volume": 1042371.0
+      }
+    },
+    {
+      "check_name": "split_detection",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Detected 0 potential unadjusted splits (review for data adjustment)",
+      "details": {
+        "potential_splits": []
+      }
+    }
+  ],
+  "total_rejected": 0,
+  "total_flagged": 5,
+  "total_bars_output": 53889,
+  "quality_score": 0.9999628866744604,
+  "quarantine": false,
+  "quarantine_reason": ""
+}

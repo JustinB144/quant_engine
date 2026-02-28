@@ -1,0 +1,23 @@
+{
+  "ticker": "PANW",
+  "timeframe": "15m",
+  "source": "alpaca",
+  "timestamp": "2026-02-27T14:43:42.540772",
+  "bars_saved": 65612,
+  "date_range": {
+    "start": "2016-01-04",
+    "end": "2026-02-27",
+    "span_years": 10.15
+  },
+  "quality_check": {
+    "passed": true,
+    "quality_score": 0.9999939035542279,
+    "quarantine": false,
+    "quarantine_reason": "",
+    "rejected_bars": 0,
+    "flagged_bars": 1,
+    "issues": [
+      "extreme_bar_return: Flagged 1 bars with return > 25.0% (timeframe: 15m)"
+    ]
+  }
+}

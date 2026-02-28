@@ -1,0 +1,24 @@
+{
+  "ticker": "PFE",
+  "timeframe": "5m",
+  "source": "alpaca",
+  "timestamp": "2026-02-27T14:10:59.326610",
+  "bars_saved": 194265,
+  "date_range": {
+    "start": "2016-01-04",
+    "end": "2026-02-27",
+    "span_years": 10.15
+  },
+  "quality_check": {
+    "passed": true,
+    "quality_score": 0.9999217563637299,
+    "quarantine": false,
+    "quarantine_reason": "",
+    "rejected_bars": 0,
+    "flagged_bars": 38,
+    "issues": [
+      "stale_price: Flagged 38 bars in 3+ consecutive stale bar sequences",
+      "missing_bar_ratio: Expected 206700 bars, got 194265 (6.0% missing, threshold: 5%)"
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "ticker": "GOOGL",
+  "timeframe": "5m",
+  "source": "alpaca",
+  "timestamp": "2026-02-27T13:50:48.112661",
+  "bars_saved": 194355,
+  "date_range": {
+    "start": "2016-01-04",
+    "end": "2026-02-27",
+    "span_years": 10.15
+  },
+  "quality_check": {
+    "passed": true,
+    "quality_score": 0.9999732448354814,
+    "quarantine": false,
+    "quarantine_reason": "",
+    "rejected_bars": 0,
+    "flagged_bars": 13,
+    "issues": [
+      "stale_price: Flagged 13 bars in 3+ consecutive stale bar sequences",
+      "missing_bar_ratio: Expected 206700 bars, got 194355 (6.0% missing, threshold: 5%)"
+    ]
+  }
+}

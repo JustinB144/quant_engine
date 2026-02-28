@@ -388,7 +388,7 @@ class CrossSourceValidator:
                             useRTH=True,
                             formatDate=1,
                             keepUpToDate=False,
-                            timeout=30,
+                            timeout=120,
                         )
                         # bars is a BarDataList — truthy even when empty
                         if bars is not None and len(bars) > 0:
@@ -422,8 +422,10 @@ class CrossSourceValidator:
                     time.sleep(self.ibkr_pace)
 
                 except Exception as e:
-                    logger.error(f"IBKR download failed for {ticker}: {e}")
-                    return None
+                    logger.error(f"IBKR download failed for {ticker} "
+                                 f"{start_date}-{end_date}: {e}")
+                    # Continue to next range instead of aborting entirely
+                    continue
 
             if not all_bars:
                 logger.warning(f"No IBKR data fetched for {ticker}")
@@ -445,6 +447,11 @@ class CrossSourceValidator:
             requested_dates = set(d.date() if hasattr(d, 'date') else d for d in dates)
             ibkr_dates = ibkr_df.index.date  # numpy array of date objects
             ibkr_df = ibkr_df[np.isin(ibkr_dates, list(requested_dates))]
+
+            # Strip timezone so IBKR (tz-aware) can be compared with
+            # Alpaca/AV data (tz-naive Eastern Time)
+            if ibkr_df.index.tz is not None:
+                ibkr_df.index = ibkr_df.index.tz_localize(None)
 
             logger.info(f"IBKR fetch complete: {len(ibkr_df)} bars")
             return ibkr_df

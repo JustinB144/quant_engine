@@ -1,0 +1,24 @@
+{
+  "ticker": "V",
+  "timeframe": "1m",
+  "source": "alpaca",
+  "timestamp": "2026-02-27T13:21:26.385863",
+  "bars_saved": 924294,
+  "date_range": {
+    "start": "2016-01-04",
+    "end": "2026-02-27",
+    "span_years": 10.15
+  },
+  "quality_check": {
+    "passed": true,
+    "quality_score": 0.9999510978108697,
+    "quarantine": false,
+    "quarantine_reason": "",
+    "rejected_bars": 0,
+    "flagged_bars": 113,
+    "issues": [
+      "stale_price: Flagged 113 bars in 3+ consecutive stale bar sequences",
+      "missing_bar_ratio: Expected 1033500 bars, got 924294 (10.6% missing, threshold: 5%)"
+    ]
+  }
+}

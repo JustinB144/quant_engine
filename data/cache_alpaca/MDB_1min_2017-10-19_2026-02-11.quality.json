@@ -1,0 +1,36 @@
+{
+  "ticker": "MDB",
+  "timeframe": "1m",
+  "source": "alpaca",
+  "timestamp": "2026-02-26T23:12:48.568629",
+  "bars_saved": 683947,
+  "date_range": {
+    "start": "2017-10-19",
+    "end": "2026-02-11",
+    "span_years": 8.31
+  },
+  "quality_check": {
+    "passed": true,
+    "quality_score": 0.9998479414340585,
+    "quarantine": false,
+    "quarantine_reason": "",
+    "rejected_bars": 0,
+    "flagged_bars": 260,
+    "issues": [
+      "extreme_bar_return: Flagged 14 bars with return > 15.0% (timeframe: 1m)",
+      "stale_price: Flagged 246 bars in 3+ consecutive stale bar sequences",
+      "missing_bar_ratio: Expected 846300 bars, got 683947 (19.2% missing, threshold: 5%)"
+    ]
+  },
+  "ibkr_validation": {
+    "valid": true,
+    "checked_bars": 0,
+    "price_mismatches": 0,
+    "bars_replaced": 0,
+    "bars_inserted": 0,
+    "mismatch_rate": 0.0,
+    "missing_in_primary": 0,
+    "split_mismatches": 0,
+    "error": null
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "ticker": "ABT",
+  "timeframe": "5m",
+  "source": "alpaca",
+  "timestamp": "2026-02-27T13:27:26.190616",
+  "bars_saved": 194051,
+  "date_range": {
+    "start": "2016-01-04",
+    "end": "2026-02-27",
+    "span_years": 10.15
+  },
+  "quality_check": {
+    "passed": true,
+    "quality_score": 0.9999649576657683,
+    "quarantine": false,
+    "quarantine_reason": "",
+    "rejected_bars": 0,
+    "flagged_bars": 17,
+    "issues": [
+      "stale_price: Flagged 17 bars in 3+ consecutive stale bar sequences",
+      "missing_bar_ratio: Expected 206700 bars, got 194051 (6.1% missing, threshold: 5%)"
+    ]
+  }
+}

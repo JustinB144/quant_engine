@@ -1,0 +1,36 @@
+{
+  "ticker": "AMD",
+  "timeframe": "1m",
+  "source": "alpaca",
+  "timestamp": "2026-02-26T20:44:39.446922",
+  "bars_saved": 923470,
+  "date_range": {
+    "start": "2016-01-04",
+    "end": "2026-02-11",
+    "span_years": 10.11
+  },
+  "quality_check": {
+    "passed": true,
+    "quality_score": 0.9999631823448515,
+    "quarantine": false,
+    "quarantine_reason": "",
+    "rejected_bars": 0,
+    "flagged_bars": 85,
+    "issues": [
+      "extreme_bar_return: Flagged 5 bars with return > 15.0% (timeframe: 1m)",
+      "stale_price: Flagged 80 bars in 3+ consecutive stale bar sequences",
+      "missing_bar_ratio: Expected 1028820 bars, got 923470 (10.2% missing, threshold: 5%)"
+    ]
+  },
+  "ibkr_validation": {
+    "valid": true,
+    "checked_bars": 0,
+    "price_mismatches": 0,
+    "bars_replaced": 0,
+    "bars_inserted": 0,
+    "mismatch_rate": 0.0,
+    "missing_in_primary": 0,
+    "split_mismatches": 0,
+    "error": null
+  }
+}

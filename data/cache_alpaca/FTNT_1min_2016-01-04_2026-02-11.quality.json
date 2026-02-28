@@ -1,0 +1,36 @@
+{
+  "ticker": "FTNT",
+  "timeframe": "1m",
+  "source": "alpaca",
+  "timestamp": "2026-02-26T22:10:36.702904",
+  "bars_saved": 902836,
+  "date_range": {
+    "start": "2016-01-04",
+    "end": "2026-02-11",
+    "span_years": 10.11
+  },
+  "quality_check": {
+    "passed": true,
+    "quality_score": 0.9951893810171504,
+    "quarantine": false,
+    "quarantine_reason": "",
+    "rejected_bars": 0,
+    "flagged_bars": 10858,
+    "issues": [
+      "extreme_bar_return: Flagged 5 bars with return > 15.0% (timeframe: 1m)",
+      "stale_price: Flagged 10853 bars in 3+ consecutive stale bar sequences",
+      "missing_bar_ratio: Expected 1028820 bars, got 902836 (12.2% missing, threshold: 5%)"
+    ]
+  },
+  "ibkr_validation": {
+    "valid": true,
+    "checked_bars": 0,
+    "price_mismatches": 0,
+    "bars_replaced": 0,
+    "bars_inserted": 0,
+    "mismatch_rate": 0.0,
+    "missing_in_primary": 0,
+    "split_mismatches": 0,
+    "error": null
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "ticker": "CAVA",
+  "timeframe": "1m",
+  "source": "alpaca",
+  "timestamp": "2026-02-26T21:10:24.104585",
+  "bars_saved": 237703,
+  "date_range": {
+    "start": "2023-06-15",
+    "end": "2026-02-11",
+    "span_years": 2.66
+  },
+  "quality_check": {
+    "passed": true,
+    "quality_score": 0.9999713928726184,
+    "quarantine": false,
+    "quarantine_reason": "",
+    "rejected_bars": 0,
+    "flagged_bars": 17,
+    "issues": [
+      "extreme_bar_return: Flagged 2 bars with return > 15.0% (timeframe: 1m)",
+      "stale_price: Flagged 15 bars in 3+ consecutive stale bar sequences",
+      "missing_bar_ratio: Expected 271050 bars, got 237703 (12.3% missing, threshold: 5%)"
+    ]
+  },
+  "ibkr_validation": {
+    "valid": true,
+    "checked_bars": 0,
+    "price_mismatches": 0,
+    "bars_replaced": 0,
+    "bars_inserted": 0,
+    "mismatch_rate": 0.0,
+    "missing_in_primary": 0,
+    "split_mismatches": 0,
+    "error": null
+  }
+}

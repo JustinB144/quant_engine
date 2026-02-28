@@ -1,0 +1,218 @@
+{
+  "ticker": "BROS",
+  "timeframe": "15m",
+  "source": "alpaca",
+  "timestamp": "2026-02-27T22:28:06.861123+00:00",
+  "total_bars_input": 28664,
+  "date_range": "2021-09-15 to 2026-02-27",
+  "checks": [
+    {
+      "check_name": "ohlc_consistency",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Rejected 0 bars with invalid OHLC relationships",
+      "details": {}
+    },
+    {
+      "check_name": "non_negative_volume",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Rejected 0 bars with negative volume",
+      "details": {}
+    },
+    {
+      "check_name": "non_negative_prices",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Rejected 0 bars with zero or negative prices",
+      "details": {}
+    },
+    {
+      "check_name": "timestamp_in_rth",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Rejected 0 bars outside RTH or non-trading days",
+      "details": {}
+    },
+    {
+      "check_name": "extreme_bar_return",
+      "passed": false,
+      "rejected_count": 0,
+      "flagged_count": 4,
+      "message": "Flagged 4 bars with return > 25.0% (timeframe: 15m)",
+      "details": {
+        "threshold": 0.25,
+        "timeframe": "15m"
+      }
+    },
+    {
+      "check_name": "stale_price",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Flagged 0 bars in 3+ consecutive stale bar sequences",
+      "details": {}
+    },
+    {
+      "check_name": "zero_volume_liquid",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "No zero-volume bars (median daily volume: 1616676)",
+      "details": {
+        "median_daily_volume": 1616676.0
+      }
+    },
+    {
+      "check_name": "missing_bar_ratio",
+      "passed": false,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Expected 30238 bars, got 28664 (5.2% missing, threshold: 5%)",
+      "details": {
+        "expected": 30238,
+        "actual": 28664,
+        "missing": 1574,
+        "missing_ratio": 0.05205370725577088,
+        "trading_days": 1163,
+        "timeframe": "15m"
+      }
+    },
+    {
+      "check_name": "duplicate_timestamps",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Found 0 duplicate timestamps",
+      "details": {
+        "duplicate_count": 0
+      }
+    },
+    {
+      "check_name": "monotonic_index",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Timestamps are strictly increasing",
+      "details": {}
+    },
+    {
+      "check_name": "overnight_gap",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Found 11 overnight gaps > 10% (expected for splits/news/weekends)",
+      "details": {
+        "gaps": [
+          {
+            "prev_date": "2021-09-15",
+            "prev_close": 36.7635,
+            "date": "2021-09-16",
+            "first_open": 42.405,
+            "gap_pct": 0.1534538332857318
+          },
+          {
+            "prev_date": "2021-11-10",
+            "prev_close": 62.24,
+            "date": "2021-11-11",
+            "first_open": 68.65,
+            "gap_pct": 0.10298843187660678
+          },
+          {
+            "prev_date": "2022-01-24",
+            "prev_close": 39.635,
+            "date": "2022-01-25",
+            "first_open": 45.63,
+            "gap_pct": 0.15125520373407353
+          },
+          {
+            "prev_date": "2022-05-11",
+            "prev_close": 34.43,
+            "date": "2022-05-12",
+            "first_open": 22.74,
+            "gap_pct": 0.33952948010455997
+          },
+          {
+            "prev_date": "2022-08-10",
+            "prev_close": 44.17,
+            "date": "2022-08-11",
+            "first_open": 50.5,
+            "gap_pct": 0.14330993887253785
+          },
+          {
+            "prev_date": "2022-11-09",
+            "prev_close": 29.175,
+            "date": "2022-11-10",
+            "first_open": 32.25,
+            "gap_pct": 0.1053984575835476
+          },
+          {
+            "prev_date": "2024-08-07",
+            "prev_close": 37.72,
+            "date": "2024-08-08",
+            "first_open": 29.09,
+            "gap_pct": 0.2287910922587486
+          },
+          {
+            "prev_date": "2024-11-06",
+            "prev_close": 34.92,
+            "date": "2024-11-07",
+            "first_open": 43.648,
+            "gap_pct": 0.24994272623138603
+          },
+          {
+            "prev_date": "2025-02-12",
+            "prev_close": 64.66,
+            "date": "2025-02-13",
+            "first_open": 84.56,
+            "gap_pct": 0.30776368697803913
+          },
+          {
+            "prev_date": "2025-08-06",
+            "prev_close": 57.79,
+            "date": "2025-08-07",
+            "first_open": 69.56,
+            "gap_pct": 0.20366845474995676
+          },
+          {
+            "prev_date": "2026-02-12",
+            "prev_close": 50.84,
+            "date": "2026-02-13",
+            "first_open": 59.11,
+            "gap_pct": 0.16266719118804085
+          }
+        ]
+      }
+    },
+    {
+      "check_name": "volume_distribution",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Median daily volume 1616676 shares (OK)",
+      "details": {
+        "median_daily_volume": 1616676.0
+      }
+    },
+    {
+      "check_name": "split_detection",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Detected 0 potential unadjusted splits (review for data adjustment)",
+      "details": {
+        "potential_splits": []
+      }
+    }
+  ],
+  "total_rejected": 0,
+  "total_flagged": 4,
+  "total_bars_output": 28664,
+  "quality_score": 0.9999441808540329,
+  "quarantine": false,
+  "quarantine_reason": ""
+}

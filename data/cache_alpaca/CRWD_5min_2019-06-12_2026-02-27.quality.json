@@ -1,0 +1,24 @@
+{
+  "ticker": "CRWD",
+  "timeframe": "5m",
+  "source": "alpaca",
+  "timestamp": "2026-02-27T13:39:13.772533",
+  "bars_saved": 128469,
+  "date_range": {
+    "start": "2019-06-12",
+    "end": "2026-02-27",
+    "span_years": 6.71
+  },
+  "quality_check": {
+    "passed": true,
+    "quality_score": 0.9999906592251827,
+    "quarantine": false,
+    "quarantine_reason": "",
+    "rejected_bars": 0,
+    "flagged_bars": 3,
+    "issues": [
+      "extreme_bar_return: Flagged 3 bars with return > 20.0% (timeframe: 5m)",
+      "missing_bar_ratio: Expected 136734 bars, got 128469 (6.0% missing, threshold: 5%)"
+    ]
+  }
+}

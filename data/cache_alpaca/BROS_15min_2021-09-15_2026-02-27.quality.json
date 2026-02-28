@@ -1,0 +1,24 @@
+{
+  "ticker": "BROS",
+  "timeframe": "15m",
+  "source": "alpaca",
+  "timestamp": "2026-02-27T14:28:06.980400",
+  "bars_saved": 28664,
+  "date_range": {
+    "start": "2021-09-15",
+    "end": "2026-02-27",
+    "span_years": 4.45
+  },
+  "quality_check": {
+    "passed": true,
+    "quality_score": 0.9999441808540329,
+    "quarantine": false,
+    "quarantine_reason": "",
+    "rejected_bars": 0,
+    "flagged_bars": 4,
+    "issues": [
+      "extreme_bar_return: Flagged 4 bars with return > 25.0% (timeframe: 15m)",
+      "missing_bar_ratio: Expected 30238 bars, got 28664 (5.2% missing, threshold: 5%)"
+    ]
+  }
+}

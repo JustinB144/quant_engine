@@ -1,0 +1,21 @@
+{
+  "ticker": "MSFT",
+  "timeframe": "1h",
+  "source": "alpaca:resampled_from_1m",
+  "timestamp": "2026-02-27T16:47:39.686305",
+  "bars_saved": 18261,
+  "date_range": {
+    "start": "2015-10-12",
+    "end": "2026-02-27",
+    "span_years": 10.38
+  },
+  "quality_check": {
+    "passed": true,
+    "quality_score": 1.0,
+    "quarantine": false,
+    "quarantine_reason": "",
+    "rejected_bars": 0,
+    "flagged_bars": 0,
+    "issues": []
+  }
+}

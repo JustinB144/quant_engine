@@ -1,0 +1,25 @@
+{
+  "ticker": "HUM",
+  "timeframe": "5m",
+  "source": "alpaca",
+  "timestamp": "2026-02-27T13:54:33.979446",
+  "bars_saved": 193832,
+  "date_range": {
+    "start": "2016-01-04",
+    "end": "2026-02-27",
+    "span_years": 10.15
+  },
+  "quality_check": {
+    "passed": true,
+    "quality_score": 0.9999917454290314,
+    "quarantine": false,
+    "quarantine_reason": "",
+    "rejected_bars": 0,
+    "flagged_bars": 4,
+    "issues": [
+      "extreme_bar_return: Flagged 1 bars with return > 20.0% (timeframe: 5m)",
+      "stale_price: Flagged 3 bars in 3+ consecutive stale bar sequences",
+      "missing_bar_ratio: Expected 206700 bars, got 193832 (6.2% missing, threshold: 5%)"
+    ]
+  }
+}

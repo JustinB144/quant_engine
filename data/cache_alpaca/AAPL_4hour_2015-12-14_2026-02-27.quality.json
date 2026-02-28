@@ -1,0 +1,21 @@
+{
+  "ticker": "AAPL",
+  "timeframe": "4h",
+  "source": "alpaca+ibkr:resampled_from_1m",
+  "timestamp": "2026-02-27T17:02:20.812865",
+  "bars_saved": 6041,
+  "date_range": {
+    "start": "2015-12-14",
+    "end": "2026-02-27",
+    "span_years": 10.21
+  },
+  "quality_check": {
+    "passed": true,
+    "quality_score": 1.0,
+    "quarantine": false,
+    "quarantine_reason": "",
+    "rejected_bars": 0,
+    "flagged_bars": 0,
+    "issues": []
+  }
+}

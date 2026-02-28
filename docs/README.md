@@ -54,13 +54,19 @@ The docs are split into:
 - `glossary/QUANT_ENGINE_GLOSSARY.md`: Terms used across the equity, API, and Kalshi subsystems
 - `maintenance/DOCS_MAINTENANCE.md`: What is generated vs narrative and how to keep docs current
 
+## LLM Audit Pipeline
+
+The structured subsystem audit workflow lives in `audit/`:
+- `audit/data/` — authoritative job output artifacts (MODULE_INVENTORY.yaml, DEPENDENCY_EDGES.json, HOTSPOT_LIST.md, INTERFACE_CONTRACTS.yaml, SUBSYSTEM_MAP.json, SUBSYSTEM_AUDIT_MANIFEST.md, VERIFICATION_REPORT.md, DEPENDENCY_MATRIX.md)
+- `audit/subsystem_specs/` — 11 subsystem audit specs (SPEC_AUDIT_01 through SPEC_AUDIT_11) to be executed in order
+- `audit/INPUT_CONTEXT.md` — accumulated ground truth from all 7 pipeline jobs
+
 ## Historical / Planning Docs (Not Runtime Truth)
 
 These directories/files may intentionally reference removed stacks (for example Dash) or superseded migration states:
-- `docs/reports/` (audits, migration reports, historical investigations)
-- `docs/specs/` (implementation specs / design history)
-- `docs/plans/` (roadmaps/plans)
-- root-level `*AUDIT*`, `*REPORT*`, `*IMPROVEMENT*` markdown files
+- `reports/` (audits, migration reports, historical investigations)
+- `completed/` (finished work: job specs, feature specs, indexes)
+- `plans/` (roadmaps/plans)
 
 Use source-derived references and current architecture docs first when behavior conflicts with a historical report.
 

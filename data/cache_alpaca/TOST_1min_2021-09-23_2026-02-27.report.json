@@ -1,0 +1,218 @@
+{
+  "ticker": "TOST",
+  "timeframe": "1m",
+  "source": "alpaca",
+  "timestamp": "2026-02-27T21:15:37.084823+00:00",
+  "total_bars_input": 400413,
+  "date_range": "2021-09-23 to 2026-02-27",
+  "checks": [
+    {
+      "check_name": "ohlc_consistency",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Rejected 0 bars with invalid OHLC relationships",
+      "details": {}
+    },
+    {
+      "check_name": "non_negative_volume",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Rejected 0 bars with negative volume",
+      "details": {}
+    },
+    {
+      "check_name": "non_negative_prices",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Rejected 0 bars with zero or negative prices",
+      "details": {}
+    },
+    {
+      "check_name": "timestamp_in_rth",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Rejected 0 bars outside RTH or non-trading days",
+      "details": {}
+    },
+    {
+      "check_name": "extreme_bar_return",
+      "passed": false,
+      "rejected_count": 0,
+      "flagged_count": 6,
+      "message": "Flagged 6 bars with return > 15.0% (timeframe: 1m)",
+      "details": {
+        "threshold": 0.15,
+        "timeframe": "1m"
+      }
+    },
+    {
+      "check_name": "stale_price",
+      "passed": false,
+      "rejected_count": 0,
+      "flagged_count": 30,
+      "message": "Flagged 30 bars in 3+ consecutive stale bar sequences",
+      "details": {}
+    },
+    {
+      "check_name": "zero_volume_liquid",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "No zero-volume bars (median daily volume: 5027661)",
+      "details": {
+        "median_daily_volume": 5027661.0
+      }
+    },
+    {
+      "check_name": "missing_bar_ratio",
+      "passed": false,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Expected 451230 bars, got 400413 (11.3% missing, threshold: 5%)",
+      "details": {
+        "expected": 451230,
+        "actual": 400413,
+        "missing": 50817,
+        "missing_ratio": 0.11261884183232498,
+        "trading_days": 1157,
+        "timeframe": "1m"
+      }
+    },
+    {
+      "check_name": "duplicate_timestamps",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Found 0 duplicate timestamps",
+      "details": {
+        "duplicate_count": 0
+      }
+    },
+    {
+      "check_name": "monotonic_index",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Timestamps are strictly increasing",
+      "details": {}
+    },
+    {
+      "check_name": "overnight_gap",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Found 11 overnight gaps > 10% (expected for splits/news/weekends)",
+      "details": {
+        "gaps": [
+          {
+            "prev_date": "2021-11-09",
+            "prev_close": 60.88,
+            "date": "2021-11-10",
+            "first_open": 54.15,
+            "gap_pct": 0.11054533508541398
+          },
+          {
+            "prev_date": "2022-01-04",
+            "prev_close": 31.065,
+            "date": "2022-01-05",
+            "first_open": 27.92,
+            "gap_pct": 0.10123933687429576
+          },
+          {
+            "prev_date": "2022-02-15",
+            "prev_close": 28.12,
+            "date": "2022-02-16",
+            "first_open": 22.95,
+            "gap_pct": 0.18385490753911815
+          },
+          {
+            "prev_date": "2022-05-12",
+            "prev_close": 14.26,
+            "date": "2022-05-13",
+            "first_open": 16.29,
+            "gap_pct": 0.14235624123422164
+          },
+          {
+            "prev_date": "2022-08-11",
+            "prev_close": 18.13,
+            "date": "2022-08-12",
+            "first_open": 21.71,
+            "gap_pct": 0.1974627688913404
+          },
+          {
+            "prev_date": "2023-02-15",
+            "prev_close": 25.95,
+            "date": "2023-02-16",
+            "first_open": 21.04,
+            "gap_pct": 0.18921001926782277
+          },
+          {
+            "prev_date": "2023-07-18",
+            "prev_close": 26.755,
+            "date": "2023-07-19",
+            "first_open": 24.0,
+            "gap_pct": 0.10297140721360487
+          },
+          {
+            "prev_date": "2023-08-08",
+            "prev_close": 20.2197,
+            "date": "2023-08-09",
+            "first_open": 23.045,
+            "gap_pct": 0.13973006523341103
+          },
+          {
+            "prev_date": "2023-11-07",
+            "prev_close": 17.25,
+            "date": "2023-11-08",
+            "first_open": 14.3,
+            "gap_pct": 0.17101449275362313
+          },
+          {
+            "prev_date": "2024-02-15",
+            "prev_close": 19.23,
+            "date": "2024-02-16",
+            "first_open": 21.35,
+            "gap_pct": 0.11024440977639105
+          },
+          {
+            "prev_date": "2024-11-07",
+            "prev_close": 32.65,
+            "date": "2024-11-08",
+            "first_open": 38.39,
+            "gap_pct": 0.17580398162327726
+          }
+        ]
+      }
+    },
+    {
+      "check_name": "volume_distribution",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Median daily volume 5027661 shares (OK)",
+      "details": {
+        "median_daily_volume": 5027661.0
+      }
+    },
+    {
+      "check_name": "split_detection",
+      "passed": true,
+      "rejected_count": 0,
+      "flagged_count": 0,
+      "message": "Detected 0 potential unadjusted splits (review for data adjustment)",
+      "details": {
+        "potential_splits": []
+      }
+    }
+  ],
+  "total_rejected": 0,
+  "total_flagged": 36,
+  "total_bars_output": 400413,
+  "quality_score": 0.9999640371316616,
+  "quarantine": false,
+  "quarantine_reason": ""
+}

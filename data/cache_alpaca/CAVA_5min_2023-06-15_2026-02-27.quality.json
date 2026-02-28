@@ -1,0 +1,23 @@
+{
+  "ticker": "CAVA",
+  "timeframe": "5m",
+  "source": "alpaca",
+  "timestamp": "2026-02-27T13:35:05.765877",
+  "bars_saved": 51584,
+  "date_range": {
+    "start": "2023-06-15",
+    "end": "2026-02-27",
+    "span_years": 2.7
+  },
+  "quality_check": {
+    "passed": true,
+    "quality_score": 1.0,
+    "quarantine": false,
+    "quarantine_reason": "",
+    "rejected_bars": 0,
+    "flagged_bars": 0,
+    "issues": [
+      "missing_bar_ratio: Expected 55146 bars, got 51584 (6.5% missing, threshold: 5%)"
+    ]
+  }
+}

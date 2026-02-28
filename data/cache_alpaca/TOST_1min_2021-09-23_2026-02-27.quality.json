@@ -1,0 +1,25 @@
+{
+  "ticker": "TOST",
+  "timeframe": "1m",
+  "source": "alpaca",
+  "timestamp": "2026-02-27T13:15:37.628369",
+  "bars_saved": 400413,
+  "date_range": {
+    "start": "2021-09-23",
+    "end": "2026-02-27",
+    "span_years": 4.43
+  },
+  "quality_check": {
+    "passed": true,
+    "quality_score": 0.9999640371316616,
+    "quarantine": false,
+    "quarantine_reason": "",
+    "rejected_bars": 0,
+    "flagged_bars": 36,
+    "issues": [
+      "extreme_bar_return: Flagged 6 bars with return > 15.0% (timeframe: 1m)",
+      "stale_price: Flagged 30 bars in 3+ consecutive stale bar sequences",
+      "missing_bar_ratio: Expected 451230 bars, got 400413 (11.3% missing, threshold: 5%)"
+    ]
+  }
+}

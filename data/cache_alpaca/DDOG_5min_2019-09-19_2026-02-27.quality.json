@@ -1,0 +1,25 @@
+{
+  "ticker": "DDOG",
+  "timeframe": "5m",
+  "source": "alpaca",
+  "timestamp": "2026-02-27T13:41:34.436051",
+  "bars_saved": 123230,
+  "date_range": {
+    "start": "2019-09-19",
+    "end": "2026-02-27",
+    "span_years": 6.44
+  },
+  "quality_check": {
+    "passed": true,
+    "quality_score": 0.9999837701858314,
+    "quarantine": false,
+    "quarantine_reason": "",
+    "rejected_bars": 0,
+    "flagged_bars": 5,
+    "issues": [
+      "extreme_bar_return: Flagged 2 bars with return > 20.0% (timeframe: 5m)",
+      "stale_price: Flagged 3 bars in 3+ consecutive stale bar sequences",
+      "missing_bar_ratio: Expected 131196 bars, got 123230 (6.1% missing, threshold: 5%)"
+    ]
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "ticker": "UNP",
+  "timeframe": "15m",
+  "source": "alpaca",
+  "timestamp": "2026-02-27T14:49:47.399790",
+  "bars_saved": 65511,
+  "date_range": {
+    "start": "2016-01-04",
+    "end": "2026-02-27",
+    "span_years": 10.15
+  },
+  "quality_check": {
+    "passed": true,
+    "quality_score": 0.9999816824655401,
+    "quarantine": false,
+    "quarantine_reason": "",
+    "rejected_bars": 0,
+    "flagged_bars": 3,
+    "issues": [
+      "stale_price: Flagged 3 bars in 3+ consecutive stale bar sequences"
+    ]
+  }
+}
