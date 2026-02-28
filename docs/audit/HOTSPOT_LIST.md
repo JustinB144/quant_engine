@@ -81,7 +81,7 @@ Source data: MODULE_INVENTORY.yaml (Job 1) + DEPENDENCY_EDGES.json (Job 2) + git
 
 | Rank | File | Score | Fan-in (3x) | Contract (2x) | LOC (1x) | CX (1x) | Lazy (2x) | Artifact (2x) | Adj | Key Risk |
 |------|------|-------|-------------|---------------|----------|----------|-----------|---------------|-----|----------|
-| 1 | config.py | 18 | 3 (160 edges) | 1 | 3 (1,020) | 0 (46) | 0 | 1 | — | God object: 161 edges from ALL 14 modules |
+| 1 | config.py | 16 | 3 (160 edges) | 1 | 3 (1,020) | 0 (46) | 0 | 1 | — | God object: 161 edges from ALL 14 modules |
 | 2 | autopilot/engine.py | 17 | 1 (2 edges) | 1 | 3 (1,927) | 1 (230) | 1 | 1 | +4 circ | Highest fan-out; 2 circular api edges |
 | 2 | autopilot/paper_trader.py | 17 | 0 | 1 | 3 (1,254) | 0 (143) | 1 | 1 | +8 circ | Circular dependency hub: 4 of 6 api edges |
 | 4 | features/pipeline.py | 16 | 3 (9 edges) | 1 | 3 (1,541) | 0 (158) | 1 | 0 | — | All 90+ features flow through this file |
@@ -115,7 +115,7 @@ Source data: MODULE_INVENTORY.yaml (Job 1) + DEPENDENCY_EDGES.json (Job 2) + git
 ### 1. config.py
 ```yaml
 file: config.py
-score: 18
+score: 16
 lines: 1020 (+ config_structured.py: 347)
 constants: 200+
 git_commits_60d: 28

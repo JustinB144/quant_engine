@@ -4,7 +4,7 @@
     "job": "Job 5 of 7 — Subsystem Clustering",
     "total_subsystems": 11,
     "total_files": 208,
-    "total_lines": 75096,
+    "total_lines": 75027,
     "clustering_rules_applied": [
       "same_module",
       "universal_hub_exclusion",
@@ -106,7 +106,7 @@
         "validation/feature_redundancy.py"
       ],
       "file_count": 19,
-      "total_lines": 9106,
+      "total_lines": 9044,
       "depends_on": [
         "shared_infrastructure"
       ],

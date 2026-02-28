@@ -22,7 +22,7 @@ The subsystem dependency graph was verified to be a **proper DAG with zero cycle
 ORDER | SUBSYSTEM                    | DEPENDS ON              | FILES | LINES  | EST. HOURS | PRIORITY
 ------+------------------------------+-------------------------+-------+--------+------------+---------
   1   | Shared Infrastructure        | (none)                  |   7   |  2,151 |   2-3      | CRITICAL
-  2   | Data Ingestion & Quality     | 1                       |  19   |  9,106 |   6-8      | HIGH
+  2   | Data Ingestion & Quality     | 1                       |  19   |  9,044 |   6-8      | HIGH
   3   | Feature Engineering          | 1, 2 (opt: 4)           |  17   |  8,559 |   6-8      | CRITICAL
   4   | Regime Detection             | 1                       |  13   |  4,420 |   5-6      | HIGH
   5   | Backtesting + Risk           | 1, 4                    |  28   | 13,132 |  10-14     | CRITICAL
@@ -33,7 +33,7 @@ ORDER | SUBSYSTEM                    | DEPENDS ON              | FILES | LINES  
  10   | API & Frontend               | all core subsystems      |  59   | 10,188 |  12-16     | HIGH
  11   | Entry Points & Scripts       | all subsystems           |  17   |  8,883 |   3-4      | LOW
 ------+------------------------------+-------------------------+-------+--------+------------+---------
-TOTAL |                              |                         | 208   | 75,096 |  62-83     |
+TOTAL |                              |                         | 208   | 75,027 |  62-83     |
 ```
 
 **Ordering methodology**: Topological sort of the dependency DAG. When multiple subsystems share the same topological depth, tiebreaking is by (1) module-level risk score from HOTSPOT_LIST.md (higher risk audited first), then (2) file count (fewer files first for quick wins).
