@@ -38,6 +38,7 @@ RESULTS_DIR = ROOT_DIR / "results"                # STATUS: ACTIVE — backtest 
 
 # ── Data Sources ──────────────────────────────────────────────────────
 DATA_CACHE_DIR = ROOT_DIR / "data" / "cache"      # STATUS: ACTIVE — data/loader.py, data/local_cache.py
+DATA_CACHE_ALPACA_DIR = ROOT_DIR / "data" / "cache_alpaca"  # STATUS: ACTIVE — archived Alpaca intraday data; scripts/alpaca_intraday_download.py
 WRDS_ENABLED = _cfg.data.wrds_enabled             # STATUS: ACTIVE — data/loader.py; try WRDS first, fall back to local cache / IBKR
 
 # PLACEHOLDER — OptionMetrics IV surface data integration.

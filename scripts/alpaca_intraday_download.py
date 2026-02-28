@@ -56,13 +56,14 @@ _cfg_spec = _ilu.spec_from_file_location("_cfg", _QE_ROOT / "config.py")
 _cfg = _ilu.module_from_spec(_cfg_spec)
 _cfg_spec.loader.exec_module(_cfg)
 DATA_CACHE_DIR = _cfg.DATA_CACHE_DIR
+DATA_CACHE_ALPACA_DIR = _cfg.DATA_CACHE_ALPACA_DIR
 UNIVERSE_FULL = _cfg.UNIVERSE_FULL
 UNIVERSE_INTRADAY = getattr(_cfg, "UNIVERSE_INTRADAY", UNIVERSE_FULL)
 
 _lc_spec = _ilu.spec_from_file_location("_lc", _QE_ROOT / "data" / "local_cache.py",
                                          submodule_search_locations=[])
 _lc = _ilu.module_from_spec(_lc_spec)
-_lc.DATA_CACHE_DIR = DATA_CACHE_DIR
+_lc.DATA_CACHE_DIR = DATA_CACHE_ALPACA_DIR
 _lc.FRAMEWORK_DIR = _cfg.FRAMEWORK_DIR
 try:
     _lc_spec.loader.exec_module(_lc)
@@ -1006,7 +1007,8 @@ def main():
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 70)
 
-    cache_dir = DATA_CACHE_DIR
+    cache_dir = DATA_CACHE_ALPACA_DIR
+    cache_dir.mkdir(parents=True, exist_ok=True)
     workers = max(1, args.workers)
     # With concurrent workers, use a shared rate limiter instead of per-request pace
     rate_limiter = RateLimiter(max_per_minute=190) if workers > 1 else None

@@ -88,6 +88,7 @@ class DataConfig:
     """Data loading and caching configuration."""
 
     cache_dir: Path = Path("data/cache")
+    cache_alpaca_dir: Path = Path("data/cache_alpaca")
     wrds_enabled: bool = True
     optionmetrics_enabled: bool = False
     kalshi_enabled: bool = False
