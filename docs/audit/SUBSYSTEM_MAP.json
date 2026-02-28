@@ -1,0 +1,969 @@
+{
+  "metadata": {
+    "generated": "2026-02-27",
+    "job": "Job 5 of 7 — Subsystem Clustering",
+    "total_subsystems": 11,
+    "total_files": 208,
+    "total_lines": 75096,
+    "clustering_rules_applied": [
+      "same_module",
+      "universal_hub_exclusion",
+      "bilateral_merge",
+      "exclusive_consumer_merge",
+      "leaf_module_handling",
+      "strong_coupling_merge",
+      "contract_colocation",
+      "size_bounds"
+    ],
+    "input_sources": [
+      "DEPENDENCY_EDGES.json (Job 2, 570 edges, 308 cross-module)",
+      "INTERFACE_CONTRACTS.yaml (Job 4, 45 boundaries, 58 module pairs)",
+      "HOTSPOT_LIST.md (Job 3, 15 file-level hotspots)"
+    ],
+    "notes": "Every .py file in the repo (excluding tests/, __pycache__, .egg-info) is assigned to exactly one subsystem. __init__.py files are included and assigned to their module's subsystem. config_data/universe.yaml is a non-code artifact referenced by Shared Infrastructure but not counted in file totals."
+  },
+  "subsystems": {
+    "shared_infrastructure": {
+      "id": 1,
+      "name": "Shared Infrastructure",
+      "description": "Universal configuration and utility dependencies imported by nearly every module. config.py is the supreme hub with 161 fan-in edges from ALL 14 modules, accounting for 52% of all cross-module edges (161/308). config_structured.py provides typed dataclass configuration. reproducibility.py provides run manifests for entry points. utils/logging.py provides system-wide logging with alert webhooks.",
+      "files": [
+        "__init__.py",
+        "config.py",
+        "config_structured.py",
+        "config_data/__init__.py",
+        "reproducibility.py",
+        "utils/__init__.py",
+        "utils/logging.py"
+      ],
+      "file_count": 7,
+      "total_lines": 2151,
+      "depends_on": [],
+      "depended_on_by": [
+        "data_ingestion_quality",
+        "feature_engineering",
+        "regime_detection",
+        "backtesting_risk",
+        "model_training_prediction",
+        "evaluation_diagnostics",
+        "autopilot",
+        "kalshi",
+        "api_frontend",
+        "entry_points_scripts"
+      ],
+      "cross_references": {
+        "from_other_subsystems": [],
+        "to_other_subsystems": [
+          "ALL — config.py is imported by all 14 modules (161 edges)",
+          "config_structured.py is imported by validation/preconditions.py (backtesting_risk subsystem)",
+          "reproducibility.py is imported by run_*.py entry points",
+          "utils/logging.py is imported by config.py (within this subsystem)"
+        ]
+      },
+      "shared_artifacts": [
+        {
+          "artifact": "config_data/universe.yaml",
+          "type": "YAML configuration",
+          "readers": ["config.py", "risk/universe_config.py"],
+          "note": "Non-code artifact; universe membership changes propagate to all data loading, backtesting, and trading"
+        }
+      ],
+      "clustering_rules_applied": [
+        "Rule 2 (universal_hub_exclusion): config.py imported by 14 modules → Shared Infrastructure",
+        "Rule 2: config_structured.py is config's typed companion",
+        "Rule 2: reproducibility.py imported by entry points across modules",
+        "Rule 2: utils/logging.py imported by config → infrastructure"
+      ],
+      "audit_notes": "Audit FIRST. Changes here propagate to the ENTIRE SYSTEM. config.py has 200+ constants, 161 inbound edges, and is the single point of failure. Largest import statements consuming config: backtest/engine.py:26 (55+ constants), autopilot/paper_trader.py:13 (40+ constants), autopilot/promotion_gate.py:13 (29+ constants). Verify TRUTH_LAYER flags, STATUS annotations, and config_structured.py derivation correctness.",
+      "audit_priority": "CRITICAL",
+      "hotspot_files": {
+        "config.py": "Score 18/21 — God object, 1,020 lines, 161 fan-in edges"
+      }
+    },
+    "data_ingestion_quality": {
+      "id": 2,
+      "name": "Data Ingestion & Quality",
+      "description": "Self-contained data loading, caching, quality assessment, survivorship bias controls, and data validation. Provides provider abstraction over WRDS, Alpaca, and Alpha Vantage with atomic cache writes, intraday quality gating, cross-source validation, and data integrity preflight checks. Includes validation/data_integrity.py, validation/leakage_detection.py, and validation/feature_redundancy.py due to bilateral coupling (data/loader.py ↔ validation/data_integrity.py) and data-quality focus.",
+      "files": [
+        "data/__init__.py",
+        "data/loader.py",
+        "data/local_cache.py",
+        "data/provider_base.py",
+        "data/provider_registry.py",
+        "data/providers/__init__.py",
+        "data/providers/alpaca_provider.py",
+        "data/providers/alpha_vantage_provider.py",
+        "data/wrds_provider.py",
+        "data/quality.py",
+        "data/cross_source_validator.py",
+        "data/intraday_quality.py",
+        "data/survivorship.py",
+        "data/alternative.py",
+        "data/feature_store.py",
+        "validation/__init__.py",
+        "validation/data_integrity.py",
+        "validation/leakage_detection.py",
+        "validation/feature_redundancy.py"
+      ],
+      "file_count": 19,
+      "total_lines": 9106,
+      "depends_on": [
+        "shared_infrastructure"
+      ],
+      "optional_depends_on": [
+        "kalshi"
+      ],
+      "optional_depends_on_note": "data/provider_registry.py:23 lazily imports kalshi/provider.py inside a factory function — conditional, data loading works without Kalshi",
+      "depended_on_by": [
+        "feature_engineering",
+        "autopilot",
+        "api_frontend",
+        "entry_points_scripts"
+      ],
+      "cross_references": {
+        "from_other_subsystems": [],
+        "to_other_subsystems": [
+          "data/loader.py is imported by feature_engineering (features/pipeline.py:1528), autopilot (engine.py:54), api_frontend (orchestrator.py:43), entry_points (run_*.py)",
+          "data/local_cache.py is imported by feature_engineering (features/pipeline.py:1458), entry_points (run_wrds_daily_refresh.py, scripts/ibkr_daily_gapfill.py)",
+          "data/provider_registry.py:23 lazily imports kalshi/provider.py (kalshi subsystem) — conditional factory import",
+          "data/quality.py is imported by validation/data_integrity.py (within this subsystem)",
+          "data/wrds_provider.py is imported by api_frontend (health_service.py:151)"
+        ]
+      },
+      "cross_module_files": {
+        "validation/data_integrity.py": {
+          "defined_in": "validation/",
+          "reason": "Rule 3 (bilateral_merge): data/loader.py:567 imports DataIntegrityValidator from validation/data_integrity.py AND validation/data_integrity.py:20 imports assess_ohlcv_quality from data/quality.py — bidirectional coupling",
+          "original_module": "validation"
+        },
+        "validation/leakage_detection.py": {
+          "defined_in": "validation/",
+          "reason": "Data quality focused with no external consumers outside data quality context",
+          "original_module": "validation"
+        },
+        "validation/feature_redundancy.py": {
+          "defined_in": "validation/",
+          "reason": "Data quality focused with no external consumers outside data quality context",
+          "original_module": "validation"
+        }
+      },
+      "shared_artifacts": [
+        {
+          "artifact": "data/cache/*.parquet",
+          "writer": "data/local_cache.py",
+          "readers": ["data/loader.py", "features/pipeline.py"],
+          "schema": "Open, High, Low, Close, Volume, date",
+          "coupling_note": "Artifact coupling to feature_engineering subsystem (bidirectional edge weight 2)"
+        },
+        {
+          "artifact": "data/cache/*.meta.json",
+          "writer": "data/local_cache.py",
+          "readers": ["data/loader.py"],
+          "note": "Metadata sidecars for cache staleness detection"
+        }
+      ],
+      "clustering_rules_applied": [
+        "Rule 1 (same_module): data/* files stay together as baseline",
+        "Rule 3 (bilateral_merge): validation/data_integrity.py merged in due to bidirectional imports with data/",
+        "Cohesion: validation/leakage_detection.py and validation/feature_redundancy.py are data-quality focused"
+      ],
+      "audit_notes": "Audit after Shared Infrastructure. Data quality regressions corrupt EVERYTHING downstream: features, training, prediction, backtesting, paper trading. Key risks: cache trust logic (CACHE_MAX_STALENESS_DAYS), WRDS fallback behavior, survivorship filtering correctness, DataIntegrityValidator conditional import at data/loader.py:567. data/provider_registry.py has a one-way conditional import from kalshi/provider.py — do NOT merge, just note the dependency.",
+      "audit_priority": "HIGH",
+      "hotspot_files": {
+        "data/loader.py": "Score 15/21 — Primary data ingestion, 11 fan-in edges, 4 consumer modules",
+        "data/local_cache.py": "Score 14/21 — Atomic cache writes, shared artifact writer"
+      }
+    },
+    "feature_engineering": {
+      "id": 3,
+      "name": "Feature Engineering",
+      "description": "Feature computation pipeline and all indicator implementations. features/pipeline.py is the single bottleneck through which ALL 90+ features flow. indicators/ module is exclusively consumed by features/pipeline.py (6 edges, all from pipeline.py) and has been merged here per Rule 4 (exclusive consumer merge). 5 advanced analyzers (Spectral, SSA, TailRisk, OptimalTransport, Eigenvalue) are conditionally imported with ImportError guards.",
+      "files": [
+        "features/__init__.py",
+        "features/pipeline.py",
+        "features/research_factors.py",
+        "features/options_factors.py",
+        "features/lob_features.py",
+        "features/intraday.py",
+        "features/macro.py",
+        "features/harx_spillovers.py",
+        "features/wave_flow.py",
+        "features/version.py",
+        "indicators/__init__.py",
+        "indicators/indicators.py",
+        "indicators/spectral.py",
+        "indicators/eigenvalue.py",
+        "indicators/ot_divergence.py",
+        "indicators/ssa.py",
+        "indicators/tail_risk.py"
+      ],
+      "file_count": 17,
+      "total_lines": 8559,
+      "depends_on": [
+        "shared_infrastructure",
+        "data_ingestion_quality"
+      ],
+      "optional_depends_on": [
+        "regime_detection"
+      ],
+      "optional_depends_on_note": "features/pipeline.py:1303 lazily imports regime/correlation.py (CorrelationRegimeDetector) with try/except — feature computation works without it",
+      "depended_on_by": [
+        "model_training_prediction",
+        "autopilot",
+        "kalshi",
+        "api_frontend",
+        "entry_points_scripts"
+      ],
+      "cross_references": {
+        "from_other_subsystems": [],
+        "to_other_subsystems": [
+          "features/pipeline.py:FeaturePipeline is imported by model_training_prediction, autopilot, api_frontend, entry_points",
+          "features/pipeline.py:get_feature_type is imported by models/predictor.py:22 — critical correctness boundary",
+          "features/options_factors.py is imported by kalshi/options.py"
+        ]
+      },
+      "cross_module_files": {
+        "indicators/*": {
+          "defined_in": "indicators/",
+          "reason": "Rule 4 (exclusive_consumer_merge): indicators/ has exactly 6 inbound edges, all from features/pipeline.py. Zero external consumers outside features/. Merged into feature_engineering subsystem.",
+          "original_module": "indicators"
+        }
+      },
+      "clustering_rules_applied": [
+        "Rule 1 (same_module): features/* files stay together as baseline",
+        "Rule 4 (exclusive_consumer_merge): indicators/ is ONLY imported by features/pipeline.py → merged",
+        "Rule 5 (strong_coupling_merge): features/pipeline.py imports 21+ symbols from indicators/ → strong coupling, reinforces Rule 4"
+      ],
+      "audit_notes": "get_feature_type() is the SINGLE MOST CRITICAL CORRECTNESS BOUNDARY — FEATURE_METADATA in features/pipeline.py defaults to 'CAUSAL' for unknown feature names, enabling silent forward-looking data leakage into live predictions. Verify each feature's causality classification (CAUSAL vs END_OF_DAY vs RESEARCH_ONLY). indicators/indicators.py has 2,904 lines with 92 concrete indicator subclasses and ZERO dedicated tests — signature changes silently corrupt the feature pipeline. Verify all 5 conditional analyzer imports handle ImportError correctly. Verify compute_all() dict key stability.",
+      "audit_priority": "CRITICAL",
+      "hotspot_files": {
+        "features/pipeline.py": "Score 16/21 — All 90+ features flow through this file, 9 fan-in edges",
+        "indicators/indicators.py": "Score 14/21 — 2,904 lines, 92 indicator classes, 0 dedicated tests, extreme transitive amplification (1 direct → 9 transitive dependents)"
+      }
+    },
+    "regime_detection": {
+      "id": 4,
+      "name": "Regime Detection",
+      "description": "Regime detection engines (rule-based, HMM, jump model, BOCPD, ensemble consensus) and cross-subsystem contract files (ShockVector, UncertaintyGate). Regime state feeds into position sizing, stop loss multipliers, constraint scaling, and autopilot promotion. shock_vector.py and uncertainty_gate.py are defined here but consumed by backtesting_risk, autopilot, and api_frontend — they are cross-subsystem contract files assigned to their defining home per Step 4 resolution rule.",
+      "files": [
+        "regime/__init__.py",
+        "regime/detector.py",
+        "regime/hmm.py",
+        "regime/jump_model.py",
+        "regime/jump_model_legacy.py",
+        "regime/jump_model_pypi.py",
+        "regime/bocpd.py",
+        "regime/correlation.py",
+        "regime/confidence_calibrator.py",
+        "regime/consensus.py",
+        "regime/shock_vector.py",
+        "regime/uncertainty_gate.py",
+        "regime/online_update.py"
+      ],
+      "file_count": 13,
+      "total_lines": 4420,
+      "depends_on": [
+        "shared_infrastructure"
+      ],
+      "depended_on_by": [
+        "feature_engineering",
+        "backtesting_risk",
+        "autopilot",
+        "api_frontend",
+        "entry_points_scripts"
+      ],
+      "cross_references": {
+        "from_other_subsystems": [],
+        "to_other_subsystems": [
+          "regime/shock_vector.py → backtesting_risk: backtest/engine.py:77 imports compute_shock_vectors+ShockVector, backtest/execution.py:29 imports ShockVector",
+          "regime/uncertainty_gate.py → backtesting_risk: backtest/engine.py:78 imports UncertaintyGate, risk/position_sizer.py:27 imports UncertaintyGate",
+          "regime/uncertainty_gate.py → autopilot: autopilot/engine.py:61 imports UncertaintyGate",
+          "regime/detector.py → api_frontend: api/orchestrator.py:45 imports RegimeDetector",
+          "regime/detector.py → autopilot: autopilot/engine.py:60 imports RegimeDetector",
+          "regime/correlation.py → feature_engineering: features/pipeline.py:1303 imports CorrelationRegimeDetector (lazy)"
+        ]
+      },
+      "cross_subsystem_contract_files": {
+        "regime/shock_vector.py": {
+          "consumers": [
+            "backtest/engine.py:77 (compute_shock_vectors, ShockVector)",
+            "backtest/execution.py:29 (ShockVector)"
+          ],
+          "schema": "ShockVector dataclass with 13 fields including structural_features (Dict[str,float]) and transition_matrix (Optional[np.ndarray]), version-locked with schema_version='1.0'",
+          "stability": "version_locked",
+          "risk": "Schema changes break backtest execution layer and paper trading execution"
+        },
+        "regime/uncertainty_gate.py": {
+          "consumers": [
+            "backtest/engine.py:78 (UncertaintyGate)",
+            "risk/position_sizer.py:27 (UncertaintyGate)",
+            "autopilot/engine.py:61 (UncertaintyGate)"
+          ],
+          "config_constants": [
+            "REGIME_UNCERTAINTY_ENTROPY_THRESHOLD",
+            "REGIME_UNCERTAINTY_STRESS_THRESHOLD",
+            "REGIME_UNCERTAINTY_SIZING_MAP",
+            "REGIME_UNCERTAINTY_MIN_MULTIPLIER"
+          ],
+          "stability": "evolving",
+          "risk": "Threshold changes silently alter position sizing across ALL trading paths (backtest, risk, autopilot)"
+        }
+      },
+      "clustering_rules_applied": [
+        "Rule 1 (same_module): regime/* files stay together as baseline",
+        "Step 4 (resolution): shock_vector.py and uncertainty_gate.py assigned to defining home (regime/), with cross-references to consuming subsystems"
+      ],
+      "audit_notes": "Audit after Shared Infrastructure and Data Quality. Regime state propagates to position sizing, stop losses, constraint scaling, and promotion decisions. Key risks: ShockVector 13-field schema version lock (verify schema_version enforcement at deserialization), UncertaintyGate config constant consistency across 3 consumers, HMM state mapping correctness, ensemble consensus thresholds, BOCPD changepoint sensitivity. shock_vector.py and uncertainty_gate.py are the highest-leverage cross-subsystem contract files — changes here silently affect backtesting_risk and autopilot behavior.",
+      "audit_priority": "HIGH",
+      "hotspot_files": {
+        "regime/detector.py": "Score 15/21 — Main orchestrator, 10 fan-in edges, 4 consumer modules",
+        "regime/shock_vector.py": "Score 12/21 — Version-locked schema, +3 schema contract bonus",
+        "regime/uncertainty_gate.py": "Score 12/21 — Entropy-based sizing multiplier across 3 modules, +2 contract bonus"
+      }
+    },
+    "backtesting_risk": {
+      "id": 5,
+      "name": "Backtesting + Risk",
+      "description": "Core simulation engine, execution modeling, walk-forward validation, and the complete risk management stack (position sizing, portfolio risk, drawdowns, stop losses, factor analysis, stress testing). Merged per Rule 5 (strong coupling): backtest/engine.py:316-320 imports from 5 risk files. Includes validation/preconditions.py per Rule 6 (contract colocation) — the execution contract is enforced at runtime in both backtest/engine.py:198 and models/trainer.py:219.",
+      "files": [
+        "backtest/__init__.py",
+        "backtest/engine.py",
+        "backtest/validation.py",
+        "backtest/advanced_validation.py",
+        "backtest/execution.py",
+        "backtest/cost_calibrator.py",
+        "backtest/cost_stress.py",
+        "backtest/optimal_execution.py",
+        "backtest/null_models.py",
+        "backtest/adv_tracker.py",
+        "backtest/survivorship_comparison.py",
+        "risk/__init__.py",
+        "risk/position_sizer.py",
+        "risk/portfolio_risk.py",
+        "risk/drawdown.py",
+        "risk/stop_loss.py",
+        "risk/metrics.py",
+        "risk/covariance.py",
+        "risk/portfolio_optimizer.py",
+        "risk/factor_portfolio.py",
+        "risk/factor_exposures.py",
+        "risk/factor_monitor.py",
+        "risk/attribution.py",
+        "risk/stress_test.py",
+        "risk/cost_budget.py",
+        "risk/constraint_replay.py",
+        "risk/universe_config.py",
+        "validation/preconditions.py"
+      ],
+      "file_count": 28,
+      "total_lines": 13132,
+      "size_exception_justification": "28 files slightly exceeds the 25-file target. Splitting was evaluated but rejected: backtest/engine.py:316-320 imports PositionSizer, DrawdownController, StopLossManager, PortfolioRiskManager, and RiskMetrics from risk/ — this 5-way tight coupling makes a clean split impossible. Additionally, PositionSizer is flagged 'evolving' (21 parameters with recent uncertainty additions), reinforcing the need to audit backtest+risk as a unit.",
+      "depends_on": [
+        "shared_infrastructure",
+        "regime_detection"
+      ],
+      "depended_on_by": [
+        "model_training_prediction",
+        "evaluation_diagnostics",
+        "autopilot",
+        "kalshi",
+        "api_frontend",
+        "entry_points_scripts"
+      ],
+      "cross_references": {
+        "from_other_subsystems": [
+          "regime/shock_vector.py (regime_detection) → backtest/engine.py:77, backtest/execution.py:29",
+          "regime/uncertainty_gate.py (regime_detection) → backtest/engine.py:78, risk/position_sizer.py:27"
+        ],
+        "to_other_subsystems": [
+          "backtest/engine.py:Backtester is imported by autopilot/engine.py:20, api/orchestrator.py:289, kalshi/promotion.py:14",
+          "backtest/engine.py:BacktestResult is imported by autopilot/promotion_gate.py:12, kalshi/promotion.py:14",
+          "backtest/validation.py is imported by evaluation/engine.py, autopilot/engine.py, api/orchestrator.py",
+          "risk/position_sizer.py:PositionSizer is imported by autopilot/paper_trader.py:172",
+          "validation/preconditions.py:enforce_preconditions is ALSO imported by models/trainer.py:219 (model_training_prediction subsystem)"
+        ]
+      },
+      "cross_module_files": {
+        "validation/preconditions.py": {
+          "defined_in": "validation/",
+          "reason": "Rule 6 (contract_colocation): Execution contract consumed by backtest/engine.py:198 AND models/trainer.py:219. Assigned to backtesting_risk where it's enforced at runtime. Gated by TRUTH_LAYER_STRICT_PRECONDITIONS.",
+          "original_module": "validation",
+          "also_consumed_by": ["model_training_prediction (models/trainer.py:219)"]
+        }
+      },
+      "shared_artifacts": [
+        {
+          "artifact": "results/backtest_*d_summary.json",
+          "writer": "run_backtest.py (entry_points_scripts subsystem)",
+          "readers": ["api/services/backtest_service.py", "api/services/results_service.py", "evaluation/engine.py"],
+          "fields": "17 fields including regime_breakdown",
+          "coupling_note": "Artifact coupling to api_frontend and evaluation_diagnostics subsystems (bidirectional edge weight 2 each)"
+        }
+      ],
+      "clustering_rules_applied": [
+        "Rule 1 (same_module): backtest/* and risk/* files stay together as baseline",
+        "Rule 5 (strong_coupling_merge): backtest/engine.py imports from 5 risk files → merge backtest+risk",
+        "Rule 6 (contract_colocation): validation/preconditions.py moved to backtesting_risk (primary runtime enforcement)",
+        "Rule 7 (size_bounds): 28 files exceeds 25-file target; split evaluated but coupling too tight"
+      ],
+      "audit_notes": "LARGEST subsystem (13,132 lines). backtest/engine.py is the LARGEST production file (2,488 lines) with 55+ config constant imports at line 26 — the single largest import statement in the codebase. Core simulation loop errors invalidate ALL backtest results and all promotion decisions. Key risks: execution realism (costs must match paper_trader.py behavior), ShockVector integration correctness, risk module integration (position sizing, drawdown, stops). PositionSizer is 'evolving' with 21 parameters. Verify preconditions match between training (trainer.py:219) and backtesting (engine.py:198) paths. Verify TRUTH_LAYER_STRICT_PRECONDITIONS behavior.",
+      "audit_priority": "CRITICAL",
+      "hotspot_files": {
+        "backtest/engine.py": "Score 16/21 — LARGEST production file (2,488 lines), core simulation loop, 55+ config imports",
+        "risk/position_sizer.py": "Score 10/21 — Evolving (21 params), Kelly sizing affects live trading",
+        "backtest/execution.py": "Score 9/21 — Execution simulator with structural costs",
+        "backtest/validation.py": "Score 11/21 — Walk-forward validation, 6 fan-in edges",
+        "validation/preconditions.py": "Score 11/21 — Execution contract, +3 contract bonus"
+      }
+    },
+    "model_training_prediction": {
+      "id": 6,
+      "name": "Model Training & Prediction",
+      "description": "Training pipeline (purged CV, embargo, holdout, ensemble diversification), prediction engine (regime blending, causality enforcement), model versioning, governance, calibration, conformal prediction, online learning, feature stability tracking, shift detection, and retrain triggering. Includes IV surface models (models/iv/).",
+      "files": [
+        "models/__init__.py",
+        "models/trainer.py",
+        "models/predictor.py",
+        "models/versioning.py",
+        "models/governance.py",
+        "models/calibration.py",
+        "models/conformal.py",
+        "models/walk_forward.py",
+        "models/online_learning.py",
+        "models/feature_stability.py",
+        "models/shift_detection.py",
+        "models/retrain_trigger.py",
+        "models/cross_sectional.py",
+        "models/neural_net.py",
+        "models/iv/__init__.py",
+        "models/iv/models.py"
+      ],
+      "file_count": 16,
+      "total_lines": 6153,
+      "depends_on": [
+        "shared_infrastructure",
+        "feature_engineering",
+        "backtesting_risk"
+      ],
+      "depended_on_by": [
+        "evaluation_diagnostics",
+        "autopilot",
+        "api_frontend",
+        "entry_points_scripts"
+      ],
+      "cross_references": {
+        "from_other_subsystems": [
+          "validation/preconditions.py (backtesting_risk) → models/trainer.py:219 imports enforce_preconditions (lazy)"
+        ],
+        "to_other_subsystems": [
+          "models/trainer.py:ModelTrainer is imported by autopilot/engine.py:59, api/orchestrator.py:161, run_train.py:31, run_retrain.py:31",
+          "models/predictor.py:EnsemblePredictor is imported by autopilot/engine.py:58, api/orchestrator.py:224, run_backtest.py:39, run_predict.py:30",
+          "models/feature_stability.py:FeatureStabilityTracker is imported by api/services/health_service.py:1800",
+          "models/calibration.py is imported by evaluation/calibration_analysis.py"
+        ]
+      },
+      "shared_artifacts": [
+        {
+          "artifact": "trained_models/ensemble_*d_*.pkl",
+          "format": "joblib",
+          "writer": "models/trainer.py",
+          "readers": ["models/predictor.py", "api/services/model_service.py"],
+          "coupling_note": "Artifact coupling to api_frontend subsystem (bidirectional edge weight 2)"
+        },
+        {
+          "artifact": "trained_models/ensemble_*d_meta.json",
+          "writer": "models/trainer.py",
+          "readers": ["models/predictor.py", "api/services/model_service.py"],
+          "required_fields": ["global_features", "global_feature_medians", "global_target_std", "regime_models"],
+          "coupling_note": "Artifact coupling to api_frontend subsystem (bidirectional edge weight 2)"
+        }
+      ],
+      "clustering_rules_applied": [
+        "Rule 1 (same_module): models/* files stay together as baseline"
+      ],
+      "audit_notes": "Training pipeline produces models consumed by prediction, backtesting, and autopilot. Anti-overfitting controls (purged CV, embargo, holdout) must be correct — compromise invalidates all downstream results. Feature alignment between trainer and predictor is critical: feature names/ordering mismatches break predictions SILENTLY (no error, just wrong numbers). models/predictor.py:22 imports get_feature_type from features/pipeline.py — causality enforcement via TRUTH_LAYER_ENFORCE_CAUSALITY prevents look-ahead bias. Verify model artifact schema compatibility between trainer (writer) and predictor+model_service (readers).",
+      "audit_priority": "HIGH",
+      "hotspot_files": {
+        "models/trainer.py": "Score 16/21 — Training pipeline, 1,818 lines, shared artifact writer",
+        "models/predictor.py": "Score 12/21 — Feature alignment critical, 5 fan-in edges"
+      }
+    },
+    "evaluation_diagnostics": {
+      "id": 7,
+      "name": "Evaluation & Diagnostics",
+      "description": "Post-hoc evaluation of backtest and model quality. Leaf module with 0 fan-in — nothing imports from evaluation/. Safe to change in isolation. Computes metrics, sliced analysis, fragility tests, calibration analysis, ML diagnostics, and visualizations.",
+      "files": [
+        "evaluation/__init__.py",
+        "evaluation/engine.py",
+        "evaluation/metrics.py",
+        "evaluation/slicing.py",
+        "evaluation/fragility.py",
+        "evaluation/calibration_analysis.py",
+        "evaluation/ml_diagnostics.py",
+        "evaluation/visualization.py"
+      ],
+      "file_count": 8,
+      "total_lines": 2816,
+      "depends_on": [
+        "shared_infrastructure",
+        "backtesting_risk",
+        "model_training_prediction"
+      ],
+      "depended_on_by": [],
+      "cross_references": {
+        "from_other_subsystems": [],
+        "to_other_subsystems": []
+      },
+      "clustering_rules_applied": [
+        "Rule 1 (same_module): evaluation/* files stay together as baseline",
+        "Rule 4a (leaf_module_handling): 0 fan-in → stays in own subsystem, flagged LOW priority"
+      ],
+      "audit_notes": "LOW priority for audit since 0 fan-in — changes here cannot cascade to other subsystems. evaluation/engine.py reads backtest_*d_summary.json artifacts (shared artifact coupling). Verify metric calculations are statistically correct. evaluation/calibration_analysis.py lazily imports models/calibration.py.",
+      "audit_priority": "LOW",
+      "hotspot_files": {}
+    },
+    "autopilot": {
+      "id": 8,
+      "name": "Autopilot",
+      "description": "Automated strategy discovery, promotion gating, paper trading, meta-labeling, and strategy allocation. autopilot/engine.py is the PRIMARY TRANSITIVE AMPLIFIER — it appears in 12 of 15 hotspot blast radii and imports from 8 modules (highest fan-out: 39 edges). Contains the ONLY architectural circular dependency in the system: 6 lazy imports from api/ (4 from paper_trader.py, 2 from engine.py).",
+      "files": [
+        "autopilot/__init__.py",
+        "autopilot/engine.py",
+        "autopilot/strategy_discovery.py",
+        "autopilot/promotion_gate.py",
+        "autopilot/registry.py",
+        "autopilot/paper_trader.py",
+        "autopilot/meta_labeler.py",
+        "autopilot/strategy_allocator.py"
+      ],
+      "file_count": 8,
+      "total_lines": 4480,
+      "depends_on": [
+        "shared_infrastructure",
+        "data_ingestion_quality",
+        "feature_engineering",
+        "regime_detection",
+        "backtesting_risk",
+        "model_training_prediction"
+      ],
+      "optional_depends_on": [
+        "api_frontend"
+      ],
+      "optional_depends_on_note": "ARCHITECTURAL CONCERN: autopilot/engine.py:1868,1911 and autopilot/paper_trader.py:173,189,211,532 lazily import from api/services/ (HealthService, health_risk_feedback, ABTestRegistry). All 6 edges are lazy/conditional imports inside function bodies or try/except guards. This is NOT a code-level SCC but an architectural circular dependency that should be flagged prominently.",
+      "depended_on_by": [
+        "kalshi",
+        "api_frontend",
+        "entry_points_scripts"
+      ],
+      "cross_references": {
+        "from_other_subsystems": [
+          "regime/uncertainty_gate.py (regime_detection) → autopilot/engine.py:61 imports UncertaintyGate"
+        ],
+        "to_other_subsystems": [
+          "autopilot/engine.py:AutopilotEngine is imported by api/jobs/autopilot_job.py:12, run_autopilot.py:19",
+          "autopilot/promotion_gate.py is imported by kalshi/pipeline.py, kalshi/promotion.py",
+          "autopilot/strategy_discovery.py is imported by kalshi/promotion.py",
+          "autopilot/registry.py writes results/autopilot/strategy_registry.json (shared artifact)"
+        ]
+      },
+      "shared_artifacts": [
+        {
+          "artifact": "results/autopilot/strategy_registry.json",
+          "writer": "autopilot/registry.py",
+          "readers": ["autopilot/registry.py", "api/services/autopilot_service.py"],
+          "coupling_note": "Artifact coupling to api_frontend subsystem (bidirectional edge weight 2)"
+        }
+      ],
+      "architectural_concerns": [
+        {
+          "name": "autopilot_api_circular_dependency",
+          "severity": "architectural_concern",
+          "edges": [
+            {"source": "autopilot/paper_trader.py:173", "target": "api.services.health_risk_feedback", "type": "lazy"},
+            {"source": "autopilot/paper_trader.py:189", "target": "api.services.health_service.HealthService", "type": "conditional"},
+            {"source": "autopilot/paper_trader.py:211", "target": "api.ab_testing.ABTestRegistry", "type": "conditional"},
+            {"source": "autopilot/paper_trader.py:532", "target": "api.services.health_service.HealthService", "type": "conditional"},
+            {"source": "autopilot/engine.py:1868", "target": "api.services.health_service.HealthService", "type": "lazy"},
+            {"source": "autopilot/engine.py:1911", "target": "api.services.health_service.HealthService", "type": "conditional"}
+          ],
+          "note": "All 6 edges are lazy/conditional (no import-time circular error). Risk: runtime failures if api service paths change; health check state from api flows into autopilot decision-making, creating hidden coupling. autopilot should NOT be merged with api despite this coupling — keeping them separate highlights the architectural debt.",
+          "recommendation": "Refactor: extract health risk feedback interface that autopilot depends on, rather than importing from api service layer directly"
+        }
+      ],
+      "clustering_rules_applied": [
+        "Rule 1 (same_module): autopilot/* files stay together as baseline",
+        "Rule 3 (bilateral_merge): autopilot→api edges are one-directional (api does NOT import autopilot code directly in its services) → do NOT merge",
+        "Rule 5 (strong_coupling_merge): autopilot/engine.py imports from 8 modules → too many to merge, keep as integration layer"
+      ],
+      "audit_notes": "autopilot/engine.py is the primary transitive amplifier (appears in 12/15 hotspot blast radii). autopilot/paper_trader.py has 0 cross-module dependents (nothing imports from it) — its risk is entirely consumption-side (4 circular api edges at lines 173, 189, 211, 532). Changes in paper_trader.py cannot break other subsystems, but changes in 8 other modules can break it. Verify ALL 6 api imports are truly lazy and won't cause circular import at load time. Check that execution model integration matches backtest/execution.py behavior.",
+      "audit_priority": "CRITICAL",
+      "hotspot_files": {
+        "autopilot/engine.py": "Score 17/21 — Highest fan-out (23 cross-module edges across 8 modules), +4 circular penalty, primary transitive amplifier",
+        "autopilot/paper_trader.py": "Score 17/21 — Circular dependency hub (4 of 6 autopilot→api edges), +8 circular penalty, 0 cross-module dependents"
+      }
+    },
+    "kalshi": {
+      "id": 9,
+      "name": "Kalshi",
+      "description": "Self-contained event markets vertical: Kalshi API client, event pipeline, DuckDB storage (18 tables with versioning and audit trail), probability distribution fitting, options pricing, walk-forward validation, quality scoring, microstructure analysis, disagreement analysis, regime overlay, and promotion pipeline. Lower blast radius than core subsystems due to self-containment.",
+      "files": [
+        "kalshi/__init__.py",
+        "kalshi/provider.py",
+        "kalshi/client.py",
+        "kalshi/pipeline.py",
+        "kalshi/storage.py",
+        "kalshi/events.py",
+        "kalshi/distribution.py",
+        "kalshi/options.py",
+        "kalshi/promotion.py",
+        "kalshi/walkforward.py",
+        "kalshi/quality.py",
+        "kalshi/mapping_store.py",
+        "kalshi/microstructure.py",
+        "kalshi/disagreement.py",
+        "kalshi/regimes.py",
+        "kalshi/router.py"
+      ],
+      "file_count": 16,
+      "total_lines": 5208,
+      "test_files_note": "kalshi/tests/ contains 8 dedicated test files (test_bin_validity.py, test_distribution.py, test_leakage.py, test_no_leakage.py, test_signature_kat.py, test_stale_quotes.py, test_threshold_direction.py, test_walkforward_purge.py). These are excluded from the production file count per spec.",
+      "depends_on": [
+        "shared_infrastructure",
+        "feature_engineering",
+        "backtesting_risk",
+        "autopilot"
+      ],
+      "depended_on_by": [
+        "data_ingestion_quality",
+        "api_frontend",
+        "entry_points_scripts"
+      ],
+      "cross_references": {
+        "from_other_subsystems": [
+          "data/provider_registry.py (data_ingestion_quality) → kalshi/provider.py (one-way, conditional)"
+        ],
+        "to_other_subsystems": [
+          "kalshi/provider.py is conditionally imported by data/provider_registry.py",
+          "kalshi/promotion.py imports BacktestResult from backtest/engine.py and strategy_discovery from autopilot/",
+          "kalshi/options.py imports from features/options_factors.py",
+          "kalshi/walkforward.py imports from backtest/advanced_validation.py"
+        ]
+      },
+      "shared_artifacts": [
+        {
+          "artifact": "data/kalshi.duckdb",
+          "writer": "kalshi/storage.py",
+          "readers": ["kalshi/pipeline.py", "kalshi/events.py", "api/services/kalshi_service.py"],
+          "tables": 18,
+          "features": "versioning, audit trail",
+          "coupling_note": "Artifact coupling to api_frontend subsystem (bidirectional edge weight 2)"
+        }
+      ],
+      "clustering_rules_applied": [
+        "Rule 1 (same_module): kalshi/* files stay together as baseline",
+        "Rule 3 (bilateral_merge): data↔kalshi coupling is one-way conditional (data/provider_registry.py → kalshi/provider.py) → do NOT merge"
+      ],
+      "audit_notes": "Self-contained vertical with lower blast radius. Key risks: DuckDB 18-table schema stability, event-mode BacktestResult compatibility with core backtest subsystem, kalshi/promotion.py's dependency on autopilot/promotion_gate.py contract stability. Verify kalshi.duckdb versioning and audit trail integrity.",
+      "audit_priority": "MEDIUM",
+      "hotspot_files": {}
+    },
+    "api_frontend": {
+      "id": 10,
+      "name": "API & Frontend",
+      "description": "FastAPI application serving the web frontend. Internal layering: routers → services → (lazy) core engines + config. Nearly all cross-module imports are lazy (inside function bodies with try/except). Contains the largest file in the entire codebase: api/services/health_service.py (2,929 lines). 82 import edges to config (the largest cross-module dependency). HealthService is flagged 'evolving' and is the most fragile component in the circular dependency with autopilot.",
+      "files": [
+        "api/__init__.py",
+        "api/main.py",
+        "api/config.py",
+        "api/errors.py",
+        "api/ab_testing.py",
+        "api/orchestrator.py",
+        "api/deps/__init__.py",
+        "api/deps/providers.py",
+        "api/cache/__init__.py",
+        "api/cache/manager.py",
+        "api/cache/invalidation.py",
+        "api/jobs/__init__.py",
+        "api/jobs/store.py",
+        "api/jobs/runner.py",
+        "api/jobs/models.py",
+        "api/jobs/autopilot_job.py",
+        "api/jobs/backtest_job.py",
+        "api/jobs/predict_job.py",
+        "api/jobs/train_job.py",
+        "api/routers/__init__.py",
+        "api/routers/autopilot.py",
+        "api/routers/backtests.py",
+        "api/routers/benchmark.py",
+        "api/routers/config_mgmt.py",
+        "api/routers/dashboard.py",
+        "api/routers/data_explorer.py",
+        "api/routers/diagnostics.py",
+        "api/routers/iv_surface.py",
+        "api/routers/jobs.py",
+        "api/routers/logs.py",
+        "api/routers/model_lab.py",
+        "api/routers/regime.py",
+        "api/routers/risk.py",
+        "api/routers/signals.py",
+        "api/routers/system_health.py",
+        "api/schemas/__init__.py",
+        "api/schemas/autopilot.py",
+        "api/schemas/backtests.py",
+        "api/schemas/compute.py",
+        "api/schemas/dashboard.py",
+        "api/schemas/data_explorer.py",
+        "api/schemas/envelope.py",
+        "api/schemas/model_lab.py",
+        "api/schemas/signals.py",
+        "api/schemas/system_health.py",
+        "api/services/__init__.py",
+        "api/services/autopilot_service.py",
+        "api/services/backtest_service.py",
+        "api/services/data_helpers.py",
+        "api/services/data_service.py",
+        "api/services/diagnostics.py",
+        "api/services/health_alerts.py",
+        "api/services/health_confidence.py",
+        "api/services/health_risk_feedback.py",
+        "api/services/health_service.py",
+        "api/services/kalshi_service.py",
+        "api/services/model_service.py",
+        "api/services/regime_service.py",
+        "api/services/results_service.py"
+      ],
+      "file_count": 59,
+      "total_lines": 10188,
+      "size_exception_justification": "59 files significantly exceeds the 25-file target. All files are internal to the api/ module directory with high cohesion (routers → services → schemas layering). Splitting by sub-package (routers, services, schemas, jobs) would break the internal layering and increase audit complexity since routers and services are tightly coupled. The API module has the lowest cross-module fan-in (2 modules) despite highest fan-out (115 outbound edges), meaning it's a consumer that rarely exports.",
+      "depends_on": [
+        "shared_infrastructure",
+        "data_ingestion_quality",
+        "feature_engineering",
+        "regime_detection",
+        "backtesting_risk",
+        "model_training_prediction",
+        "autopilot",
+        "kalshi"
+      ],
+      "depended_on_by": [
+        "autopilot",
+        "entry_points_scripts"
+      ],
+      "cross_references": {
+        "from_other_subsystems": [
+          "autopilot/engine.py:1868,1911 (autopilot) → api/services/health_service.py (CIRCULAR — lazy)",
+          "autopilot/paper_trader.py:173,189,211,532 (autopilot) → api/services/health_risk_feedback.py, api/services/health_service.py, api/ab_testing.py (CIRCULAR — lazy/conditional)"
+        ],
+        "to_other_subsystems": [
+          "api/jobs/autopilot_job.py:12 lazily imports autopilot/engine.py:AutopilotEngine",
+          "api/jobs/backtest_job.py:12 lazily imports backtest/engine.py:Backtester",
+          "api/jobs/predict_job.py lazily imports models/predictor.py",
+          "api/jobs/train_job.py lazily imports models/trainer.py",
+          "api/orchestrator.py lazily imports from 6 subsystems",
+          "api/services/health_service.py:25+ imports from config (82 total api→config edges)"
+        ]
+      },
+      "clustering_rules_applied": [
+        "Rule 1 (same_module): api/* files stay together as baseline",
+        "Rule 7 (size_bounds): 59 files exceeds 25-file target; splitting evaluated but rejected due to internal layering cohesion"
+      ],
+      "audit_notes": "Verify ALL 82 lazy config imports resolve correctly. api/services/health_service.py is the LARGEST file in the entire codebase (2,929 lines) and is flagged 'evolving' — it's the most fragile component in the autopilot↔api circular dependency. Note that the api side does NOT import autopilot code directly in its services; the circular dependency flows through api/jobs/autopilot_job.py which lazily imports AutopilotEngine. Consider whether health_service.py should be split (2,929 lines is extreme). Verify all shared artifact readers (backtest summaries, model files, strategy registry, kalshi.duckdb) handle missing/corrupt artifacts gracefully.",
+      "audit_priority": "HIGH",
+      "hotspot_files": {
+        "api/services/health_service.py": "Score 14/21 — LARGEST file in codebase (2,929 lines), evolving, 24 outgoing config imports, circular dependency hub"
+      }
+    },
+    "entry_points_scripts": {
+      "id": 11,
+      "name": "Entry Points & Scripts",
+      "description": "Top-level run_*.py entry points and utility scripts. Pure consumers with 0 fan-in — nothing imports from these files. They orchestrate the full pipeline by importing from all other subsystems. Includes audit tooling scripts (extract_dependencies.py, generate_interface_contracts.py, hotspot_scoring.py) used for the LLM audit workflow.",
+      "files": [
+        "run_train.py",
+        "run_backtest.py",
+        "run_predict.py",
+        "run_autopilot.py",
+        "run_retrain.py",
+        "run_server.py",
+        "run_kalshi_event_pipeline.py",
+        "run_wrds_daily_refresh.py",
+        "run_rehydrate_cache_metadata.py",
+        "scripts/alpaca_intraday_download.py",
+        "scripts/ibkr_intraday_download.py",
+        "scripts/ibkr_daily_gapfill.py",
+        "scripts/compare_regime_models.py",
+        "scripts/generate_types.py",
+        "scripts/extract_dependencies.py",
+        "scripts/generate_interface_contracts.py",
+        "scripts/hotspot_scoring.py"
+      ],
+      "file_count": 17,
+      "total_lines": 8883,
+      "depends_on": [
+        "shared_infrastructure",
+        "data_ingestion_quality",
+        "feature_engineering",
+        "regime_detection",
+        "backtesting_risk",
+        "model_training_prediction",
+        "autopilot",
+        "kalshi",
+        "api_frontend"
+      ],
+      "depended_on_by": [],
+      "cross_references": {
+        "from_other_subsystems": [],
+        "to_other_subsystems": []
+      },
+      "shared_artifacts": [
+        {
+          "artifact": "results/backtest_*d_summary.json",
+          "writer": "run_backtest.py",
+          "readers": ["api/services/backtest_service.py", "api/services/results_service.py", "evaluation/engine.py"],
+          "note": "Entry point writes artifacts consumed by api_frontend and evaluation_diagnostics subsystems"
+        }
+      ],
+      "clustering_rules_applied": [
+        "Rule 1 (same_module): scripts/* files stay together",
+        "Rule 4a (leaf_module_handling): 0 fan-in → stays in own subsystem, LOW priority for audit since changes cannot cascade"
+      ],
+      "audit_notes": "LOW priority for audit — leaf consumers with 0 fan-in. Changes here cannot cascade to other subsystems. run_backtest.py writes backtest_*d_summary.json (shared artifact). run_wrds_daily_refresh.py (915 lines) is the most complex entry point. Audit scripts (extract_dependencies.py, generate_interface_contracts.py, hotspot_scoring.py) are tooling for this audit workflow and do not affect production.",
+      "audit_priority": "LOW",
+      "hotspot_files": {}
+    }
+  },
+  "shared_artifact_coupling": {
+    "description": "6 shared artifacts create file-based coupling not visible in import analysis. These create bidirectional edges (weight 2) between subsystems for clustering purposes.",
+    "artifacts": [
+      {
+        "artifact": "trained_models/ensemble_*d_*.pkl",
+        "format": "joblib",
+        "writer_subsystem": "model_training_prediction",
+        "writer_file": "models/trainer.py",
+        "reader_subsystems": ["model_training_prediction", "api_frontend"],
+        "reader_files": ["models/predictor.py", "api/services/model_service.py"]
+      },
+      {
+        "artifact": "trained_models/ensemble_*d_meta.json",
+        "format": "JSON",
+        "writer_subsystem": "model_training_prediction",
+        "writer_file": "models/trainer.py",
+        "reader_subsystems": ["model_training_prediction", "api_frontend"],
+        "reader_files": ["models/predictor.py", "api/services/model_service.py"],
+        "required_fields": ["global_features", "global_feature_medians", "global_target_std", "regime_models"]
+      },
+      {
+        "artifact": "results/autopilot/strategy_registry.json",
+        "format": "JSON",
+        "writer_subsystem": "autopilot",
+        "writer_file": "autopilot/registry.py",
+        "reader_subsystems": ["autopilot", "api_frontend"],
+        "reader_files": ["autopilot/registry.py", "api/services/autopilot_service.py"]
+      },
+      {
+        "artifact": "data/cache/*.parquet",
+        "format": "Parquet",
+        "writer_subsystem": "data_ingestion_quality",
+        "writer_file": "data/local_cache.py",
+        "reader_subsystems": ["data_ingestion_quality", "feature_engineering"],
+        "reader_files": ["data/loader.py", "features/pipeline.py"],
+        "schema": "Open, High, Low, Close, Volume, date"
+      },
+      {
+        "artifact": "results/backtest_*d_summary.json",
+        "format": "JSON",
+        "writer_subsystem": "entry_points_scripts",
+        "writer_file": "run_backtest.py",
+        "reader_subsystems": ["api_frontend", "evaluation_diagnostics"],
+        "reader_files": ["api/services/backtest_service.py", "api/services/results_service.py", "evaluation/engine.py"],
+        "fields": "17 fields including regime_breakdown"
+      },
+      {
+        "artifact": "data/kalshi.duckdb",
+        "format": "DuckDB",
+        "writer_subsystem": "kalshi",
+        "writer_file": "kalshi/storage.py",
+        "reader_subsystems": ["kalshi", "api_frontend"],
+        "reader_files": ["kalshi/pipeline.py", "kalshi/events.py", "api/services/kalshi_service.py"],
+        "tables": 18,
+        "features": "versioning, audit trail"
+      }
+    ]
+  },
+  "architectural_cycles": [
+    {
+      "name": "autopilot_api_circular_dependency",
+      "severity": "architectural_concern",
+      "subsystems_involved": ["autopilot", "api_frontend"],
+      "edge_count": 6,
+      "forward_edges": [
+        "autopilot/paper_trader.py:173 →(lazy)→ api.services.health_risk_feedback",
+        "autopilot/paper_trader.py:189 →(conditional)→ api.services.health_service.HealthService",
+        "autopilot/paper_trader.py:211 →(conditional)→ api.ab_testing.ABTestRegistry",
+        "autopilot/paper_trader.py:532 →(conditional)→ api.services.health_service.HealthService",
+        "autopilot/engine.py:1868 →(lazy)→ api.services.health_service.HealthService",
+        "autopilot/engine.py:1911 →(conditional)→ api.services.health_service.HealthService"
+      ],
+      "reverse_edges": [
+        "api/jobs/autopilot_job.py:12 →(lazy)→ autopilot.engine.AutopilotEngine"
+      ],
+      "is_true_scc": false,
+      "reason": "No file-level cycle; api files do not import back from autopilot in their service layer. The reverse path goes through api/jobs/autopilot_job.py which is a job runner, not a service dependency.",
+      "clustering_decision": "Do NOT merge autopilot and api_frontend. The circular dependency is an architectural concern requiring refactoring, not a sign of subsystem cohesion. Keeping them separate highlights the debt."
+    }
+  ],
+  "verification_checklist": {
+    "every_py_file_assigned": {
+      "status": "PASS",
+      "total_files_in_repo": 208,
+      "total_files_assigned": 208,
+      "unassigned_files": 0,
+      "duplicate_assignments": 0
+    },
+    "bilateral_coupling_files_colocated": {
+      "status": "PASS",
+      "cases": [
+        "data/loader.py ↔ validation/data_integrity.py → both in data_ingestion_quality"
+      ]
+    },
+    "universal_hub_isolation": {
+      "status": "PASS",
+      "hub_files": ["config.py", "config_structured.py", "reproducibility.py", "utils/logging.py"],
+      "hub_subsystem": "shared_infrastructure",
+      "consumers_NOT_pulled_in": "All 10 consuming subsystems remain separate"
+    },
+    "size_bounds": {
+      "status": "PASS_WITH_EXCEPTIONS",
+      "subsystems_within_bounds": 9,
+      "exceptions": [
+        {
+          "subsystem": "backtesting_risk",
+          "file_count": 28,
+          "justification": "3 files above 25 target. backtest/engine.py:316-320 imports 5 risk classes — splitting would require auditing tightly coupled files across subsystem boundaries."
+        },
+        {
+          "subsystem": "api_frontend",
+          "file_count": 59,
+          "justification": "34 files above 25 target. All internal to api/ module with routers→services→schemas layering. Splitting would break internal cohesion."
+        }
+      ]
+    },
+    "cross_references_documented": {
+      "status": "PASS",
+      "cross_subsystem_contract_files": [
+        "regime/shock_vector.py → assigned to regime_detection, cross-referenced by backtesting_risk",
+        "regime/uncertainty_gate.py → assigned to regime_detection, cross-referenced by backtesting_risk and autopilot",
+        "regime/correlation.py → assigned to regime_detection, cross-referenced by feature_engineering (lazy)",
+        "validation/preconditions.py → assigned to backtesting_risk, cross-referenced by model_training_prediction",
+        "validation/data_integrity.py → assigned to data_ingestion_quality, defined in validation/"
+      ]
+    },
+    "shared_artifact_coupling_accounted": {
+      "status": "PASS",
+      "artifacts_documented": 6,
+      "all_writers_and_readers_identified": true
+    },
+    "valid_json": {
+      "status": "PASS"
+    }
+  }
+}
