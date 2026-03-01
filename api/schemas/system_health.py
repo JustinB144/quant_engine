@@ -3,11 +3,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class QuickStatus(BaseModel):
     """Lightweight health check response."""
+
+    model_config = ConfigDict(extra="allow")
 
     status: str = "healthy"
     checks: Dict[str, str] = Field(default_factory=dict)

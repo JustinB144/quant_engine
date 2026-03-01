@@ -3,11 +3,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class DashboardKPIs(BaseModel):
     """Key performance indicators for the dashboard summary."""
+
+    model_config = ConfigDict(extra="allow")
 
     sharpe: Optional[float] = None
     sortino: Optional[float] = None

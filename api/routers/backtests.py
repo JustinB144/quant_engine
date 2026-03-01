@@ -12,6 +12,7 @@ from ..deps.auth import require_auth
 from ..deps.providers import get_cache, get_job_runner, get_job_store
 from ..jobs.runner import JobRunner
 from ..jobs.store import JobStore
+from ..schemas.backtests import BacktestSummary
 from ..schemas.compute import BacktestRequest
 from ..schemas.envelope import ApiResponse
 from ..services.backtest_service import BacktestService
@@ -31,7 +32,7 @@ def _extract_backtest_meta(data: dict) -> dict:
     return meta_fields
 
 
-@router.get("/latest")
+@router.get("/latest", response_model=ApiResponse[BacktestSummary])
 async def latest_backtest(
     horizon: int = 10,
     cache: CacheManager = Depends(get_cache),
@@ -46,7 +47,7 @@ async def latest_backtest(
     elapsed = (time.monotonic() - t0) * 1000
     cache.set(cache_key, data)
     meta_fields = _extract_backtest_meta(data)
-    return ApiResponse.success(data, elapsed_ms=elapsed, **meta_fields)
+    return ApiResponse.success(BacktestSummary(**data), elapsed_ms=elapsed, **meta_fields)
 
 
 @router.get("/latest/trades")

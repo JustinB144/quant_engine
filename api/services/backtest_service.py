@@ -21,8 +21,12 @@ class BacktestService:
         summary_path = RESULTS_DIR / f"backtest_{horizon}d_summary.json"
         if not summary_path.exists():
             return {"available": False, "horizon": horizon}
-        with open(summary_path) as f:
-            summary = json.load(f)
+        try:
+            with open(summary_path) as f:
+                summary = json.load(f)
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
+            logger.warning("Corrupt backtest summary for horizon %d: %s", horizon, e)
+            return {"available": False, "horizon": horizon}
         summary["available"] = True
 
         # Add model staleness info
@@ -48,7 +52,11 @@ class BacktestService:
         path = RESULTS_DIR / f"backtest_{horizon}d_trades.csv"
         if not path.exists():
             return {"available": False, "trades": [], "total": 0}
-        df = pd.read_csv(path)
+        try:
+            df = pd.read_csv(path)
+        except (pd.errors.ParserError, UnicodeDecodeError, OSError) as e:
+            logger.warning("Corrupt trades CSV for horizon %d: %s", horizon, e)
+            return {"available": False, "trades": [], "total": 0}
         total = len(df)
         page = df.iloc[offset : offset + limit]
         trades = page.replace({np.nan: None}).to_dict(orient="records")

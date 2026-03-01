@@ -21,8 +21,12 @@ class ResultsService:
         path = RESULTS_DIR / f"backtest_{horizon}d_summary.json"
         if not path.exists():
             return {"available": False, "horizon": horizon}
-        with open(path) as f:
-            data = json.load(f)
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
+            logger.warning("Corrupt backtest summary %s: %s", path, e)
+            return {"available": False, "horizon": horizon}
         data["available"] = True
         return data
 
@@ -39,7 +43,11 @@ class ResultsService:
         path = RESULTS_DIR / f"predictions_{horizon}d.csv"
         if not path.exists():
             return {"available": False, "horizon": horizon}
-        df = pd.read_csv(path)
+        try:
+            df = pd.read_csv(path)
+        except (pd.errors.ParserError, UnicodeDecodeError, OSError) as e:
+            logger.warning("Corrupt predictions CSV %s: %s", path, e)
+            return {"available": False, "horizon": horizon}
 
         # Compute cs_zscore if not in the CSV
         if "cs_zscore" not in df.columns and "predicted_return" in df.columns:

@@ -146,6 +146,14 @@ class PipelineOrchestrator:
             state.regimes = all_regime["regime"]
             state.regime_probs = pd.concat(regime_prob_dfs) if regime_prob_dfs else None
 
+        # Invalidate stale API caches after fresh data load
+        try:
+            from .cache.invalidation import invalidate_on_data_refresh
+            from .deps.providers import get_cache
+            invalidate_on_data_refresh(get_cache())
+        except Exception:
+            pass  # Cache invalidation failure is non-fatal
+
         if progress_callback:
             progress_callback(0.6, "Pipeline ready")
         return state

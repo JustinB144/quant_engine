@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
 from ..deps.auth import require_auth
@@ -18,9 +17,9 @@ from ..schemas.envelope import ApiResponse
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
-def _not_found(job_id: str) -> JSONResponse:
-    resp = ApiResponse.fail(f"Job {job_id} not found")
-    return JSONResponse(status_code=404, content=resp.model_dump())
+def _not_found(job_id: str) -> None:
+    """Raise JobNotFoundError to be handled by the global error handler."""
+    raise JobNotFoundError(f"Job '{job_id}' not found")
 
 
 @router.get("")
@@ -39,7 +38,7 @@ async def get_job(
 ) -> ApiResponse:
     rec = await store.get_job(job_id)
     if rec is None:
-        return _not_found(job_id)
+        _not_found(job_id)
     return ApiResponse.success(rec.model_dump())
 
 
@@ -51,7 +50,7 @@ async def job_events(
 ):
     rec = await store.get_job(job_id)
     if rec is None:
-        return _not_found(job_id)
+        _not_found(job_id)
 
     async def _generate():
         async for event in runner.subscribe_events(job_id):
@@ -68,6 +67,6 @@ async def cancel_job(
 ) -> ApiResponse:
     rec = await store.get_job(job_id)
     if rec is None:
-        return _not_found(job_id)
+        _not_found(job_id)
     cancelled = await runner.cancel(job_id)
     return ApiResponse.success({"cancelled": cancelled})

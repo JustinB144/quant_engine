@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 
 from ..cache.manager import CacheManager
 from ..deps.providers import get_cache
+from ..schemas.dashboard import DashboardKPIs
 from ..schemas.envelope import ApiResponse
 from ..services.backtest_service import BacktestService
 from ..services.regime_service import RegimeService
@@ -15,7 +16,7 @@ from ..services.regime_service import RegimeService
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
-@router.get("/summary")
+@router.get("/summary", response_model=ApiResponse[DashboardKPIs])
 async def dashboard_summary(cache: CacheManager = Depends(get_cache)) -> ApiResponse:
     cached = cache.get("dashboard:summary")
     if cached is not None:
@@ -33,7 +34,7 @@ async def dashboard_summary(cache: CacheManager = Depends(get_cache)) -> ApiResp
         meta_fields["sizing_method"] = data["sizing_method"]
     if "walk_forward_mode" in data:
         meta_fields["walk_forward_mode"] = data["walk_forward_mode"]
-    return ApiResponse.success(data, elapsed_ms=elapsed, **meta_fields)
+    return ApiResponse.success(DashboardKPIs(**data), elapsed_ms=elapsed, **meta_fields)
 
 
 @router.get("/regime")

@@ -244,7 +244,7 @@ async def client(app):
     from httpx import ASGITransport, AsyncClient
 
     async with AsyncClient(
-        transport=ASGITransport(app=app),
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
         base_url="http://testserver",
     ) as ac:
         yield ac

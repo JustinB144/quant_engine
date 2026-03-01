@@ -12,12 +12,26 @@ logger = logging.getLogger(__name__)
 class ModelService:
     """Synchronous model metadata / health wrapper."""
 
+    def __init__(self) -> None:
+        self._registry = None
+        self._governance = None
+        try:
+            from quant_engine.models.versioning import ModelRegistry
+            self._registry = ModelRegistry()
+        except Exception as e:
+            logger.warning("ModelRegistry unavailable: %s", e)
+
+        try:
+            from quant_engine.models.governance import ModelGovernance
+            self._governance = ModelGovernance()
+        except Exception as e:
+            logger.warning("ModelGovernance unavailable: %s", e)
+
     def list_versions(self) -> List[Dict[str, Any]]:
         """Return all registered model versions."""
-        from quant_engine.models.versioning import ModelRegistry
-
-        registry = ModelRegistry()
-        versions = registry.list_versions()
+        if self._registry is None:
+            return [{"error": "Model registry unavailable", "status": "degraded"}]
+        versions = self._registry.list_versions()
         return [v.to_dict() for v in versions]
 
     def get_model_health(self) -> Dict[str, Any]:
@@ -88,10 +102,9 @@ class ModelService:
 
     def get_champion_info(self, horizon: int = 10) -> Dict[str, Any]:
         """Return champion model info for a given horizon."""
-        from quant_engine.models.governance import ModelGovernance
-
-        gov = ModelGovernance()
-        version_id = gov.get_champion_version(horizon)
+        if self._governance is None:
+            return {"horizon": horizon, "champion_version": None, "error": "Model governance unavailable", "status": "degraded"}
+        version_id = self._governance.get_champion_version(horizon)
         return {
             "horizon": horizon,
             "champion_version": version_id,

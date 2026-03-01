@@ -124,6 +124,14 @@ async def _lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Config validation could not run: %s", e)
 
+    # Clear stale caches from previous runs
+    try:
+        from .cache.invalidation import invalidate_on_data_refresh
+        invalidate_on_data_refresh(get_cache())
+        logger.info("Cleared stale data caches from previous run")
+    except Exception:
+        logger.debug("Startup cache invalidation skipped", exc_info=True)
+
     # Attach log buffer handler
     from .routers.logs import setup_log_buffer, teardown_log_buffer
     setup_log_buffer()

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections import deque
 
 from fastapi import APIRouter
@@ -50,5 +51,7 @@ def teardown_log_buffer() -> None:
 
 @router.get("")
 async def get_logs(last_n: int = 100) -> ApiResponse:
+    t0 = time.monotonic()
     entries = list(_LOG_BUFFER)[-last_n:]
-    return ApiResponse.success(entries)
+    elapsed = (time.monotonic() - t0) * 1000
+    return ApiResponse.success(entries, elapsed_ms=elapsed)
