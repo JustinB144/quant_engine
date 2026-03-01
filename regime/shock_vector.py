@@ -340,6 +340,7 @@ def compute_shock_vectors(
     bocpd_max_runlength: int = 200,
     jump_sigma_threshold: float = 2.5,
     vol_lookback: int = 20,
+    changepoint_threshold: Optional[float] = None,
 ) -> Dict:
     """Compute ShockVectors for every bar in a price series.
 
@@ -371,6 +372,9 @@ def compute_shock_vectors(
         Sigma threshold for jump detection (default 2.5).
     vol_lookback : int
         Lookback window for realized volatility and jump detection.
+    changepoint_threshold : float, optional
+        BOCPD changepoint probability threshold for shock event detection.
+        If ``None``, defaults to ``BOCPD_CHANGEPOINT_THRESHOLD`` from config.
 
     Returns
     -------
@@ -379,6 +383,15 @@ def compute_shock_vectors(
         ``ShockVector``.  One entry per bar in ``ohlcv``.
     """
     import pandas as pd
+
+    # Resolve config-driven defaults
+    from ..config import SHOCK_VECTOR_SCHEMA_VERSION
+    if changepoint_threshold is None:
+        try:
+            from ..config import BOCPD_CHANGEPOINT_THRESHOLD
+            changepoint_threshold = BOCPD_CHANGEPOINT_THRESHOLD
+        except ImportError:
+            changepoint_threshold = 0.50
 
     if ohlcv is None or len(ohlcv) == 0:
         return {}
@@ -494,7 +507,7 @@ def compute_shock_vectors(
         }
 
         sv = ShockVector(
-            schema_version="1.0",
+            schema_version=SHOCK_VECTOR_SCHEMA_VERSION,
             timestamp=ts,
             ticker=ticker,
             hmm_regime=int(regime_vals[i]),

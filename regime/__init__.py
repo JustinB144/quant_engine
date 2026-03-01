@@ -1,6 +1,6 @@
 """Regime modeling components."""
 
-from .bocpd import BOCPDDetector, BOCPDResult, BOCPDBatchResult
+# Core imports (no heavy dependencies)
 from .confidence_calibrator import ConfidenceCalibrator
 from .consensus import RegimeConsensus
 from .correlation import CorrelationRegimeDetector
@@ -16,6 +16,18 @@ from .jump_model_pypi import PyPIJumpModel
 from .online_update import OnlineRegimeUpdater
 from .shock_vector import ShockVector, ShockVectorValidator, compute_shock_vectors
 from .uncertainty_gate import UncertaintyGate
+
+# BOCPD requires scipy — import lazily to avoid hard scipy dependency
+# for consumers that don't use change-point detection.
+def __getattr__(name):
+    """Lazy import for optional BOCPD components."""
+    if name in ("BOCPDDetector", "BOCPDResult", "BOCPDBatchResult"):
+        from .bocpd import BOCPDDetector, BOCPDResult, BOCPDBatchResult
+        globals()["BOCPDDetector"] = BOCPDDetector
+        globals()["BOCPDResult"] = BOCPDResult
+        globals()["BOCPDBatchResult"] = BOCPDBatchResult
+        return globals()[name]
+    raise AttributeError(f"module 'regime' has no attribute {name!r}")
 
 __all__ = [
     "BOCPDDetector",
