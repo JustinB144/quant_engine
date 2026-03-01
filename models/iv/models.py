@@ -67,7 +67,13 @@ class BlackScholes:
             if T <= 0:
                 payoff = max(S - K, 0) if option_type == OptionType.CALL else max(K - S, 0)
                 return payoff
-            return 0.0
+            if S <= 0 or K <= 0:
+                return 0.0
+            # sigma <= 0 with T > 0: deterministic case, return discounted intrinsic
+            if option_type == OptionType.CALL:
+                return max(0.0, S * np.exp(-q * T) - K * np.exp(-r * T))
+            else:
+                return max(0.0, K * np.exp(-r * T) - S * np.exp(-q * T))
 
         d1 = (np.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
         d2 = d1 - sigma * np.sqrt(T)

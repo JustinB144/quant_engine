@@ -193,6 +193,9 @@ INTRADAY_QUARANTINE_DIR = DATA_CACHE_DIR / "quarantine"  # STATUS: ACTIVE — da
 # ── Targets ────────────────────────────────────────────────────────────
 FORWARD_HORIZONS = list(_cfg.model.forward_horizons)  # STATUS: ACTIVE — models/trainer.py, run_*.py; days ahead to predict
 
+# ── Feature Deduplication ──────────────────────────────────────────────
+STRICT_FEATURE_DEDUP = False                       # STATUS: ACTIVE — features/pipeline.py; raise error on duplicate features instead of warning
+
 # ── Features ───────────────────────────────────────────────────────────
 INTERACTION_PAIRS = [                              # STATUS: ACTIVE — features/pipeline.py; regime-conditional interaction features
     # (feature_a, feature_b, operation)
@@ -223,6 +226,7 @@ REGIME_NAMES = {                                   # STATUS: ACTIVE — used in 
     2: "mean_reverting",
     3: "high_volatility",
 }
+REGIME_SUPPRESS_ID = 3                             # STATUS: ACTIVE — models/predictor.py; regime code to suppress (3 = high_volatility per REGIME_NAMES)
 MIN_REGIME_SAMPLES = 50                           # STATUS: ACTIVE — models/trainer.py; minimum training samples per regime model (SPEC_10 T7: reduced from 100 to 50 for short regimes like crashes)
 REGIME_MODEL_TYPE = _cfg.regime.model_type         # STATUS: ACTIVE — regime/detector.py; "jump", "hmm", or "rule"
 REGIME_HMM_STATES = _cfg.regime.n_states           # STATUS: ACTIVE — regime/hmm.py; number of hidden states
@@ -475,6 +479,7 @@ PROMOTION_MIN_PROFIT_FACTOR = _cfg.promotion.min_profit_factor  # STATUS: ACTIVE
 PROMOTION_MAX_DRAWDOWN = _cfg.promotion.max_drawdown  # STATUS: ACTIVE — autopilot/promotion_gate.py
 PROMOTION_MIN_ANNUAL_RETURN = _cfg.promotion.min_annual_return  # STATUS: ACTIVE — autopilot/promotion_gate.py
 PROMOTION_MAX_ACTIVE_STRATEGIES = _cfg.promotion.max_active_strategies  # STATUS: ACTIVE — autopilot/registry.py
+PROMOTION_GRACE_CYCLES = 3  # STATUS: ACTIVE — autopilot/registry.py; cycles before removing a non-evaluated incumbent
 PROMOTION_REQUIRE_ADVANCED_CONTRACT = _cfg.promotion.require_advanced_contract  # STATUS: ACTIVE — autopilot/promotion_gate.py
 PROMOTION_MAX_DSR_PVALUE = _cfg.promotion.max_dsr_pvalue  # STATUS: ACTIVE — autopilot/promotion_gate.py
 PROMOTION_MAX_PBO = _cfg.promotion.max_pbo         # STATUS: ACTIVE — autopilot/promotion_gate.py; tightened from 0.50 (Bailey et al. 2017)

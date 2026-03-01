@@ -22,11 +22,14 @@ Usage:
         trigger.record_retraining(n_trades=5000, oos_spearman=0.12)
 """
 import json
+import logging
 import os
 from datetime import datetime, timedelta
 from typing import Tuple, List, Dict, Optional
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from ..config import MODEL_DIR
 from .shift_detection import DistributionShiftDetector
@@ -181,9 +184,17 @@ class RetrainTrigger:
 
         return len(reasons) > 0, reasons
 
-    def check(self) -> Tuple[bool, List[str]]:
+    def check(
+        self,
+        prediction_errors: Optional[np.ndarray] = None,
+        current_features: Optional["pd.DataFrame"] = None,
+    ) -> Tuple[bool, List[str]]:
         """
         Check all retraining triggers.
+
+        Args:
+            prediction_errors: Recent prediction errors for CUSUM shift detection.
+            current_features: Current feature DataFrame for PSI shift detection.
 
         Returns:
             Tuple of (should_retrain: bool, reasons: List[str])
@@ -234,7 +245,14 @@ class RetrainTrigger:
 
         # 4. MODEL QUALITY CHECK (from last training)
         oos_spearman = self.metadata.get('oos_spearman', 0.0)
-        if oos_spearman > 0 and oos_spearman < self.min_spearman:
+        if oos_spearman < 0:
+            # Negative correlation means model is actively wrong — must retrain
+            logger.warning("OOS Spearman is negative (%.3f), triggering retrain", oos_spearman)
+            reasons.append(
+                f"Model quality: OOS Spearman is negative ({oos_spearman:.3f}), "
+                f"model is actively wrong."
+            )
+        elif oos_spearman < self.min_spearman:
             reasons.append(
                 f"Model quality: Last OOS Spearman was {oos_spearman:.3f} "
                 f"(minimum: {self.min_spearman:.3f})."
@@ -267,6 +285,17 @@ class RetrainTrigger:
                             f"Sharpe degradation: Rolling Sharpe {rolling_sharpe:.2f} "
                             f"below threshold {self.min_sharpe:.2f}."
                         )
+
+        # 7. DISTRIBUTION SHIFT CHECK
+        if prediction_errors is not None or current_features is not None:
+            shift_detected, shift_reasons = self.check_shift(
+                prediction_errors=prediction_errors,
+                current_features=current_features,
+            )
+            if shift_detected:
+                reasons.extend(
+                    f"Distribution shift: {r}" for r in shift_reasons
+                )
 
         should_retrain = len(reasons) > 0
         return should_retrain, reasons

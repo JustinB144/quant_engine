@@ -9,11 +9,14 @@ Architecture:
     - Select config with best average OOS performance
     - Apply DSR penalty to penalise excessive search
 """
+import logging
 from itertools import product
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 try:
     from scipy import stats as sp_stats
@@ -97,6 +100,7 @@ def walk_forward_select(
     param_grid: Dict[str, List],
     n_folds: int = 5,
     horizon: int = 10,
+    min_samples: int = 50,
 ) -> Dict[str, Any]:
     """Select the best model configuration via walk-forward cross-validation.
 
@@ -121,6 +125,8 @@ def walk_forward_select(
         Number of walk-forward folds.
     horizon : int, default 10
         Prediction horizon (used for purge gap between train/test folds).
+    min_samples : int, default 50
+        Minimum number of non-NaN samples required to proceed.
 
     Returns
     -------
@@ -143,10 +149,29 @@ def walk_forward_select(
             "Install it before calling this function."
         )
 
-    # Drop rows with missing targets
-    valid = targets.notna() & features.notna().any(axis=1)
+    # Drop rows with missing targets or any NaN features
+    # (GradientBoostingRegressor raises on NaN inputs)
+    feature_cols = list(features.columns)
+    target_valid = targets.notna()
+    feature_valid = features.notna().all(axis=1)
+    valid = target_valid & feature_valid
     X = features[valid].copy()
     y = targets[valid].copy()
+
+    default_params = {k: v[0] for k, v in param_grid.items()}
+    if len(X) < min_samples:
+        logger.warning(
+            "Insufficient non-NaN samples (%d < %d), returning default config",
+            len(X), min_samples,
+        )
+        return {
+            "best_params": default_params,
+            "best_score": 0.0,
+            "raw_score": 0.0,
+            "n_trials": 0,
+            "dsr_penalty": 1.0,
+            "fold_scores": [],
+        }
 
     dates = _extract_dates(X.index)
     n_obs = len(X)
@@ -155,7 +180,6 @@ def walk_forward_select(
     folds = _expanding_walk_forward_folds(dates, n_folds=n_folds, horizon=horizon)
     if not folds:
         # Fallback: return default params
-        default_params = {k: v[0] for k, v in param_grid.items()}
         return {
             "best_params": default_params,
             "best_score": 0.0,
@@ -218,6 +242,18 @@ def walk_forward_select(
     dsr_penalty_factor = max(0.0, (n_trials_total - 1) / (2.0 * max(1, n_obs)))
     dsr_multiplier = 1.0 - min(1.0, dsr_penalty_factor)
     adjusted_scores = avg_scores * dsr_multiplier
+
+    # Guard against all-NaN scores (e.g. all folds had insufficient data)
+    if np.all(np.isnan(adjusted_scores)):
+        logger.warning("All walk-forward scores are NaN, returning default config")
+        return {
+            "best_params": default_params,
+            "best_score": 0.0,
+            "raw_score": 0.0,
+            "n_trials": n_trials,
+            "dsr_penalty": float(dsr_multiplier),
+            "fold_scores": [],
+        }
 
     # Select best config
     best_idx = int(np.nanargmax(adjusted_scores))

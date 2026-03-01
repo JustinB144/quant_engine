@@ -18,7 +18,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from ..config import MODEL_DIR, REGIME_NAMES, TRUTH_LAYER_ENFORCE_CAUSALITY
+from ..config import MODEL_DIR, REGIME_NAMES, REGIME_SUPPRESS_ID, TRUTH_LAYER_ENFORCE_CAUSALITY
 from ..features.pipeline import get_feature_type
 from .conformal import ConformalPredictor
 from .governance import ModelGovernance
@@ -210,20 +210,24 @@ class EnsemblePredictor:
                 blend_alpha: weight given to regime model
         """
         # ── Feature causality enforcement ──
-        # Block RESEARCH_ONLY features from reaching live predictions.
-        # These features may use future or cross-sectional data that is
-        # unavailable at prediction time.
+        # Block RESEARCH_ONLY and UNKNOWN features from reaching live
+        # predictions.  RESEARCH_ONLY features may use future or
+        # cross-sectional data; UNKNOWN features have no causality
+        # metadata and cannot be assumed safe.
+        # (Coordinates with SPEC_10 T2: get_feature_type defaults to UNKNOWN)
         if TRUTH_LAYER_ENFORCE_CAUSALITY:
-            research_only = {
-                col for col in features.columns
-                if get_feature_type(col) == "RESEARCH_ONLY"
+            blocked_types = {"RESEARCH_ONLY", "UNKNOWN"}
+            blocked = {
+                col: get_feature_type(col) for col in features.columns
+                if get_feature_type(col) in blocked_types
             }
-            if research_only:
+            if blocked:
                 raise ValueError(
-                    f"RESEARCH_ONLY features in prediction: {sorted(research_only)}. "
-                    f"These features may contain future data and cannot be used "
-                    f"for live predictions. Use production_mode=True in "
-                    f"FeaturePipeline or filter them before calling predict()."
+                    f"Blocked features in prediction: "
+                    f"{sorted(f'{col} ({typ})' for col, typ in blocked.items())}. "
+                    f"Only explicitly tagged CAUSAL features are allowed. "
+                    f"Use production_mode=True in FeaturePipeline or filter "
+                    f"them before calling predict()."
                 )
 
         n = len(features)
@@ -390,8 +394,17 @@ class EnsemblePredictor:
         result["confidence"] = np.clip(conf, 0, 1)
 
         # ── Calibrate confidence if calibrator available ──
+        # Calibrator was trained on composite confidence in [0, 1]
+        # (see trainer.py _fit_calibrator); ensure input domain matches.
         if self.calibrator is not None:
-            result["confidence"] = self._calibrate_confidence(result["confidence"].values)
+            conf_vals = result["confidence"].values
+            if not np.all((conf_vals >= 0.0) & (conf_vals <= 1.0)):
+                logger.warning(
+                    "Calibrator input outside [0, 1] (min=%.4f, max=%.4f); clipping",
+                    float(np.min(conf_vals)), float(np.max(conf_vals)),
+                )
+                conf_vals = np.clip(conf_vals, 0.0, 1.0)
+            result["confidence"] = self._calibrate_confidence(conf_vals)
 
         # ── Prediction intervals (conformal prediction) ──
         if self.conformal is not None and self.conformal.is_calibrated:
@@ -408,14 +421,16 @@ class EnsemblePredictor:
             result["prediction_interval_width"] = np.nan
             result["uncertainty_scalar"] = 1.0
 
-        # ── Regime 2 suppression ──
-        # When regime == 2 (high_vol), suppress predictions by zeroing
+        # ── Regime suppression ──
+        # Suppress predictions for the configured regime by zeroing
         # confidence and flagging the row.  This centralizes the trade gate
         # so both backtester AND live trading honor it.
+        # See config.py REGIME_NAMES: {0: trending_bull, 1: trending_bear,
+        #   2: mean_reverting, 3: high_volatility}
         regime_vals = regimes.reindex(features.index).fillna(-1).astype(int).values
-        regime_2_mask = regime_vals == 2
-        result["regime_suppressed"] = regime_2_mask
-        result.loc[regime_2_mask, "confidence"] = 0.0
+        regime_suppress_mask = regime_vals == REGIME_SUPPRESS_ID  # high_volatility (canonical regime 3)
+        result["regime_suppressed"] = regime_suppress_mask
+        result.loc[regime_suppress_mask, "confidence"] = 0.0
 
         # Attach member predictions as DataFrame metadata for disagreement
         # tracking (SPEC-H02).  Callers can access via result.attrs.

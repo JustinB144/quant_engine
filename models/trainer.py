@@ -1591,7 +1591,12 @@ class ModelTrainer:
         global_model, global_scaler, global_features, global_result,
         X: pd.DataFrame, y: pd.Series, horizon: int, versioned: bool,
     ) -> Optional[Dict]:
-        """Fit isotonic regression calibrator on holdout predictions vs outcomes.
+        """Fit isotonic regression calibrator on composite confidence vs outcomes.
+
+        The calibrator domain must match the predictor's composite confidence
+        score (see predictor.py).  Both use the same base_conf formula
+        (geometric mean of holdout and CV correlations) with per-sample
+        modulation so the isotonic mapping is valid at inference.
 
         The holdout is split 50/50 into calibration-fit and calibration-validate
         portions to prevent calibration overfitting. ECE (Expected Calibration
@@ -1637,12 +1642,26 @@ class ModelTrainer:
             )
             direction_correct = direction_correct.astype(float)
 
-            # Raw confidence proxy: absolute prediction magnitude, normalized
+            # ── Composite confidence (must match predictor.py domain) ──
+            # Base confidence from model quality metrics — same formula as
+            # EnsemblePredictor.predict() confidence computation.
+            global_corr = max(0.0, float(global_result.holdout_correlation))
+            cv_corr = max(0.0, float(np.mean(global_result.cv_scores))) if global_result.cv_scores else 0.0
+            base_conf = float(np.sqrt(global_corr * cv_corr)) if cv_corr > 0 else global_corr
+
+            # Per-sample modulation via prediction strength so the calibrator
+            # sees a distribution (not a constant).  At inference the per-sample
+            # variation comes from regime blending; here we use prediction
+            # magnitude as a comparable per-sample signal in [0, 1].
             abs_preds = np.abs(raw_preds)
             if abs_preds.max() > 1e-10:
-                raw_confidence = abs_preds / abs_preds.max()
+                pred_strength = abs_preds / abs_preds.max()
             else:
                 return None
+
+            raw_confidence = np.clip(
+                base_conf * (0.5 + 0.5 * pred_strength), 0.0, 1.0
+            )
 
             # ── Split holdout 50/50: calibration-fit vs calibration-validate ──
             # Use temporal ordering (first half for fitting, second half for validation)

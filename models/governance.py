@@ -122,7 +122,12 @@ class ModelGovernance:
             promoted = True
         else:
             current_score = float(current.get("score", 0.0))
-            threshold = current_score * (1.0 + min_relative_improvement)
+            if current_score >= 0:
+                threshold = current_score * (1.0 + min_relative_improvement)
+            else:
+                # For negative scores, challenger must be better by absolute margin
+                # (relative improvement on negative scores inverts the threshold)
+                threshold = current_score + abs(current_score) * min_relative_improvement
             if score > threshold:
                 promoted = True
                 reason = f"score_improved>{min_relative_improvement:.2%}"
