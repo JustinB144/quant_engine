@@ -58,6 +58,7 @@ from ..backtest.adv_tracker import ADVTracker
 from ..backtest.cost_calibrator import CostCalibrator
 from ..risk.position_sizer import PositionSizer
 from ..risk.stop_loss import StopLossManager
+from ._atomic_write import atomic_json_write, safe_json_load
 from ..risk.portfolio_risk import PortfolioRiskManager
 from .registry import ActiveStrategy
 
@@ -231,24 +232,20 @@ class PaperTrader:
             logger.warning("Failed to record trade to A/B test: %s", e)
 
     def _load_state(self) -> Dict:
-        """Internal helper to load state."""
-        if self.state_path.exists():
-            with open(self.state_path, "r") as f:
-                return json.load(f)
-        return {
+        """Internal helper to load state with corrupt-file recovery."""
+        return safe_json_load(self.state_path, {
             "cash": self.initial_capital,
             "realized_pnl": 0.0,
             "positions": [],
             "trades": [],
             "last_update": None,
-        }
+        })
 
-    def _save_state(self, state: Dict):
+    def _save_state(self, state: Dict) -> None:
+        """Internal helper to persist state atomically."""
         # Keep trade history bounded to prevent unbounded state growth.
-        """Internal helper to persist state."""
         state["trades"] = state.get("trades", [])[-5000:]
-        with open(self.state_path, "w") as f:
-            json.dump(state, f, indent=2, default=str)
+        atomic_json_write(self.state_path, state, indent=2, default=str)
 
     @staticmethod
     def _resolve_as_of(price_data: Dict[str, pd.DataFrame]) -> pd.Timestamp:
@@ -310,11 +307,17 @@ class PaperTrader:
         return str(position.get("ticker", ""))
 
     def _mark_to_market(self, state: Dict, as_of: pd.Timestamp, price_data: Dict[str, pd.DataFrame]) -> float:
-        """Internal helper for mark to market."""
+        """Internal helper for mark to market.
+
+        Also updates ``last_price`` on each position so downstream
+        consumers (e.g. the portfolio optimizer) use current prices
+        rather than stale entry prices.
+        """
         eq = float(state.get("cash", 0.0))
         for pos in state.get("positions", []):
             px = self._current_price(self._position_id(pos), as_of, price_data)
             if px is not None:
+                pos["last_price"] = float(px)
                 eq += float(pos["shares"]) * px
         return eq
 
@@ -487,7 +490,15 @@ class PaperTrader:
         if not np.isfinite(actual_cost):
             return
 
+        # Log price improvement (negative actual cost) for observability
+        if actual_cost < 0:
+            logger.info(
+                "Price improvement on %s %s: %.2f bps (predicted %.2f bps)",
+                side, symbol, actual_cost, predicted_cost,
+            )
+
         # SPEC-E04: Record to cost calibrator for coefficient recalibration
+        # Allow negative costs (price improvement) to flow through unclipped
         if self._cost_calibrator is not None:
             # Estimate market cap from price * volume (rough proxy)
             estimated_mcap = float(price * daily_volume * 200.0)
@@ -496,7 +507,7 @@ class PaperTrader:
                 symbol=symbol,
                 market_cap=estimated_mcap,
                 predicted_cost_bps=float(predicted_cost),
-                actual_cost_bps=float(max(0.0, actual_cost)),
+                actual_cost_bps=float(actual_cost),
                 participation_rate=float(fill.participation_rate),
                 regime=int(regime),
                 fill_timestamp=str(as_of.isoformat()),
@@ -507,7 +518,7 @@ class PaperTrader:
             symbol=symbol,
             side=side,
             predicted_cost_bps=float(predicted_cost),
-            actual_cost_bps=float(max(0.0, actual_cost)),
+            actual_cost_bps=float(actual_cost),
             fill_ratio=float(fill.fill_ratio),
             participation_rate=float(fill.participation_rate),
             regime=int(regime),
@@ -1191,6 +1202,7 @@ class PaperTrader:
                         "ticker": str(row.get("ticker", "")) if "ticker" in row.index else "",
                         "entry_date": str(as_of.date()),
                         "entry_price": float(effective_entry_price),
+                        "last_price": float(px),
                         "shares": float(shares),
                         "holding_days": 0,
                         "max_holding_days": eff_max_holding_days,

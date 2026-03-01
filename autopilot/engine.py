@@ -47,11 +47,10 @@ from ..config import (
     WF_MAX_TRAIN_DATES,
     SIGNAL_TOPK_QUANTILE,
     META_LABELING_ENABLED,
-    META_LABELING_CONFIDENCE_THRESHOLD,
     META_LABELING_RETRAIN_FREQ_DAYS,
     META_LABELING_MIN_SAMPLES,
 )
-from ..data.loader import load_survivorship_universe, load_universe
+from ..data.loader import load_survivorship_universe, load_universe, warn_if_survivorship_biased
 from ..data.survivorship import filter_panel_by_point_in_time_universe
 from ..features.pipeline import FeaturePipeline
 from ..models.cross_sectional import cross_sectional_rank
@@ -64,6 +63,7 @@ from .meta_labeler import MetaLabelingModel
 from .paper_trader import PaperTrader
 from .promotion_gate import PromotionDecision, PromotionGate
 from .registry import StrategyRegistry
+from .strategy_allocator import StrategyAllocator
 from .strategy_discovery import StrategyCandidate, StrategyDiscovery
 
 _PERMNO_RE = re.compile(r"^\d{1,10}$")
@@ -179,6 +179,7 @@ class AutopilotEngine:
         self.gate = PromotionGate()
         self.registry = StrategyRegistry()
         self.paper_trader = PaperTrader()
+        self.allocator = StrategyAllocator()
 
         # Meta-labeling model (Spec 04) — load from disk if available
         self.meta_labeler = MetaLabelingModel()
@@ -236,6 +237,7 @@ class AutopilotEngine:
             data = load_universe(self.tickers, years=self.years, verbose=self.verbose)
         if not data:
             raise RuntimeError("No data loaded for autopilot cycle")
+        warn_if_survivorship_biased(data, context="autopilot")
         self._assert_permno_price_data(data, context="autopilot load")
         return data
 
@@ -1026,7 +1028,12 @@ class AutopilotEngine:
         """
         preds = predictions.copy()
         all_confidences: List[float] = []
-        threshold = META_LABELING_CONFIDENCE_THRESHOLD
+        # Use model's own stored threshold (may differ from global config
+        # if tuned during training) — SPEC_AUDIT_FIX_06 T6
+        threshold = self.meta_labeler.confidence_threshold
+        logger.info(
+            "Meta-labeling filter using model threshold=%.3f", threshold,
+        )
 
         permnos = preds.index.get_level_values(0).unique()
         for permno in permnos:
@@ -1205,7 +1212,7 @@ class AutopilotEngine:
             if self.meta_labeler.is_trained:
                 try:
                     old_conf = self.meta_labeler.predict_confidence(meta_feats)
-                    old_preds = (old_conf >= META_LABELING_CONFIDENCE_THRESHOLD).astype(int)
+                    old_preds = (old_conf >= self.meta_labeler.confidence_threshold).astype(int)
                     aligned = labels.reindex(old_preds.index)
                     valid_mask = aligned.notna()
                     if valid_mask.sum() > 0:
@@ -1218,6 +1225,7 @@ class AutopilotEngine:
 
             metrics = self.meta_labeler.train(meta_feats, labels)
             self.meta_labeler.save()
+            self.meta_labeler.update_current_pointer()
 
             # Log old vs new comparison (Spec 04 T6)
             acc_delta = ""
@@ -1357,8 +1365,14 @@ class AutopilotEngine:
             for pos in positions:
                 permno = str(pos.get("permno", pos.get("ticker", "")))
                 shares = float(pos.get("shares", 0))
-                price = float(pos.get("last_price", pos.get("entry_price", 0)))
-                if shares != 0 and price > 0:
+                price = float(pos.get("last_price", 0))
+                if price <= 0:
+                    logger.warning(
+                        "Missing last_price for %s, skipping from optimizer",
+                        permno,
+                    )
+                    continue
+                if shares != 0:
                     val = shares * price
                     position_values[permno] = val
                     total_position_value += abs(val)
@@ -1767,6 +1781,35 @@ class AutopilotEngine:
                 meta_retrained = self._retrain_meta_labeler(
                     predictions_hist, data
                 )
+
+        # ── SPEC_AUDIT_FIX_06 T8: StrategyAllocator shadow mode ──
+        # Log what the regime-aware allocator WOULD recommend without
+        # applying parameter overrides yet.
+        try:
+            current_regime = 2  # default: mean_reverting
+            regime_conf = 0.5
+            if "regime" in latest_predictions.columns:
+                regime_vals = latest_predictions["regime"].dropna()
+                if len(regime_vals) > 0:
+                    current_regime = int(regime_vals.mode().iloc[0])
+            if "regime_confidence" in latest_predictions.columns:
+                conf_vals = latest_predictions["regime_confidence"].dropna()
+                if len(conf_vals) > 0:
+                    regime_conf = float(conf_vals.mean())
+            regime_profile = self.allocator.get_regime_profile(
+                regime=current_regime,
+                regime_confidence=regime_conf,
+            )
+            self._log(
+                f"  [SHADOW] StrategyAllocator: regime={current_regime}, "
+                f"conf={regime_conf:.2f}, profile={regime_profile.name}, "
+                f"entry_threshold={regime_profile.entry_threshold:.3f}, "
+                f"position_size={regime_profile.position_size_pct:.2f}, "
+                f"max_positions={regime_profile.max_positions}, "
+                f"kelly={regime_profile.kelly_fraction:.2f}"
+            )
+        except Exception as exc:
+            logger.debug("StrategyAllocator shadow mode failed: %s", exc)
 
         paper_report = self.paper_trader.run_cycle(
             active_strategies=active,

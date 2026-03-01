@@ -6,6 +6,7 @@ from dataclasses import dataclass, asdict
 from typing import Dict, List, Optional
 
 import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -280,6 +281,17 @@ class PromotionGate:
                         metrics[f"stress_regime_{regime_code}_sharpe"] = rp.get("sharpe", 0.0)
                         metrics[f"stress_regime_{regime_code}_n_trades"] = rp.get("n_trades", 0)
 
+        # ── Transition-drawdown gate (SPEC_AUDIT_FIX_06 T2) ──
+        # Check if drawdown during regime transitions exceeds the limit.
+        transition_dd = self._compute_transition_drawdown(result, metrics)
+        if transition_dd is not None:
+            metrics["transition_max_drawdown"] = transition_dd
+            if abs(transition_dd) > self.max_transition_drawdown:
+                reasons.append(
+                    f"Transition drawdown {transition_dd:.1%} exceeds "
+                    f"limit {self.max_transition_drawdown:.1%}"
+                )
+
         # Event-strategy contract checks (only enforced when metrics are supplied).
         if "worst_event_loss" in metrics:
             worst_event_loss = float(metrics.get("worst_event_loss", -np.inf))
@@ -363,6 +375,91 @@ class PromotionGate:
             reasons=reasons,
             metrics=metrics,
         )
+
+    @staticmethod
+    def _compute_transition_drawdown(
+        result: BacktestResult,
+        metrics: Dict[str, object],
+    ) -> Optional[float]:
+        """Compute max drawdown during regime-transition windows.
+
+        If ``transition_max_drawdown`` is already present in *metrics*
+        (e.g. from the backtest engine), return that value.  Otherwise,
+        compute it from the equity curve and per-trade regime labels by
+        identifying regime-transition windows (±3 bars around regime
+        changes) and measuring the max drawdown within those windows.
+
+        Returns ``None`` if there is insufficient data.
+        """
+        # Use pre-computed value if available
+        if "transition_max_drawdown" in metrics:
+            return float(metrics["transition_max_drawdown"])
+        if hasattr(result, "transition_max_drawdown") and result.transition_max_drawdown is not None:
+            return float(result.transition_max_drawdown)
+
+        # Compute from equity curve + trade regime labels
+        equity = result.equity_curve
+        if equity is None or len(equity) < 10:
+            return None
+
+        # Build a regime series from trades
+        trades = result.trades
+        if not trades:
+            return None
+
+        # Build a sparse regime series from trade entry/exit dates
+        regime_dates: Dict[str, int] = {}
+        for t in trades:
+            entry_date = str(getattr(t, "entry_date", ""))
+            regime = int(getattr(t, "regime", 0))
+            if entry_date:
+                regime_dates[entry_date] = regime
+
+        if len(regime_dates) < 2:
+            return None
+
+        # Map regime by date, forward-fill to equity curve index
+        regime_series = pd.Series(regime_dates, dtype=int)
+        regime_series.index = pd.to_datetime(regime_series.index)
+        regime_aligned = regime_series.reindex(equity.index).ffill().bfill()
+
+        if regime_aligned.isna().all():
+            return None
+
+        # Find regime change points
+        regime_changes = regime_aligned.diff().fillna(0).abs() > 0
+        change_indices = np.where(regime_changes.values)[0]
+
+        if len(change_indices) == 0:
+            return None
+
+        # Build mask for ±3 bars around each transition
+        n = len(equity)
+        transition_mask = np.zeros(n, dtype=bool)
+        for idx in change_indices:
+            lo = max(0, idx - 3)
+            hi = min(n, idx + 4)  # +4 because upper bound is exclusive
+            transition_mask[lo:hi] = True
+
+        # Extract equity in transition windows
+        transition_equity = equity.values[transition_mask]
+        if len(transition_equity) < 2:
+            return None
+
+        # Compute max drawdown in transition windows
+        running_max = np.maximum.accumulate(transition_equity)
+        drawdowns = (transition_equity - running_max) / np.where(
+            running_max > 0, running_max, 1.0
+        )
+        max_dd = float(np.min(drawdowns))
+
+        logger.info(
+            "Transition drawdown: %.1f%% across %d transition windows (%d bars)",
+            max_dd * 100,
+            len(change_indices),
+            int(transition_mask.sum()),
+        )
+        return max_dd
 
     @staticmethod
     def _compute_fold_consistency(fold_metrics: List[Dict]) -> float:

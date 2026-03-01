@@ -381,8 +381,9 @@ class MetaLabelingModel:
     def save(self, filepath: Optional[Path] = None) -> Path:
         """Save trained model to disk via joblib.
 
-        Writes both a versioned file and a ``meta_labeler_current.joblib``
-        pointer so that the next cycle can load the latest model.
+        Writes the model to *filepath* only.  To also update the
+        ``meta_labeler_current.joblib`` pointer, call
+        :meth:`update_current_pointer` separately.
 
         Args:
             filepath: Explicit target path.  If ``None``, a timestamped
@@ -413,13 +414,23 @@ class MetaLabelingModel:
         }
         joblib.dump(state, filepath)
 
-        # Update "current" pointer
-        self._model_dir.mkdir(parents=True, exist_ok=True)
-        current_path = self._model_dir / "meta_labeler_current.joblib"
-        joblib.dump(state, current_path)
-
         logger.info("Meta-labeling model saved to %s", filepath)
         return filepath
+
+    def update_current_pointer(self) -> None:
+        """Write current model state to the default 'current' path.
+
+        This is separated from :meth:`save` so that saving to an
+        experimental path does NOT silently overwrite the production
+        model pointer.
+        """
+        if not _HAS_JOBLIB:
+            raise RuntimeError("joblib is required for model persistence.")
+        if self.model is None:
+            raise RuntimeError("No trained model to update pointer for.")
+
+        current_path = self._model_dir / "meta_labeler_current.joblib"
+        self.save(current_path)
 
     def load(self, filepath: Optional[Path] = None) -> bool:
         """Load a previously trained model from disk.
