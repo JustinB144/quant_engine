@@ -10,6 +10,7 @@ concurrent processes never observe a partially-written file.
 import json
 import logging
 import os
+import re
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -57,45 +58,110 @@ def _atomic_replace(target: Path, write_fn: Callable[[str], None]) -> None:
         raise
 
 
+def _atomic_pair_write(
+    parquet_path: Path,
+    meta_path: Path,
+    df: pd.DataFrame,
+    meta_payload: Dict[str, object],
+) -> None:
+    """Write data + metadata as an atomic pair.
+
+    Both files are written to a temporary directory first, then atomically
+    moved into place via ``os.replace``.  If either write fails, neither
+    file is updated (the temp dir is cleaned up automatically).
+    """
+    parent = parquet_path.parent
+    with tempfile.TemporaryDirectory(dir=parent) as tmp_dir:
+        tmp_parquet = Path(tmp_dir) / parquet_path.name
+        tmp_meta = Path(tmp_dir) / meta_path.name
+        # Write both to temp dir
+        df.to_parquet(tmp_parquet)
+        tmp_meta.write_text(json.dumps(meta_payload, default=str, indent=2, sort_keys=True))
+        # Atomic move both (on same filesystem, os.replace is atomic)
+        os.replace(str(tmp_parquet), str(parquet_path))
+        os.replace(str(tmp_meta), str(meta_path))
+
+
 def _ensure_cache_dir() -> Path:
     """Create cache directory if it doesn't exist."""
     DATA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     return DATA_CACHE_DIR
 
 
+# Priority-ordered exact/anchored patterns for OHLCV column detection.
+# Avoids greedy substring matching (e.g. "low" in "following").
+_OHLCV_PATTERNS = {
+    "Open": [
+        re.compile(r"^(1\.\s*)?open$", re.I),  # "open", "1. open"
+        re.compile(r"^adj[\._\s]?open$", re.I),  # "adj_open"
+    ],
+    "High": [
+        re.compile(r"^(2\.\s*)?high$", re.I),
+        re.compile(r"^adj[\._\s]?high$", re.I),
+    ],
+    "Low": [
+        re.compile(r"^(3\.\s*)?low$", re.I),
+        re.compile(r"^adj[\._\s]?low$", re.I),
+    ],
+    "Close": [
+        re.compile(r"^(4\.\s*)?close$", re.I),
+        re.compile(r"^adj[\._\s]?close$", re.I),
+    ],
+    "Volume": [
+        re.compile(r"^(5\.\s*|6\.\s*)?volume$", re.I),
+    ],
+}
+
+# Exact-match mappings for non-OHLCV columns (Return, delist, etc.)
+_EXTRA_COLUMN_MAP = {
+    "return": "Return",
+    "ret": "Return",
+    "total_ret": "total_ret",
+    "totalreturn": "total_ret",
+    "total_return": "total_ret",
+    "dlret": "dlret",
+    "delist_event": "delist_event",
+    "is_delist_event": "delist_event",
+    "permno": "permno",
+    "ticker": "ticker",
+    "tic": "ticker",
+}
+
+# Patterns for detecting OHLCV-like column names that didn't match
+_OHLCV_LIKE = re.compile(r"(open|high|low|close|volume)", re.I)
+
+
 def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Normalize OHLCV column names to quant_engine's canonical schema."""
-    column_map = {}
-    used = set()
+    """Normalize OHLCV column names to quant_engine's canonical schema.
+
+    Uses anchored regex patterns to avoid false matches on columns
+    containing OHLCV substrings (e.g. "following", "shallow", "reopen").
+    """
+    column_map: Dict[str, str] = {}
+    used: set = set()
     for col in df.columns:
-        col_str = str(col)
-        col_l = col_str.lower()
+        col_stripped = str(col).strip()
+        col_l = col_stripped.lower()
         target = None
-        if "open" in col_l:
-            target = "Open"
-        elif "high" in col_l:
-            target = "High"
-        elif "low" in col_l:
-            target = "Low"
-        elif "close" in col_l and "adj" not in col_l:
-            target = "Close"
-        elif "volume" in col_l:
-            target = "Volume"
-        elif col_l in {"return", "ret"}:
-            target = "Return"
-        elif col_l in {"total_ret", "totalreturn", "total_return"}:
-            target = "total_ret"
-        elif col_l == "dlret":
-            target = "dlret"
-        elif col_l in {"delist_event", "is_delist_event"}:
-            target = "delist_event"
-        elif col_l == "permno":
-            target = "permno"
-        elif col_l in {"ticker", "tic"}:
-            target = "ticker"
+
+        # Check OHLCV patterns (anchored regex)
+        for ohlcv_target, patterns in _OHLCV_PATTERNS.items():
+            if any(p.match(col_stripped) for p in patterns):
+                target = ohlcv_target
+                break
+
+        # Check extra column exact-match map
+        if target is None:
+            target = _EXTRA_COLUMN_MAP.get(col_l)
+
         if target and target not in used:
             column_map[col] = target
             used.add(target)
+        elif target is None and _OHLCV_LIKE.search(col_l):
+            logger.warning(
+                "Column %r looks OHLCV-like but did not match any known pattern — skipping",
+                col_stripped,
+            )
     out = df.rename(columns=column_map)
     return out
 
@@ -127,7 +193,7 @@ def _read_csv_ohlcv(path: Path) -> Optional[pd.DataFrame]:
     try:
         raw = pd.read_csv(path)
     except (OSError, pd.errors.ParserError, UnicodeDecodeError) as e:
-        logger.debug("Could not read CSV %s: %s", path.name, e)
+        logger.warning("Could not read CSV %s: %s", path.name, e)
         return None
     date_col = next((c for c in DATE_COLUMNS if c in raw.columns), None)
     if date_col is None:
@@ -197,25 +263,53 @@ def _read_cache_meta(data_path: Path, ticker: str) -> Dict[str, object]:
     return {}
 
 
+_PROTECTED_META_KEYS = {"source", "saved_at_utc", "ticker", "n_bars", "start_date", "end_date", "format"}
+
+
+def _build_meta_payload(
+    data_path: Path,
+    ticker: str,
+    df: pd.DataFrame,
+    source: str,
+    meta: Optional[Dict[str, object]] = None,
+) -> Dict[str, object]:
+    """Build the metadata payload, protecting core provenance fields.
+
+    Caller-supplied *meta* is merged first (lower priority), then core
+    fields are written last so they can never be overridden.
+    """
+    payload: Dict[str, object] = {}
+
+    # Merge caller metadata first (lower priority)
+    if meta:
+        protected_found = set(meta.keys()) & _PROTECTED_META_KEYS
+        if protected_found:
+            logger.warning(
+                "Caller meta for %s tried to set protected keys %s — ignoring",
+                ticker, protected_found,
+            )
+        payload.update({k: v for k, v in meta.items() if k not in _PROTECTED_META_KEYS})
+
+    # Core fields always written last (higher priority — cannot be overridden)
+    payload["ticker"] = ticker.upper()
+    payload["source"] = str(source).lower().strip() or "unknown"
+    payload["saved_at_utc"] = datetime.now(timezone.utc).isoformat()
+    payload["start_date"] = str(pd.to_datetime(df.index.min()).date()) if len(df) > 0 else None
+    payload["end_date"] = str(pd.to_datetime(df.index.max()).date()) if len(df) > 0 else None
+    payload["n_bars"] = int(len(df))
+    payload["format"] = data_path.suffix.lstrip(".").lower()
+    return payload
+
+
 def _write_cache_meta(
     data_path: Path,
     ticker: str,
     df: pd.DataFrame,
     source: str,
     meta: Optional[Dict[str, object]] = None,
-):
+) -> None:
     """Internal helper to write cache meta to storage."""
-    payload: Dict[str, object] = {
-        "ticker": ticker.upper(),
-        "source": str(source).lower().strip() or "unknown",
-        "saved_at_utc": datetime.now(timezone.utc).isoformat(),
-        "start_date": str(pd.to_datetime(df.index.min()).date()) if len(df) > 0 else None,
-        "end_date": str(pd.to_datetime(df.index.max()).date()) if len(df) > 0 else None,
-        "n_bars": int(len(df)),
-        "format": data_path.suffix.lstrip(".").lower(),
-    }
-    if meta:
-        payload.update(meta)
+    payload = _build_meta_payload(data_path, ticker, df, source, meta)
     meta_path = _cache_meta_path(data_path, ticker)
     try:
         def _dump_json(tmp: str) -> None:
@@ -224,7 +318,33 @@ def _write_cache_meta(
 
         _atomic_replace(meta_path, _dump_json)
     except OSError as e:
-        logger.debug("Could not write cache meta for %s: %s", ticker, e)
+        logger.warning("Could not write cache meta for %s: %s", ticker, e)
+
+
+# ---------------------------------------------------------------------------
+# Public wrappers for functions used by external scripts (e.g. ibkr_daily_gapfill)
+# ---------------------------------------------------------------------------
+
+def normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize OHLCV column names to quant_engine's canonical schema.
+
+    Public wrapper around the internal ``_normalize_ohlcv_columns`` helper.
+    """
+    return _normalize_ohlcv_columns(df)
+
+
+def write_cache_meta(
+    data_path: Path,
+    ticker: str,
+    df: pd.DataFrame,
+    source: str,
+    meta: Optional[Dict[str, object]] = None,
+) -> None:
+    """Write cache metadata sidecar for a data file.
+
+    Public wrapper around the internal ``_write_cache_meta`` helper.
+    """
+    _write_cache_meta(data_path, ticker=ticker, df=df, source=source, meta=meta)
 
 
 def save_ohlcv(
@@ -268,11 +388,14 @@ def save_ohlcv(
 
     parquet_path = d / f"{ticker.upper()}_1d.parquet"
     try:
-        _atomic_replace(parquet_path, lambda p: daily.to_parquet(p))
-        _write_cache_meta(parquet_path, ticker=ticker, df=daily, source=source, meta=extra_meta)
+        meta_path = _cache_meta_path(parquet_path, ticker)
+        meta_payload = _build_meta_payload(
+            parquet_path, ticker=ticker, df=daily, source=source, meta=extra_meta,
+        )
+        _atomic_pair_write(parquet_path, meta_path, daily, meta_payload)
         return parquet_path
     except (ImportError, OSError) as e:
-        logger.debug("Parquet write failed for %s, falling back to CSV: %s", ticker, e)
+        logger.warning("Parquet write failed for %s, falling back to CSV: %s", ticker, e)
         csv_path = d / f"{ticker.upper()}_1d.csv"
         _atomic_replace(csv_path, lambda p: daily.to_csv(p, index=True))
         _write_cache_meta(csv_path, ticker=ticker, df=daily, source=source, meta=extra_meta)
@@ -299,9 +422,14 @@ def load_ohlcv_with_meta(
                 normalized = _to_daily_ohlcv(raw)
                 if normalized is not None:
                     meta = _read_cache_meta(parquet_path, ticker)
+                    if not meta:
+                        logger.warning(
+                            "Orphaned data file %s has no metadata sidecar — treating as untrusted",
+                            parquet_path.name,
+                        )
                     return normalized, meta, parquet_path
             except (OSError, ValueError, ImportError) as e:
-                logger.debug("Could not read parquet %s: %s", parquet_path.name, e)
+                logger.warning("Could not read parquet %s: %s", parquet_path.name, e)
         # Glob for IBKR-style daily parquet: {TICKER}_daily_{start}_{end}.parquet
         for parquet_daily in sorted(root.glob(f"{ticker.upper()}_daily_*.parquet")):
             try:
@@ -309,9 +437,14 @@ def load_ohlcv_with_meta(
                 normalized = _to_daily_ohlcv(raw)
                 if normalized is not None:
                     meta = _read_cache_meta(parquet_daily, ticker)
+                    if not meta:
+                        logger.warning(
+                            "Orphaned data file %s has no metadata sidecar — treating as untrusted",
+                            parquet_daily.name,
+                        )
                     return normalized, meta, parquet_daily
             except (OSError, ValueError, ImportError) as e:
-                logger.debug("Could not read parquet %s: %s", parquet_daily.name, e)
+                logger.warning("Could not read parquet %s: %s", parquet_daily.name, e)
         for csv_path in _candidate_csv_paths(root, ticker):
             if not csv_path.exists():
                 continue
@@ -396,13 +529,17 @@ def load_intraday_ohlcv(
     t = ticker.upper()
     ibkr_tf = _IBKR_TIMEFRAME_MAP.get(timeframe, timeframe)
 
-    # Build search roots: primary + Alpaca + fallback dirs
+    # Build search roots: primary + Alpaca + fallback dirs + intraday subdirs
     search_roots: List[Path] = [d]
     if DATA_CACHE_ALPACA_DIR.exists() and DATA_CACHE_ALPACA_DIR != d:
         search_roots.append(DATA_CACHE_ALPACA_DIR)
     for fallback in FALLBACK_SOURCE_DIRS:
         if fallback.exists() and fallback not in search_roots:
             search_roots.append(fallback)
+        # Also search "intraday" subdirectories of fallback dirs
+        intraday_fallback = fallback / "intraday"
+        if intraday_fallback.exists() and intraday_fallback not in search_roots:
+            search_roots.append(intraday_fallback)
 
     for root in search_roots:
         # Try parquet first (faster, preserves dtypes)
@@ -424,7 +561,7 @@ def load_intraday_ohlcv(
                         if len(df) > 0:
                             return df
                 except (OSError, ValueError, ImportError) as e:
-                    logger.debug("Could not read intraday parquet %s: %s", path.name, e)
+                    logger.warning("Could not read intraday parquet %s: %s", path.name, e)
                     continue
 
         # CSV fallback
@@ -446,7 +583,7 @@ def load_intraday_ohlcv(
                         if len(df) > 0:
                             return df
                 except (OSError, pd.errors.ParserError, UnicodeDecodeError, ValueError) as e:
-                    logger.debug("Could not read intraday CSV %s: %s", path.name, e)
+                    logger.warning("Could not read intraday CSV %s: %s", path.name, e)
                     continue
     return None
 
@@ -634,7 +771,7 @@ def rehydrate_cache_metadata(
                 try:
                     raw = pd.read_parquet(path)
                 except (OSError, ValueError, ImportError) as e:
-                    logger.debug("Could not read parquet %s: %s", path.name, e)
+                    logger.warning("Could not read parquet %s: %s", path.name, e)
                     summary["skipped_unreadable"] += 1
                     continue
                 if is_intraday:
@@ -655,7 +792,7 @@ def rehydrate_cache_metadata(
                     try:
                         raw = pd.read_csv(path, parse_dates=True, index_col=0)
                     except (OSError, pd.errors.ParserError, UnicodeDecodeError, ValueError) as e:
-                        logger.debug("Could not read CSV %s: %s", path.name, e)
+                        logger.warning("Could not read CSV %s: %s", path.name, e)
                         summary["skipped_unreadable"] += 1
                         continue
                     normalized = _normalize_ohlcv_columns(raw)
@@ -838,7 +975,7 @@ def load_ibkr_data(data_dir: Path) -> Dict[str, pd.DataFrame]:
                 data[ticker] = df[REQUIRED_OHLCV].dropna()
 
         except (OSError, ValueError, pd.errors.ParserError, UnicodeDecodeError) as e:
-            logger.debug("Could not load IBKR file %s: %s", path.name, e)
+            logger.warning("Could not load IBKR file %s: %s", path.name, e)
             continue
 
     return data
