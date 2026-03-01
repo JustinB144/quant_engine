@@ -104,6 +104,14 @@ class RegimeConsensus:
         regimes = np.asarray(regime_per_security, dtype=int)
         n_total = len(regimes)
 
+        # Validate and filter out-of-range regime labels
+        for label in regimes:
+            if label < 0 or label >= self.n_regimes:
+                logger.warning("Out-of-range regime label %d in consensus input", int(label))
+        valid_mask = (regimes >= 0) & (regimes < self.n_regimes)
+        regimes = regimes[valid_mask]
+        n_total = len(regimes)
+
         if n_total == 0:
             return {
                 "consensus": 0.0,

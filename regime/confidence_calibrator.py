@@ -178,7 +178,14 @@ class ConfidenceCalibrator:
         if not self._fitted or component not in self._ecm:
             return float(confidence)
 
-        regime = int(regime) % self.n_regimes
+        regime_id = int(regime)
+        if regime_id < 0 or regime_id >= self.n_regimes:
+            logger.warning(
+                "Invalid regime_id %d (expected 0-%d), returning uncalibrated confidence",
+                regime_id, self.n_regimes - 1,
+            )
+            return float(confidence)
+
         ecm = self._ecm[component]
 
         # Find the bin for this confidence
@@ -187,7 +194,7 @@ class ConfidenceCalibrator:
             0, self.n_bins - 1,
         ))
 
-        return float(ecm[regime, bin_idx])
+        return float(ecm[regime_id, bin_idx])
 
     def get_component_weight(self, component: str) -> float:
         """Return the calibrated weight for a component.

@@ -435,7 +435,10 @@ def select_hmm_states_bic(
     return best_n_states, bic_scores
 
 
-def build_hmm_observation_matrix(features: pd.DataFrame) -> pd.DataFrame:
+def build_hmm_observation_matrix(
+    features: pd.DataFrame,
+    backtest_safe: bool = False,
+) -> pd.DataFrame:
     """Build an expanded observation matrix for HMM regime inference.
 
     Constructs up to a 15-dimensional observation vector from available
@@ -486,6 +489,10 @@ def build_hmm_observation_matrix(features: pd.DataFrame) -> pd.DataFrame:
         Computed features from the feature pipeline.  Must contain at minimum
         ``return_1d``, ``return_vol_20d``, ``NATR_14``, ``SMASlope_50``.
         Extended features are included when their source columns are present.
+    backtest_safe : bool
+        If True, use expanding-window standardization so that regime labels
+        at time ``t`` use only data up to time ``t``. Default False preserves
+        the full-series standardization for live inference.
 
     Returns
     -------
@@ -595,13 +602,25 @@ def build_hmm_observation_matrix(features: pd.DataFrame) -> pd.DataFrame:
     obs = obs.replace([np.inf, -np.inf], np.nan).ffill().bfill().fillna(0.0)
 
     # Standardize columns for numerical stability.
-    for c in obs.columns:
-        s = obs[c]
-        std = float(s.std())
-        if std > 1e-12:
-            obs.loc[:, c] = (s - s.mean()) / std
-        else:
-            obs.loc[:, c] = 0.0
+    if backtest_safe:
+        # Expanding-window standardization: regime labels at time t use only
+        # data up to time t, preventing future data leakage.
+        for c in obs.columns:
+            expanding_mean = obs[c].expanding(min_periods=20).mean()
+            expanding_std = obs[c].expanding(min_periods=20).std()
+            expanding_std = expanding_std.replace(0.0, 1e-12)
+            obs.loc[:, c] = (obs[c] - expanding_mean) / expanding_std
+            # First 19 rows will be NaN — fill with 0
+            obs[c] = obs[c].fillna(0.0)
+    else:
+        # Full-series standardization (fine for live inference)
+        for c in obs.columns:
+            s = obs[c]
+            std = float(s.std())
+            if std > 1e-12:
+                obs.loc[:, c] = (s - s.mean()) / std
+            else:
+                obs.loc[:, c] = 0.0
 
     # Belt-and-suspenders: ensure no NaN or inf survived standardization
     # (e.g. zero-variance columns, single-element series where std() returns NaN)

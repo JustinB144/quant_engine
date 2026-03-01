@@ -104,6 +104,9 @@ class DataConfig:
     max_abs_daily_return: float = 0.40
 
 
+MAX_HMM_STATES = 6  # Upper bound for HMM auto-select state count
+
+
 @dataclass
 class RegimeConfig:
     """Regime detection configuration."""

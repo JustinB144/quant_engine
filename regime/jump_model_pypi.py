@@ -88,8 +88,11 @@ class PyPIJumpModel:
             REGIME_JUMP_MAX_ITER,
             REGIME_JUMP_TOL,
             REGIME_JUMP_USE_CONTINUOUS,
-            REGIME_JUMP_MODE_LOSS_WEIGHT,
         )
+        # NOTE: REGIME_JUMP_MODE_LOSS_WEIGHT is not used here because the
+        # PyPI jumpmodels package treats mode_loss as a boolean flag, not a
+        # continuous weight. The config constant is retained for documentation
+        # but has no runtime effect on the PyPI backend.
 
         self.n_regimes = n_regimes
         self.jump_penalty = jump_penalty

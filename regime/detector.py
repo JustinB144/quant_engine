@@ -84,6 +84,7 @@ class RegimeDetector:
         hmm_stickiness: float = REGIME_HMM_STICKINESS,
         min_duration: int = REGIME_MIN_DURATION,
         enable_bocpd: bool = BOCPD_ENABLED,
+        backtest_safe: bool = False,
     ):
         """Initialize RegimeDetector.
 
@@ -93,7 +94,16 @@ class RegimeDetector:
             Detection method: ``"hmm"``, ``"jump"``, ``"rule"``, or ``"ensemble"``.
         enable_bocpd : bool
             If True, initialize a BOCPD detector for online changepoint signals.
+        backtest_safe : bool
+            If True, use expanding-window standardization in HMM observation
+            matrix to prevent future data leakage. Default False for live inference.
         """
+        _VALID_METHODS = {"hmm", "jump", "rule", "ensemble"}
+        if method not in _VALID_METHODS:
+            raise ValueError(
+                f"Unknown regime detection method {method!r}. "
+                f"Must be one of {sorted(_VALID_METHODS)}"
+            )
         self.method = method
         self.hurst_trend = hurst_trend_threshold
         self.hurst_mr = hurst_mr_threshold
@@ -105,6 +115,7 @@ class RegimeDetector:
         self.hmm_max_iter = hmm_max_iter
         self.hmm_stickiness = hmm_stickiness
         self.min_duration = min_duration
+        self.backtest_safe = backtest_safe
 
         # Confidence calibrator for weighted ensemble voting (SPEC_10)
         self._confidence_calibrator: Optional[ConfidenceCalibrator] = None
@@ -163,10 +174,26 @@ class RegimeDetector:
                 elif right_state is None:
                     repl = left_state
                 else:
-                    left_score = float(conf[i:j].mean()) if left_state == int(vals[max(0, i - 1)]) else 0.0
-                    right_score = float(conf[i:j].mean()) if right_state == int(vals[min(j, n - 1)]) else 0.0
-                    # Prefer the neighbor whose confidence for the short segment is higher.
-                    # When tied, prefer left (earlier regime persists).
+                    # Score each neighbor by the mean confidence of that neighbor's own run
+                    # (not the short segment's confidence)
+                    if left_state is not None:
+                        # Find the extent of the left neighbor's run
+                        left_run_start = i - 1
+                        while left_run_start > 0 and vals[left_run_start - 1] == left_state:
+                            left_run_start -= 1
+                        left_score = float(conf[left_run_start:i].mean())
+                    else:
+                        left_score = -1.0
+
+                    if right_state is not None:
+                        # Find the extent of the right neighbor's run
+                        right_run_end = j
+                        while right_run_end < n - 1 and vals[right_run_end + 1] == right_state:
+                            right_run_end += 1
+                        right_score = float(conf[j:right_run_end + 1].mean())
+                    else:
+                        right_score = -1.0
+
                     repl = left_state if left_score >= right_score else right_state
 
                 vals[i:j] = repl
@@ -235,7 +262,7 @@ class RegimeDetector:
         if len(features) < max(80, self.hmm_states * 16):
             return self._rule_detect(features)
 
-        obs_df = build_hmm_observation_matrix(features)
+        obs_df = build_hmm_observation_matrix(features, backtest_safe=self.backtest_safe)
         X = obs_df.values.astype(float)
         from ..config import REGIME_HMM_PRIOR_WEIGHT, REGIME_HMM_COVARIANCE_TYPE
 
@@ -316,9 +343,10 @@ class RegimeDetector:
         falls back to the legacy in-repo ``StatisticalJumpModel``.
         """
         if len(features) < 80:
+            logger.info("Insufficient data for jump model (%d bars < 80), falling back to rules", len(features))
             return self._rule_detect(features)
 
-        obs_df = build_hmm_observation_matrix(features)
+        obs_df = build_hmm_observation_matrix(features, backtest_safe=self.backtest_safe)
         X = obs_df.values.astype(float)
 
         from ..config import REGIME_JUMP_USE_PYPI_PACKAGE
@@ -329,8 +357,16 @@ class RegimeDetector:
             else:
                 result = self._jump_detect_legacy(X)
         except (ValueError, RuntimeError, ImportError) as e:
-            logger.warning("Jump model fit failed, falling back to rules: %s", e)
-            return self._rule_detect(features)
+            if REGIME_JUMP_USE_PYPI_PACKAGE:
+                logger.warning("PyPI jump model failed (%s), falling back to legacy jump model", e)
+                try:
+                    result = self._jump_detect_legacy(X)
+                except (ValueError, RuntimeError) as e2:
+                    logger.warning("Legacy jump model also failed (%s), falling back to rules", e2)
+                    return self._rule_detect(features)
+            else:
+                logger.warning("Legacy jump model failed (%s), falling back to rules", e)
+                return self._rule_detect(features)
 
         # Map raw states to semantic regimes using the same approach as HMM
         mapping = map_raw_states_to_regimes(result.regime_sequence, features)
@@ -497,6 +533,18 @@ class RegimeDetector:
         probs = probs.fillna(0.0)
 
         confidence = pd.Series(vote_confidence, index=features.index, dtype=float)
+
+        # Apply consensus threshold: if the max weighted confidence is below
+        # REGIME_ENSEMBLE_CONSENSUS_THRESHOLD, halve confidence to signal
+        # low-consensus output.
+        max_weighted_confidence = float(confidence.max())
+        if max_weighted_confidence < REGIME_ENSEMBLE_CONSENSUS_THRESHOLD:
+            logger.warning(
+                "No method exceeds consensus threshold %.2f (max=%.2f)",
+                REGIME_ENSEMBLE_CONSENSUS_THRESHOLD, max_weighted_confidence,
+            )
+            confidence = confidence * 0.5
+
         uncertainty = self.get_regime_uncertainty(probs)
 
         return RegimeOutput(
@@ -560,7 +608,7 @@ class RegimeDetector:
 
     def detect_full(self, features: pd.DataFrame) -> RegimeOutput:
         """detect full."""
-        if REGIME_ENSEMBLE_ENABLED and self.method == "hmm":
+        if self.method == "ensemble" or (REGIME_ENSEMBLE_ENABLED and self.method == "hmm"):
             return self.detect_ensemble(features)
         if self.method == "hmm":
             return self._hmm_detect(features)
@@ -735,6 +783,10 @@ class RegimeDetector:
         """
         from .shock_vector import ShockVector, ShockVectorValidator
 
+        if features.empty:
+            logger.warning("Empty features passed to detect_with_shock_context for %s", ticker)
+            return ShockVector.empty(ticker=ticker)
+
         # Run standard regime detection.
         regime_out = self.detect_full(features)
 
@@ -756,7 +808,8 @@ class RegimeDetector:
                 except Exception as e:
                     logger.warning("BOCPD batch_update failed for %s: %s", ticker, e)
 
-        # Jump detection: flag if the most recent return is a 2.5-sigma event.
+        # Jump detection: flag if the most recent return is a 2.5-sigma event
+        # or BOCPD changepoint probability exceeds threshold.
         jump_detected = False
         jump_magnitude = 0.0
         ret_col = features.get("return_1d", pd.Series(0.0, index=features.index))
@@ -767,6 +820,10 @@ class RegimeDetector:
             if recent_vol > 1e-10:
                 jump_detected = abs(recent_ret) > 2.5 * recent_vol
                 jump_magnitude = recent_ret
+
+        # Also flag jump if BOCPD changepoint probability exceeds threshold
+        if bocpd_cp_prob > BOCPD_CHANGEPOINT_THRESHOLD:
+            jump_detected = True
 
         # Uncertainty from regime probabilities.
         uncertainty_series = regime_out.uncertainty
@@ -789,6 +846,11 @@ class RegimeDetector:
                     if np.isfinite(val):
                         structural[key] = float(val)
 
+        # Determine actual number of HMM states from transition matrix
+        n_hmm_states = 4
+        if regime_out.transition_matrix is not None:
+            n_hmm_states = regime_out.transition_matrix.shape[0]
+
         sv = ShockVector(
             schema_version=SHOCK_VECTOR_SCHEMA_VERSION,
             timestamp=features.index[-1] if hasattr(features.index[-1], 'isoformat') else pd.Timestamp.now(),
@@ -803,6 +865,7 @@ class RegimeDetector:
             structural_features=structural,
             transition_matrix=regime_out.transition_matrix,
             ensemble_model_type=regime_out.model_type,
+            n_hmm_states=n_hmm_states,
         )
 
         is_valid, errors = ShockVectorValidator.validate(sv)

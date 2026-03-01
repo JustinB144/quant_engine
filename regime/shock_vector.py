@@ -82,6 +82,7 @@ class ShockVector:
     structural_features: Dict[str, float] = field(default_factory=dict)
     transition_matrix: Optional[np.ndarray] = field(default=None, repr=False)
     ensemble_model_type: str = "hmm"
+    n_hmm_states: int = 4  # Actual number of HMM states used
 
     def __post_init__(self) -> None:
         """Validate fields at construction time."""
@@ -100,6 +101,19 @@ class ShockVector:
             np.clip(self.bocpd_changepoint_prob, 0.0, 1.0)
         )
         self.bocpd_runlength = max(0, int(self.bocpd_runlength))
+
+    @classmethod
+    def empty(cls, ticker: str = "") -> "ShockVector":
+        """Return a default/neutral ShockVector marked as invalid.
+
+        Used when inputs are empty or detection cannot proceed.
+        """
+        return cls(
+            ticker=ticker,
+            hmm_confidence=0.0,
+            hmm_uncertainty=1.0,
+            ensemble_model_type="rule",
+        )
 
     def to_dict(self) -> Dict:
         """Serialize to a JSON-compatible dictionary.
@@ -257,18 +271,26 @@ class ShockVectorValidator:
                         f"structural_features[{key!r}] is not finite: {val}"
                     )
 
-        # Transition matrix shape
+        # Transition matrix shape — accept variable-sized square matrices
         if sv.transition_matrix is not None:
+            from ..config_structured import MAX_HMM_STATES
+
             if not isinstance(sv.transition_matrix, np.ndarray):
                 errors.append(
                     f"transition_matrix must be ndarray, "
                     f"got {type(sv.transition_matrix).__name__}"
                 )
-            elif sv.transition_matrix.shape != (4, 4):
-                errors.append(
-                    f"transition_matrix must be (4, 4), "
-                    f"got {sv.transition_matrix.shape}"
-                )
+            else:
+                tm = np.asarray(sv.transition_matrix)
+                if tm.ndim != 2 or tm.shape[0] != tm.shape[1]:
+                    errors.append(
+                        f"Transition matrix must be square, got shape {tm.shape}"
+                    )
+                elif tm.shape[0] < 2 or tm.shape[0] > MAX_HMM_STATES:
+                    errors.append(
+                        f"Transition matrix size {tm.shape[0]} outside valid range "
+                        f"[2, {MAX_HMM_STATES}]"
+                    )
 
         # Model type
         valid_types = {"hmm", "jump", "ensemble", "rule"}
