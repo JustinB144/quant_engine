@@ -363,8 +363,13 @@ boundaries:
     imported_by: autopilot/engine.py
     import_line: 26
     import_type: top_level
-    signature: 'def walk_forward_validate(features: pd.DataFrame, targets: pd.Series, regimes: pd.Series, n_folds: int = 5,
-      horizon: int = 10, verbose: bool = False) -> WalkForwardResult'
+    signature: |
+      def walk_forward_validate(
+          predictions: pd.Series, actuals: pd.Series,
+          n_folds: int = 5, entry_threshold: float = 0.005,
+          max_overfit_ratio: float = 2.5, purge_gap: int = 10,
+          embargo: int = 5, max_train_samples: Optional[int] = None,
+      ) -> WalkForwardResult
     return_type: WalkForwardResult
     stability: stable
     breaking_change_impact: WalkForwardResult feeds promotion gate OOS correlation checks.
@@ -1528,6 +1533,29 @@ boundaries:
     import_type: lazy
     stability: evolving
     breaking_change_impact: Position sizing changes affect all trade decisions.
+  - name: PositionSizer.size_position_paper_trader
+    type: method
+    defined_in: risk/position_sizer.py
+    imported_by: autopilot/paper_trader.py
+    import_line: 60
+    import_type: top_level
+    signature: |
+      def size_position_paper_trader(
+          self, ticker: str, kelly_history: List[float], atr: float,
+          realized_vol: float, price: float, regime_state: str = "NORMAL",
+          dd_ratio: float = 0.0, confidence: float = 0.5,
+          holding_days: int = 10, n_current_positions: int = 0,
+          max_positions: int = 20, position_notional_before: float = 0.0,
+          portfolio_equity: float = 1_000_000.0,
+          current_positions: Optional[Dict[str, float]] = None,
+          signal_uncertainty: Optional[float] = None,
+          regime_entropy: Optional[float] = None,
+          drift_score: Optional[float] = None,
+          regime_uncertainty: float = 0.0,
+      ) -> float
+    return_type: float
+    stability: evolving
+    breaking_change_impact: Paper-trading position sizing method used by autopilot paper trader.
   - name: CovarianceEstimator, compute_regime_covariance, get_regime_covariance
     type: class + functions
     defined_in: risk/covariance.py

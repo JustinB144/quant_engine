@@ -38,6 +38,7 @@ from ..config import (
     BACKTEST_ASSUMED_CAPITAL_USD,
     CPCV_PARTITIONS,
     CPCV_TEST_PARTITIONS,
+    ENSEMBLE_DISAGREEMENT_WARN_THRESHOLD,
     EXEC_MAX_PARTICIPATION,
     PROMOTION_STRESS_REGIMES,
     PORTFOLIO_TURNOVER_PENALTY,
@@ -147,6 +148,20 @@ class HeuristicPredictor:
 
 class AutopilotEngine:
     """Coordinates discovery, promotion, and paper execution."""
+
+    @classmethod
+    def from_universe(
+        cls,
+        years: int = 15,
+        full_universe: bool = False,
+        **kwargs,
+    ) -> "AutopilotEngine":
+        """Create engine from configured universe (for API job entry point)."""
+        if full_universe:
+            tickers = load_universe()
+        else:
+            tickers = load_survivorship_universe()
+        return cls(tickers=tickers, years=years, **kwargs)
 
     def __init__(
         self,
@@ -1898,20 +1913,23 @@ class AutopilotEngine:
         across autopilot cycles.
         """
         try:
+            best_ic = -float("inf")
+            best_strategy_id = ""
             ic_values = []
             ic_ir_values = []
-            best_strategy_id = ""
 
             for d in decisions:
                 metrics = d.metrics if hasattr(d, "metrics") else {}
                 ic = metrics.get("ic_mean")
                 if ic is not None:
-                    ic_values.append(float(ic))
+                    ic_val = float(ic)
+                    ic_values.append(ic_val)
                     ir = metrics.get("ic_ir")
                     if ir is not None:
                         ic_ir_values.append(float(ir))
-                    # Track which strategy produced the best IC
-                    if float(ic) == max(ic_values):
+                    # Track which strategy produced the best IC (running max)
+                    if ic_val > best_ic:
+                        best_ic = ic_val
                         cand = d.candidate if hasattr(d, "candidate") else None
                         if cand and hasattr(cand, "strategy_id"):
                             best_strategy_id = cand.strategy_id
@@ -1920,7 +1938,7 @@ class AutopilotEngine:
                 self._log("  IC tracking: no IC values from this cycle (skipping)")
                 return
 
-            best_ic = max(ic_values)
+            # best_ic already tracked via running max above
             best_ir = max(ic_ir_values) if ic_ir_values else None
             n_passed = sum(1 for d in decisions if getattr(d, "passed", False))
 
@@ -1961,10 +1979,6 @@ class AutopilotEngine:
             max_d = float(_np.max(d_arr))
 
             # Compute fraction of assets with high disagreement
-            try:
-                from ..config import ENSEMBLE_DISAGREEMENT_WARN_THRESHOLD
-            except ImportError:
-                ENSEMBLE_DISAGREEMENT_WARN_THRESHOLD = 0.015
             pct_high = float((d_arr > ENSEMBLE_DISAGREEMENT_WARN_THRESHOLD).mean())
 
             from ..api.services.health_service import HealthService

@@ -62,6 +62,7 @@ ENTRY_PRICE_TYPE = _cfg.preconditions.entry_price_type.value  # STATUS: ACTIVE �
 TRUTH_LAYER_STRICT_PRECONDITIONS = True           # STATUS: ACTIVE — raise on invalid execution contract
 TRUTH_LAYER_FAIL_ON_CORRUPT = True                # STATUS: ACTIVE — block corrupt OHLCV from pipeline
 TRUTH_LAYER_ENFORCE_CAUSALITY = True              # STATUS: ACTIVE — enforce feature causality at runtime
+PREDICTION_MODE = "daily"                         # STATUS: ACTIVE — "daily" or "intraday"; controls END_OF_DAY feature gating
 TRUTH_LAYER_COMPUTE_NULL_BASELINES = False        # STATUS: ACTIVE — compute null baselines per backtest (adds ~4x time)
 TRUTH_LAYER_COST_STRESS_ENABLED = _cfg.cost_stress.enabled  # STATUS: ACTIVE — run cost stress sweep per backtest (adds ~4x time)
 
@@ -116,6 +117,7 @@ SURVIVORSHIP_SNAPSHOT_FREQ = "quarterly"           # STATUS: ACTIVE — data/loa
 # ── Model Versioning ─────────────────────────────────────────────────
 MODEL_REGISTRY = MODEL_DIR / "registry.json"      # STATUS: PLACEHOLDER — defined but never imported; CHAMPION_REGISTRY is used instead
 MAX_MODEL_VERSIONS = _cfg.model.max_model_versions  # STATUS: ACTIVE — models/versioning.py; keep last 5 versions for rollback
+VERIFY_MODEL_CHECKSUMS = True                        # STATUS: ACTIVE — models/predictor.py; verify SHA-256 checksums on model load
 CHAMPION_REGISTRY = MODEL_DIR / "champion_registry.json"  # STATUS: ACTIVE — models/governance.py
 
 # ── Retraining ───────────────────────────────────────────────────────
@@ -595,6 +597,9 @@ PAPER_KELLY_FRACTION = _cfg.paper_trading.kelly_fraction  # STATUS: ACTIVE — a
 PAPER_KELLY_LOOKBACK_TRADES = _cfg.paper_trading.kelly_lookback_trades  # STATUS: ACTIVE — autopilot/paper_trader.py
 PAPER_KELLY_MIN_SIZE_MULTIPLIER = _cfg.paper_trading.kelly_min_size_multiplier  # STATUS: ACTIVE — autopilot/paper_trader.py
 PAPER_KELLY_MAX_SIZE_MULTIPLIER = _cfg.paper_trading.kelly_max_size_multiplier  # STATUS: ACTIVE — autopilot/paper_trader.py
+
+# Health gate staleness
+HEALTH_GATE_MAX_STALENESS_HOURS = 24  # STATUS: ACTIVE — autopilot/paper_trader.py; pass-through if health score older than this
 
 # ── Feature Profiles ────────────────────────────────────────────────────
 FEATURE_MODE_DEFAULT = _cfg.model.feature_mode     # STATUS: ACTIVE — run_backtest.py, run_train.py, run_predict.py; "full" or "core"

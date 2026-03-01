@@ -313,13 +313,28 @@ class PromotionGate:
                 )
 
         # Composite score used for ranking passers (not pass/fail itself).
+        # Weight rationale: Sharpe (1.30) and return (0.80) dominate as
+        # quality signals.  Drawdown (0.80) penalises tail risk.  Win rate
+        # (0.35), trade count (0.25 after 0-1 normalisation), and profit
+        # factor (0.20) are secondary quality/activity signals.
+        trade_score = min(result.total_trades, 5000) / 5000.0  # 0.0 to 1.0
         score = (
             1.30 * result.sharpe_ratio
             + 0.80 * result.annualized_return
             + 0.35 * result.win_rate
             + 0.20 * min(result.profit_factor, 5.0)
-            + 0.01 * min(result.total_trades, 5000)
+            + 0.25 * trade_score
             + 0.80 * max(result.max_drawdown, -0.50)
+        )
+        logger.debug(
+            "Promotion score breakdown: sharpe=%.2f, return=%.2f, wr=%.2f, "
+            "pf=%.2f, trades=%.2f, dd=%.2f",
+            1.30 * result.sharpe_ratio,
+            0.80 * result.annualized_return,
+            0.35 * result.win_rate,
+            0.20 * min(result.profit_factor, 5.0),
+            0.25 * trade_score,
+            0.80 * max(result.max_drawdown, -0.50),
         )
         if "wf_oos_corr" in metrics:
             score += 0.75 * float(metrics.get("wf_oos_corr", 0.0))

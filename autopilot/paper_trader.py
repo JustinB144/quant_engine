@@ -3,7 +3,7 @@ Stateful paper-trading engine for promoted strategies.
 """
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -53,6 +53,7 @@ from ..config import (
     EXEC_CALIBRATION_SMOOTHING,
     OPTIMIZER_BLEND_WEIGHT,
     REGIME_TRADE_POLICY,
+    HEALTH_GATE_MAX_STALENESS_HOURS,
 )
 from ..backtest.execution import ExecutionModel
 from ..backtest.adv_tracker import ADVTracker
@@ -185,6 +186,10 @@ class PaperTrader:
         Reads the latest overall health score from the health history
         database and reduces position sizes proportionally if health
         is degraded.  No-op if the health gate is disabled or unavailable.
+
+        A staleness check ensures that health scores older than
+        ``HEALTH_GATE_MAX_STALENESS_HOURS`` are treated as missing
+        (pass-through sizing) rather than applied as stale constraints.
         """
         if self._health_risk_gate is None:
             return position_size_pct
@@ -193,7 +198,27 @@ class PaperTrader:
             svc = HealthService()
             history = svc.get_health_history(limit=1)
             if history:
-                latest_score = history[-1].get("overall_score")
+                record = history[-1]
+                latest_score = record.get("overall_score")
+                record_ts = record.get("timestamp") or record.get("created_at")
+
+                # Check staleness — stale scores use pass-through sizing
+                if record_ts is not None:
+                    try:
+                        ts = datetime.fromisoformat(str(record_ts))
+                        age = datetime.now() - ts.replace(tzinfo=None)
+                        max_age = timedelta(hours=HEALTH_GATE_MAX_STALENESS_HOURS)
+                        if age > max_age:
+                            logger.warning(
+                                "Health score is %.1f hours old (max %.1f), "
+                                "using pass-through sizing",
+                                age.total_seconds() / 3600,
+                                max_age.total_seconds() / 3600,
+                            )
+                            return position_size_pct
+                    except (ValueError, TypeError):
+                        pass  # If timestamp parsing fails, proceed with score
+
                 if latest_score is not None:
                     self._health_risk_gate.update_health(latest_score)
                     return self._health_risk_gate.apply_health_gate(
@@ -246,6 +271,13 @@ class PaperTrader:
         """Internal helper to persist state atomically."""
         # Keep trade history bounded to prevent unbounded state growth.
         state["trades"] = state.get("trades", [])[-5000:]
+        # Ensure equity is persisted for health service consumption.
+        # equity = cash + sum(position values)
+        cash = float(state.get("cash", 0.0))
+        positions_value = sum(
+            float(p.get("value", 0.0)) for p in state.get("positions", [])
+        )
+        state["equity"] = cash + positions_value
         atomic_json_write(self.state_path, state, indent=2, default=str)
 
     @staticmethod
@@ -310,16 +342,24 @@ class PaperTrader:
     def _mark_to_market(self, state: Dict, as_of: pd.Timestamp, price_data: Dict[str, pd.DataFrame]) -> float:
         """Internal helper for mark to market.
 
-        Also updates ``last_price`` on each position so downstream
-        consumers (e.g. the portfolio optimizer) use current prices
-        rather than stale entry prices.
+        Also updates ``last_price`` and ``value`` on each position so
+        downstream consumers (e.g. the portfolio optimizer, health
+        service capital utilization) use current prices rather than
+        stale entry prices.
         """
         eq = float(state.get("cash", 0.0))
         for pos in state.get("positions", []):
             px = self._current_price(self._position_id(pos), as_of, price_data)
             if px is not None:
                 pos["last_price"] = float(px)
-                eq += float(pos["shares"]) * px
+                pos_value = float(pos["shares"]) * px
+                pos["value"] = float(pos_value)
+                eq += pos_value
+            else:
+                # Use last known price for value if current unavailable
+                lp = pos.get("last_price", pos.get("entry_price", 0.0))
+                pos["value"] = float(float(pos["shares"]) * float(lp))
+                eq += pos["value"]
         return eq
 
     @staticmethod
