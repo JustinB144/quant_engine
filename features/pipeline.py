@@ -70,7 +70,7 @@ from .research_factors import (
     compute_cross_asset_research_factors,
     compute_single_asset_research_factors,
 )
-from .options_factors import compute_option_surface_factors
+from .options_factors import compute_option_surface_factors, compute_iv_shock_features
 from .wave_flow import compute_wave_flow_decomposition
 
 
@@ -403,6 +403,12 @@ FEATURE_METADATA: Dict[str, Dict[str, str]] = {
     "rolling_vwap_20": {"type": "CAUSAL", "category": "vwap"},
     "rolling_vwap_deviation_20": {"type": "CAUSAL", "category": "vwap"},
 
+    # ── IV shock features (CAUSAL — backward-looking IV changes) ──
+    "delta_atm_iv_change_20d": {"type": "CAUSAL", "category": "options"},
+    "delta_atm_iv_velocity_20d": {"type": "CAUSAL", "category": "options"},
+    "skew_change_20d": {"type": "CAUSAL", "category": "options"},
+    "term_structure_change_20d": {"type": "CAUSAL", "category": "options"},
+
     # ── LOB features — END_OF_DAY ────────────────────────────────────
     "trade_arrival_rate": {"type": "END_OF_DAY", "category": "microstructure"},
     "duration_between_trades_mean": {"type": "END_OF_DAY", "category": "microstructure"},
@@ -414,7 +420,7 @@ FEATURE_METADATA: Dict[str, Dict[str, str]] = {
 
     # ── Correlation regime features (from regime/correlation.py) ──────
     "avg_pairwise_corr": {"type": "CAUSAL", "category": "correlation"},
-    "corr_regime": {"type": "CAUSAL", "category": "correlation"},
+    "corr_stress_flag": {"type": "CAUSAL", "category": "correlation"},
     "corr_z_score": {"type": "CAUSAL", "category": "correlation"},
 
     # ── HARX spillover features (from features/harx_spillovers.py) ────
@@ -825,6 +831,9 @@ def compute_structural_features(
     log_prices = np.log(np.maximum(close, 1e-10))
     log_returns = np.diff(log_prices)
 
+    n_total = 4  # Spectral, SSA, TailRisk, OT
+    n_failed = 0
+
     # ── Spectral features (FFT-based) ─────────────────────────────
     if verbose:
         print("    Computing spectral features...")
@@ -841,9 +850,9 @@ def compute_structural_features(
         features["SpectralEntropy_252"] = spec_results["spectral_entropy"]
         features["SpectralDomFreq_252"] = spec_results["dominant_period"]
         features["SpectralBW_252"] = spec_results["spectral_bandwidth"]
-    except Exception as e:
-        if verbose:
-            print(f"    WARNING: Spectral features failed: {e}")
+    except (ImportError, ValueError, RuntimeError) as e:
+        logger.warning("Spectral features failed: %s", e)
+        n_failed += 1
 
     # ── SSA features (SVD-based decomposition) ────────────────────
     if verbose:
@@ -861,9 +870,9 @@ def compute_structural_features(
         features["SSAOscStr_60"] = ssa_results["oscillatory_strength"]
         features["SSASingularEnt_60"] = ssa_results["singular_entropy"]
         features["SSANoiseRatio_60"] = ssa_results["noise_ratio"]
-    except Exception as e:
-        if verbose:
-            print(f"    WARNING: SSA features failed: {e}")
+    except (ImportError, ValueError, RuntimeError) as e:
+        logger.warning("SSA features failed: %s", e)
+        n_failed += 1
 
     # ── Tail risk features (jump detection, CVaR, vol-of-vol) ─────
     if verbose:
@@ -888,9 +897,9 @@ def compute_structural_features(
         ]:
             vals = tail_results[key]
             features[col_name] = np.concatenate([[np.nan], vals])
-    except Exception as e:
-        if verbose:
-            print(f"    WARNING: Tail risk features failed: {e}")
+    except (ImportError, ValueError, RuntimeError) as e:
+        logger.warning("Tail risk features failed: %s", e)
+        n_failed += 1
 
     # ── Optimal Transport features (distribution drift) ───────────
     if verbose:
@@ -912,9 +921,15 @@ def compute_structural_features(
         ]:
             vals = ot_results[key]
             features[col_name] = np.concatenate([[np.nan], vals])
-    except Exception as e:
-        if verbose:
-            print(f"    WARNING: OT features failed: {e}")
+    except (ImportError, ValueError, RuntimeError) as e:
+        logger.warning("OT features failed: %s", e)
+        n_failed += 1
+
+    if n_failed > 0:
+        logger.warning(
+            "%d/%d optional feature blocks failed — model may use imputed values",
+            n_failed, n_total,
+        )
 
     return features
 
@@ -1164,6 +1179,24 @@ class FeaturePipeline:
             if not option_feats.empty:
                 features = pd.concat([features, option_feats], axis=1)
 
+            # IV shock features (causal IV change signals)
+            try:
+                iv_shock_feats = compute_iv_shock_features(df, window=20)
+                if iv_shock_feats is not None and not iv_shock_feats.empty:
+                    features = pd.concat([features, iv_shock_feats], axis=1)
+            except (ValueError, RuntimeError) as e:
+                logger.warning("IV shock features failed: %s", e)
+
+        # Rolling VWAP features (causal, daily OHLCV)
+        try:
+            from .intraday import compute_rolling_vwap
+            if df is not None and len(df) > 0:
+                rolling_vwap_feats = compute_rolling_vwap(df, window=20)
+                if rolling_vwap_feats is not None:
+                    features = pd.concat([features, rolling_vwap_feats], axis=1)
+        except (ImportError, ValueError, RuntimeError) as e:
+            logger.warning("Rolling VWAP features failed: %s", e)
+
         # Research-derived single-asset features
         if self.include_research_factors:
             if self.verbose:
@@ -1372,8 +1405,7 @@ class FeaturePipeline:
                     if not harx_feats.empty:
                         features = features.join(harx_feats, how="left")
             except (ImportError, ValueError, RuntimeError) as e:
-                if verbose:
-                    print(f"  WARNING: HARX spillovers failed: {e}")
+                logger.warning("HARX spillovers failed: %s", e)
 
         # Correlation regime features (cross-asset)
         if self.include_research_factors and self.include_cross_asset_factors:
@@ -1390,6 +1422,9 @@ class FeaturePipeline:
                     detector = CorrelationRegimeDetector()
                     corr_feats = detector.get_correlation_features(corr_returns)
                     if not corr_feats.empty:
+                        # Backward compat: rename cached corr_regime → corr_stress_flag
+                        if "corr_regime" in corr_feats.columns and "corr_stress_flag" not in corr_feats.columns:
+                            corr_feats = corr_feats.rename(columns={"corr_regime": "corr_stress_flag"})
                         # Correlation features are date-level — broadcast to
                         # all stocks via a join on the date level.
                         features = features.join(
@@ -1398,8 +1433,7 @@ class FeaturePipeline:
                             how="left",
                         )
             except (ImportError, ValueError, RuntimeError) as e:
-                if verbose:
-                    print(f"  WARNING: Correlation regime features failed: {e}")
+                logger.warning("Correlation regime features failed: %s", e)
 
         # Eigenvalue spectrum features (cross-asset structural)
         try:
@@ -1458,8 +1492,7 @@ class FeaturePipeline:
                             how="left",
                         )
             except (ImportError, ValueError, RuntimeError) as e:
-                if verbose:
-                    print(f"  WARNING: Eigenvalue features failed: {e}")
+                logger.warning("Eigenvalue features failed: %s", e)
 
         # Macro features (per-date, broadcast to all stocks)
         if self.include_research_factors:
@@ -1480,8 +1513,7 @@ class FeaturePipeline:
                     # Macro is date-level only — join on the date level of the MultiIndex
                     features = features.join(macro_df, on=features.index.names[-1], how="left")
             except (ImportError, ValueError, RuntimeError) as e:
-                if verbose:
-                    print(f"  WARNING: Macro features failed: {e}")
+                logger.warning("Macro features failed: %s", e)
 
         # Intraday + LOB features (optional)
         # Strategy: try WRDS TAQmsec first, fall back to local IBKR cache
@@ -1529,8 +1561,7 @@ class FeaturePipeline:
                             except (ValueError, KeyError, TypeError):
                                 pass
                 except (ImportError, ValueError, RuntimeError) as e:
-                    if verbose:
-                        print(f"  WARNING: WRDS intraday/LOB features failed: {e}")
+                    logger.warning("WRDS intraday/LOB features failed: %s", e)
 
             if not wrds_available or (not intraday_rows and not lob_rows):
                 # Path 2: Local IBKR cache fallback (LOB features only)
@@ -1565,8 +1596,7 @@ class FeaturePipeline:
                             except (KeyError, TypeError):
                                 pass
                 except (ImportError, ValueError, RuntimeError) as e:
-                    if verbose:
-                        print(f"  WARNING: Local intraday/LOB features failed: {e}")
+                    logger.warning("Local intraday/LOB features failed: %s", e)
 
             # Join intraday and LOB features into main features DataFrame
             try:
@@ -1577,8 +1607,7 @@ class FeaturePipeline:
                     lob_df = pd.DataFrame(lob_rows).set_index(["permno", "date"])
                     features = features.join(lob_df, how="left")
             except (ValueError, KeyError, TypeError) as e:
-                if verbose:
-                    print(f"  WARNING: Intraday/LOB join failed: {e}")
+                logger.warning("Intraday/LOB join failed: %s", e)
 
         # Cross-sectional z-scored momentum: for each date, z-score the
         # raw momentum across all stocks in the universe.  This produces a

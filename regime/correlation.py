@@ -15,7 +15,7 @@ Components:
         - compute_rolling_correlation: rolling average pairwise correlation
         - detect_correlation_spike: flags high-correlation regimes
         - get_correlation_features: produces a DataFrame ready for the
-          feature pipeline (avg_pairwise_corr, corr_regime, corr_z_score)
+          feature pipeline (avg_pairwise_corr, corr_stress_flag, corr_z_score)
 """
 
 from __future__ import annotations
@@ -149,7 +149,7 @@ class CorrelationRegimeDetector:
             )
 
         thr = threshold if threshold is not None else self.threshold
-        return (self._avg_corr >= thr).astype(int).rename("corr_regime")
+        return (self._avg_corr >= thr).astype(int).rename("corr_stress_flag")
 
     def get_correlation_features(
         self,
@@ -165,7 +165,7 @@ class CorrelationRegimeDetector:
         Columns:
             avg_pairwise_corr : float
                 Rolling average pairwise correlation.
-            corr_regime : int
+            corr_stress_flag : int
                 1 if in a correlation spike, 0 otherwise.
             corr_z_score : float
                 Z-score of the current average correlation relative to a
@@ -185,7 +185,7 @@ class CorrelationRegimeDetector:
         Returns
         -------
         pd.DataFrame
-            DatetimeIndex with columns [avg_pairwise_corr, corr_regime,
+            DatetimeIndex with columns [avg_pairwise_corr, corr_stress_flag,
             corr_z_score].
         """
         z_lb = z_score_lookback if z_score_lookback is not None else self.z_score_lookback
@@ -206,7 +206,7 @@ class CorrelationRegimeDetector:
         features = pd.DataFrame(
             {
                 "avg_pairwise_corr": avg_corr,
-                "corr_regime": regime,
+                "corr_stress_flag": regime,
                 "corr_z_score": z_score,
             }
         )

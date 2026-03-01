@@ -581,12 +581,20 @@ def compute_shock_vectors(
     if n >= vol_lookback:
         rolling_vol = pd.Series(returns).rolling(vol_lookback, min_periods=1).std().values
         rolling_vol = np.nan_to_num(rolling_vol, nan=0.0)
-        # Expanding percentile: rank current vol vs all prior vol
-        for i in range(vol_lookback, n):
-            hist = rolling_vol[:i + 1]
-            if len(hist) > 1 and np.max(hist) > 1e-10:
-                percentile = float(np.sum(hist <= rolling_vol[i])) / len(hist)
-                systemic_stress[i] = float(np.clip(percentile, 0.0, 1.0))
+        # Vectorized expanding percentile: rank / count gives percentile in O(n)
+        vol_series = pd.Series(rolling_vol)
+        expanding_rank = vol_series.expanding(min_periods=2).rank()
+        expanding_count = vol_series.expanding(min_periods=2).count()
+        systemic_stress_series = (expanding_rank / expanding_count).fillna(0.0).clip(0.0, 1.0)
+
+        # Zero out the first vol_lookback bars (no valid rolling vol)
+        systemic_stress_series.iloc[:vol_lookback] = 0.0
+
+        # Apply the max-check: if expanding max of rolling_vol is <= 1e-10, set to 0
+        expanding_max = vol_series.expanding(min_periods=1).max()
+        systemic_stress_series[expanding_max <= 1e-10] = 0.0
+
+        systemic_stress = systemic_stress_series.values
 
     # ── Build ShockVectors ──
     shock_vectors: Dict = {}

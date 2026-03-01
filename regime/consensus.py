@@ -78,6 +78,11 @@ class RegimeConsensus:
         self.n_regimes = n_regimes
 
         # History for divergence detection
+        # Cap history to 2x the divergence window — anything older is never accessed
+        self._max_history_length = max(
+            2 * self.divergence_window,
+            100,  # Minimum floor
+        )
         self._consensus_history: List[float] = []
 
     def compute_consensus(
@@ -133,6 +138,10 @@ class RegimeConsensus:
 
         # Update history
         self._consensus_history.append(consensus_value)
+
+        # Trim to max length to prevent unbounded memory growth
+        if len(self._consensus_history) > self._max_history_length:
+            self._consensus_history = self._consensus_history[-self._max_history_length:]
 
         return {
             "consensus": float(consensus_value),

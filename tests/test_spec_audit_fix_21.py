@@ -100,7 +100,7 @@ class TestFeatureMetadataCompleteness(unittest.TestCase):
 
     EXPECTED_FEATURES = [
         # Correlation regime
-        "avg_pairwise_corr", "corr_regime", "corr_z_score",
+        "avg_pairwise_corr", "corr_stress_flag", "corr_z_score",
         # HARX spillover
         "harx_spillover_from", "harx_spillover_to", "harx_net_spillover",
         # Macro
