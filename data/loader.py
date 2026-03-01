@@ -419,6 +419,18 @@ def load_ohlcv(
                             pass
                     result = _normalize_ohlcv(wrds_df)
                     result = _harmonize_return_columns(result) if result is not None else None
+
+                    # Quality-gate WRDS data before caching
+                    if result is not None and DATA_QUALITY_ENABLED:
+                        quality = assess_ohlcv_quality(result)
+                        if not quality.passed:
+                            logger.warning(
+                                "WRDS data for %s failed quality check: %s — not caching",
+                                requested_symbol,
+                                "; ".join(quality.warnings[:3]),
+                            )
+                            # Don't cache bad data; fall through to fallback paths
+                            result = None
                 else:
                     permno_key = None
                     result = None
@@ -577,10 +589,21 @@ def load_universe(
     return data
 
 
+def _tag_survivorship_safe(
+    data: Dict[str, pd.DataFrame],
+    safe: bool,
+) -> Dict[str, pd.DataFrame]:
+    """Tag all DataFrames in *data* with ``survivorship_safe`` attribute."""
+    for df in data.values():
+        df.attrs["survivorship_safe"] = safe
+    return data
+
+
 def load_survivorship_universe(
     as_of_date: Optional[str] = None,
     years: int = 15,
     verbose: bool = True,
+    strict: bool = False,
 ) -> Dict[str, pd.DataFrame]:
     """
     Load a survivorship-bias-free universe using WRDS CRSP.
@@ -592,9 +615,12 @@ def load_survivorship_universe(
         as_of_date: Historical date string (YYYY-MM-DD). Defaults to `years` ago.
         years: Years of data to load.
         verbose: Print progress.
+        strict: If True, raise RuntimeError instead of falling back to static universe.
 
     Returns:
-        {ticker: DataFrame} — includes delisted stocks with their full price history
+        {ticker: DataFrame} — includes delisted stocks with their full price history.
+        Each DataFrame has ``attrs["survivorship_safe"]`` set to True (WRDS PIT path)
+        or False (static fallback).
     """
     try:
         from .survivorship import hydrate_universe_history_from_snapshots
@@ -606,6 +632,12 @@ def load_survivorship_universe(
         )
 
         if not WRDS_ENABLED:
+            logger.warning(
+                "WRDS disabled — survivorship-safe universe unavailable. "
+                "Falling back to static universe (SURVIVORSHIP BIAS RISK)."
+            )
+            if strict:
+                raise RuntimeError("Survivorship-safe loading requires WRDS but WRDS is disabled")
             cached_subset = _cached_universe_subset(UNIVERSE_FULL)
             if verbose:
                 if cached_subset:
@@ -616,10 +648,17 @@ def load_survivorship_universe(
                 else:
                     print("  WRDS disabled — falling back to static universe")
             fallback = cached_subset if cached_subset else UNIVERSE_FULL
-            return load_universe(fallback, years=years, verbose=verbose)
+            result = load_universe(fallback, years=years, verbose=verbose)
+            return _tag_survivorship_safe(result, safe=False)
 
         provider = get_provider("wrds")
         if not provider.available():
+            logger.warning(
+                "WRDS not available — survivorship-safe universe unavailable. "
+                "Falling back to static universe (SURVIVORSHIP BIAS RISK)."
+            )
+            if strict:
+                raise RuntimeError("Survivorship-safe loading requires WRDS but WRDS is not available")
             cached_subset = _cached_universe_subset(UNIVERSE_FULL)
             if verbose:
                 if cached_subset:
@@ -630,7 +669,8 @@ def load_survivorship_universe(
                 else:
                     print("  WRDS not available — falling back to static universe")
             fallback = cached_subset if cached_subset else UNIVERSE_FULL
-            return load_universe(fallback, years=years, verbose=verbose)
+            result = load_universe(fallback, years=years, verbose=verbose)
+            return _tag_survivorship_safe(result, safe=False)
 
         if as_of_date is None:
             as_of = date.today() - timedelta(days=int(years * 365.25))
@@ -671,6 +711,12 @@ def load_survivorship_universe(
             history_ids = sorted({str(int(p)) for p, _ in members}) if members else []
 
         if not history_ids:
+            logger.warning(
+                "WRDS returned empty PIT universe — survivorship-safe universe unavailable. "
+                "Falling back to static universe (SURVIVORSHIP BIAS RISK)."
+            )
+            if strict:
+                raise RuntimeError("Survivorship-safe loading failed: WRDS returned empty PIT universe")
             cached_subset = _cached_universe_subset(UNIVERSE_FULL)
             if verbose:
                 if cached_subset:
@@ -681,27 +727,35 @@ def load_survivorship_universe(
                 else:
                     print("  WRDS returned empty PIT universe — falling back to static")
             fallback = cached_subset if cached_subset else UNIVERSE_FULL
-            return load_universe(fallback, years=years, verbose=verbose)
+            result = load_universe(fallback, years=years, verbose=verbose)
+            return _tag_survivorship_safe(result, safe=False)
 
         if verbose:
             print(f"  PIT universe members to load: {len(history_ids)}")
 
         # Use delisting-aware path so terminal events are preserved.
-        return load_with_delistings(
+        result = load_with_delistings(
             tickers=history_ids,
             years=years,
             verbose=verbose,
         )
+        return _tag_survivorship_safe(result, safe=True)
 
     except (OSError, ValueError, RuntimeError) as e:
         logger.warning(
-            "Survivorship universe load failed, falling back to static: %s | years=%d",
+            "Survivorship universe load failed — falling back to static universe "
+            "(SURVIVORSHIP BIAS RISK): %s | years=%d",
             e, years,
         )
+        if strict:
+            raise RuntimeError(
+                f"Survivorship-safe loading failed: {e}"
+            ) from e
         from ..config import UNIVERSE_FULL
         cached_subset = _cached_universe_subset(UNIVERSE_FULL)
         fallback = cached_subset if cached_subset else UNIVERSE_FULL
-        return load_universe(fallback, years=years, verbose=verbose)
+        result = load_universe(fallback, years=years, verbose=verbose)
+        return _tag_survivorship_safe(result, safe=False)
 
 
 def load_with_delistings(
@@ -846,4 +900,39 @@ def load_with_delistings(
         use_wrds=WRDS_ENABLED,
     )
     data.update(fallback)
+
+    # Truth Layer: validate delisting-augmented data before returning
+    if TRUTH_LAYER_FAIL_ON_CORRUPT and data:
+        from ..validation.data_integrity import DataIntegrityValidator
+        validator = DataIntegrityValidator(fail_fast=False)  # Don't fail on first bad ticker
+        integrity_result = validator.validate_universe(data)
+        if not integrity_result.passed:
+            # Remove corrupt tickers rather than failing entirely —
+            # delisted companies may legitimately have unusual price patterns
+            for bad_ticker in integrity_result.failed_tickers:
+                logger.warning("Removing corrupt delisted ticker %s from universe", bad_ticker)
+                data.pop(bad_ticker, None)
+            if not data:
+                raise RuntimeError(
+                    f"All {integrity_result.n_stocks_failed} tickers failed integrity check"
+                )
+
     return data
+
+
+def warn_if_survivorship_biased(
+    data: Dict[str, pd.DataFrame],
+    context: str = "pipeline",
+) -> bool:
+    """Check and log a warning if the data is not survivorship-safe.
+
+    Returns True if the data is survivorship-safe, False otherwise.
+    """
+    sample_df = next(iter(data.values()), None)
+    if sample_df is not None and not sample_df.attrs.get("survivorship_safe", True):
+        logger.warning(
+            "Running %s on survivorship-BIASED universe — results may overstate performance",
+            context,
+        )
+        return False
+    return True

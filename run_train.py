@@ -24,7 +24,7 @@ from quant_engine.config import (
     UNIVERSE_FULL, UNIVERSE_QUICK, FORWARD_HORIZONS, LOOKBACK_YEARS,
     FEATURE_MODE_DEFAULT, RESULTS_DIR,
 )
-from quant_engine.data.loader import load_universe, load_survivorship_universe
+from quant_engine.data.loader import load_universe, load_survivorship_universe, warn_if_survivorship_biased
 from quant_engine.features.pipeline import FeaturePipeline
 from quant_engine.regime.detector import RegimeDetector
 from quant_engine.models.governance import ModelGovernance
@@ -119,6 +119,8 @@ def main():
     if not data:
         print("ERROR: No data loaded. Check your data sources.")
         sys.exit(1)
+
+    warn_if_survivorship_biased(data, context="training")
 
     if verbose:
         print(f"  Loaded {len(data)} PERMNO series")

@@ -1,7 +1,7 @@
 """
 Data subpackage — self-contained data loading, caching, WRDS, and survivorship.
 """
-from .loader import load_ohlcv, load_universe, load_survivorship_universe, load_with_delistings
+from .loader import load_ohlcv, load_universe, load_survivorship_universe, load_with_delistings, warn_if_survivorship_biased
 from .local_cache import save_ohlcv, load_ibkr_data, list_cached_tickers, cache_universe
 from .provider_registry import get_provider, list_providers, register_provider
 from .quality import (
@@ -18,6 +18,7 @@ __all__ = [
     "load_universe",
     "load_survivorship_universe",
     "load_with_delistings",
+    "warn_if_survivorship_biased",
     "save_ohlcv",
     "load_ibkr_data",
     "list_cached_tickers",
