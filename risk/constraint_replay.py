@@ -86,16 +86,23 @@ def replay_with_stress_constraints(
             continue
 
         for scenario_name, scenario_params in stress_scenarios.items():
-            # Compute constraint utilization under stress regime
+            # Apply scenario shocks before computing utilization
+            market_shock = scenario_params.get("market_return", 0.0)
+            vol_multiplier = scenario_params.get("volatility_multiplier", 1.0)
+
+            # Apply volatility multiplier to position weights (larger vol = larger effective exposure)
+            shocked_positions = {k: v * vol_multiplier for k, v in positions.items()}
+
+            # Compute constraint utilization under stress regime with shocked positions
             util = risk_mgr.compute_constraint_utilization(
-                positions=positions,
+                positions=shocked_positions,
                 price_data=price_data,
                 regime=stress_regime,
             )
 
-            # Compute detailed sector breakdown
+            # Compute detailed sector breakdown with shocked positions
             sector_weights: Dict[str, float] = {}
-            for ticker, weight in positions.items():
+            for ticker, weight in shocked_positions.items():
                 sector = risk_mgr._resolve_sector(ticker, price_data)
                 sector_weights[sector] = sector_weights.get(sector, 0.0) + weight
 
@@ -109,14 +116,14 @@ def replay_with_stress_constraints(
             if sector_weights and eff_sector_cap > 0:
                 max_sector_util = max(sector_weights.values()) / eff_sector_cap
 
-            # Gross utilization
-            gross = sum(positions.values())
+            # Gross utilization (with shocked positions)
+            gross = sum(shocked_positions.values())
             gross_util = gross / eff_gross if eff_gross > 0 else 0.0
 
-            # Single name
+            # Single name (with shocked positions)
             single_util = 0.0
-            if positions and risk_mgr.max_single > 0:
-                single_util = max(positions.values()) / risk_mgr.max_single
+            if shocked_positions and risk_mgr.max_single > 0:
+                single_util = max(shocked_positions.values()) / risk_mgr.max_single
 
             # Correlation utilization (from overall util)
             corr_util = util.get("correlation", 0.0)
@@ -128,10 +135,6 @@ def replay_with_stress_constraints(
 
             # Backoff recommendation
             backoff = risk_mgr._compute_backoff_factor(max_util)
-
-            # Apply scenario-specific market shock for additional context
-            market_shock = scenario_params.get("market_return", 0.0)
-            vol_multiplier = scenario_params.get("volatility_multiplier", 1.0)
 
             results.append({
                 "date": date,

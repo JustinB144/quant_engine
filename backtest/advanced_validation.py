@@ -15,6 +15,10 @@ from typing import List, Optional, Dict
 
 import numpy as np
 import pandas as pd
+
+from ..config import RISK_FREE_RATE
+from .sharpe_utils import compute_sharpe
+
 try:
     from scipy import stats
 except ImportError:  # pragma: no cover - optional dependency fallback
@@ -250,14 +254,18 @@ def probability_of_backtest_overfitting(
         test_data = pd.concat([partitions[i] for i in test_indices])
 
         # Find best strategy in-sample (by Sharpe)
-        train_sharpes = train_data.mean() / (train_data.std() + 1e-10)
+        train_sharpes = pd.Series(
+            {col: compute_sharpe(train_data[col].values, annualize=False) for col in train_data.columns}
+        )
         best_is_strategy = train_sharpes.idxmax()
 
         # Evaluate best IS strategy out-of-sample
-        oos_sharpe = test_data[best_is_strategy].mean() / (test_data[best_is_strategy].std() + 1e-10)
+        oos_sharpe = compute_sharpe(test_data[best_is_strategy].values, annualize=False)
 
         # Compare to median OOS Sharpe across all strategies
-        all_oos_sharpes = test_data.mean() / (test_data.std() + 1e-10)
+        all_oos_sharpes = pd.Series(
+            {col: compute_sharpe(test_data[col].values, annualize=False) for col in test_data.columns}
+        )
         median_oos = all_oos_sharpes.median()
 
         # Logit: positive if IS-best underperforms OOS median
@@ -330,7 +338,7 @@ def monte_carlo_validation(
     ann_factor = np.sqrt(252.0 / holding_days)
 
     # Original Sharpe
-    rf_per_trade = 0.04 * holding_days / 252.0
+    rf_per_trade = RISK_FREE_RATE * holding_days / 252.0
     excess = returns - rf_per_trade
     original_sharpe = (excess.mean() / returns.std()) * ann_factor if returns.std() > 0 else 0
 

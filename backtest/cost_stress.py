@@ -15,6 +15,8 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
+from .sharpe_utils import compute_sharpe
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,8 +36,8 @@ class CostStressResult:
     base_cost_bps: float
     multipliers: List[float]
     points: List[CostStressPoint] = field(default_factory=list)
-    breakeven_multiplier: float = float("inf")
-    breakeven_cost_bps: float = float("inf")
+    breakeven_multiplier: Optional[float] = None  # None = profitable at all tested levels
+    breakeven_cost_bps: Optional[float] = None  # None = profitable at all tested levels
 
     def to_dict(self) -> Dict:
         """Serialize to a dictionary for JSON output."""
@@ -123,9 +125,7 @@ class CostStressTester:
 
             total_ret = float(np.prod(1 + net_returns) - 1)
 
-            mean_ret = float(np.mean(net_returns))
-            std_ret = float(np.std(net_returns, ddof=1)) if len(net_returns) > 1 else 1e-10
-            sharpe = (mean_ret / max(std_ret, 1e-10)) * np.sqrt(252)
+            sharpe = compute_sharpe(net_returns, frequency="per_trade")
 
             points.append(CostStressPoint(
                 multiplier=mult,
@@ -136,8 +136,8 @@ class CostStressTester:
             ))
 
         # Estimate breakeven cost multiplier (where Sharpe crosses zero)
-        breakeven_mult = float("inf")
-        breakeven_bps = float("inf")
+        breakeven_mult: Optional[float] = None
+        breakeven_bps: Optional[float] = None
 
         if len(points) >= 2:
             sharpes = [p.sharpe_ratio for p in points]
@@ -154,10 +154,10 @@ class CostStressTester:
                         breakeven_bps = self.base_cost_bps * breakeven_mult
                     break
 
-            # All positive Sharpe = very robust
+            # All positive Sharpe = very robust (None = profitable at all levels)
             if all(s > 0 for s in sharpes):
-                breakeven_mult = float("inf")
-                breakeven_bps = float("inf")
+                breakeven_mult = None
+                breakeven_bps = None
             # All negative Sharpe = not even viable at lowest cost
             elif all(s <= 0 for s in sharpes):
                 breakeven_mult = 0.0
@@ -167,15 +167,15 @@ class CostStressTester:
             base_cost_bps=self.base_cost_bps,
             multipliers=list(self.multipliers),
             points=points,
-            breakeven_multiplier=round(breakeven_mult, 4) if np.isfinite(breakeven_mult) else float("inf"),
-            breakeven_cost_bps=round(breakeven_bps, 2) if np.isfinite(breakeven_bps) else float("inf"),
+            breakeven_multiplier=round(breakeven_mult, 4) if breakeven_mult is not None else None,
+            breakeven_cost_bps=round(breakeven_bps, 2) if breakeven_bps is not None else None,
         )
 
         logger.info(
             "Cost stress sweep: base=%.1f bps, breakeven=%.1f bps (%.2fx)",
             self.base_cost_bps,
-            breakeven_bps if np.isfinite(breakeven_bps) else -1,
-            breakeven_mult if np.isfinite(breakeven_mult) else -1,
+            breakeven_bps if breakeven_bps is not None else -1,
+            breakeven_mult if breakeven_mult is not None else -1,
         )
 
         return result
@@ -211,12 +211,12 @@ class CostStressTester:
 
         lines.append("-" * 55)
 
-        if np.isfinite(result.breakeven_cost_bps):
+        if result.breakeven_cost_bps is not None:
             lines.append(
                 f"Breakeven cost: {result.breakeven_cost_bps:.1f} bps "
                 f"({result.breakeven_multiplier:.2f}x base)"
             )
         else:
-            lines.append("Breakeven cost: >inf (strategy profitable at all tested levels)")
+            lines.append("Breakeven cost: N/A (strategy profitable at all tested levels)")
 
         return "\n".join(lines)

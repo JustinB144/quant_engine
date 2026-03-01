@@ -150,7 +150,8 @@ class StopLossManager:
 
         # ── 1. Hard stop (spread-adjusted) ──
         hard_stop_price = entry_price * (1 + self.hard_stop) - spread_buf
-        if unrealized <= self.hard_stop:
+        hard_stop_adjusted = self.hard_stop - (self.spread_buffer_bps / 10_000)
+        if unrealized <= hard_stop_adjusted:
             return StopResult(
                 should_exit=True,
                 reason=StopReason.HARD_STOP,

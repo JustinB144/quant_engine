@@ -276,4 +276,21 @@ def optimize_portfolio(
     if abs(w_sum) > 1e-10:
         optimal_weights = optimal_weights / w_sum
 
+    # Re-clip any weights that now exceed max_position after renormalization
+    for _ in range(5):  # Iterate to convergence (usually 1-2 passes)
+        violations = np.abs(optimal_weights) > max_position
+        if not violations.any():
+            break
+        optimal_weights[violations] = np.sign(optimal_weights[violations]) * max_position
+        # Redistribute excess to non-capped weights
+        excess = 1.0 - optimal_weights.sum()
+        non_capped = ~violations & (np.abs(optimal_weights) > 0)
+        if non_capped.any():
+            non_capped_sum = np.abs(optimal_weights[non_capped]).sum()
+            if non_capped_sum > 1e-10:
+                optimal_weights[non_capped] += excess * (optimal_weights[non_capped] / non_capped_sum)
+
+    assert np.all(np.abs(optimal_weights) <= max_position + 1e-8), \
+        f"Weight exceeds max_position after normalization: {optimal_weights}"
+
     return pd.Series(optimal_weights, index=assets, name="weight")

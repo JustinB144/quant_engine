@@ -118,8 +118,9 @@ class DrawdownController:
         dd = (self.current_equity - self.peak_equity) / max(self.peak_equity, 1e-12)
 
         # Daily and weekly PnL
+        # Weekly PnL = sum of last 5 trading days (or fewer if less history)
         daily = daily_pnl
-        weekly = sum(self.daily_pnl_history[-5:]) if len(self.daily_pnl_history) >= 5 else daily
+        weekly = sum(self.daily_pnl_history[-5:]) if self.daily_pnl_history else daily
 
         # Determine state
         prev_state = self.state

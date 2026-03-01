@@ -812,7 +812,10 @@ class PortfolioRiskManager:
             weighted_beta += weight * beta
             total_weight += weight
 
-        return float(weighted_beta) if total_weight > 0 else 0.0
+        if total_weight > 0:
+            return float(weighted_beta / total_weight)
+        else:
+            return 1.0  # Default market-neutral assumption
 
     def _estimate_portfolio_vol(
         self,

@@ -254,15 +254,24 @@ class FactorExposureManager:
         benchmark_data: pd.DataFrame,
         lookback: int,
     ) -> float:
-        """Compute beta of a single asset vs benchmark."""
-        bench_returns = benchmark_data["Close"].pct_change().iloc[-lookback:]
-        bench_var = bench_returns.var()
-        if bench_var < 1e-14:
-            return 1.0
+        """Compute beta of a single asset vs benchmark.
 
-        common = asset_returns.index.intersection(bench_returns.index)
+        Both covariance and variance are computed over the same overlapping
+        date range to avoid mismatched denominators when assets have data gaps.
+        """
+        bench_returns = benchmark_data["Close"].pct_change().iloc[-lookback:]
+
+        # Align asset and benchmark to common dates
+        common = asset_returns.dropna().index.intersection(bench_returns.dropna().index)
         if len(common) < 20:
             return 1.0
 
-        cov = asset_returns.loc[common].cov(bench_returns.loc[common])
+        asset_aligned = asset_returns.loc[common]
+        bench_aligned = bench_returns.loc[common]
+
+        bench_var = bench_aligned.var()
+        if bench_var < 1e-14:
+            return 1.0
+
+        cov = asset_aligned.cov(bench_aligned)
         return float(cov / bench_var)

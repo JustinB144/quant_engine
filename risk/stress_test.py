@@ -492,7 +492,8 @@ def correlation_stress_test(
         "stress_portfolio_vol": round(stress_vol_ann, 6),
         "vol_increase_pct": round(vol_increase_pct, 2),
         "stress_var_99_daily": round(stress_var_99, 6),
-        "max_loss_3sigma": round(stress_var_99 * 3.0, 6),
+        "max_loss_3sigma": round(stress_vol * 3.0, 6),
+        "max_loss_extreme": round(stress_var_99 * 3.0, 6),
         "diversification_benefit_lost": round(div_benefit_lost, 6),
     }
 

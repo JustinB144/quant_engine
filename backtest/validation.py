@@ -20,7 +20,8 @@ from typing import List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from ..config import IC_ROLLING_WINDOW
+from ..config import IC_ROLLING_WINDOW, RISK_FREE_RATE
+from .sharpe_utils import compute_sharpe
 try:
     from scipy import stats
 except ImportError:  # pragma: no cover - optional dependency fallback
@@ -308,9 +309,7 @@ def walk_forward_validate(
             # else: 0.0
 
             if n_long > 1:
-                std_ret = float(np.std(long_actual))
-                if std_ret > 1e-12:
-                    fold_sharpe = float(np.mean(long_actual) / std_ret)
+                fold_sharpe = compute_sharpe(long_actual.values if hasattr(long_actual, 'values') else long_actual, annualize=False)
 
         folds.append(WalkForwardFold(
             fold=i + 1,
@@ -442,7 +441,7 @@ def run_statistical_tests(
     # 3. Sharpe ratio significance (Lo 2002)
     if len(trade_returns) > 2 and trade_returns.std() > 0:
         # Risk-free subtraction
-        rf_per_trade = 0.04 * holding_days / 252.0
+        rf_per_trade = RISK_FREE_RATE * holding_days / 252.0
         excess = trade_returns - rf_per_trade
         sharpe = excess.mean() / trade_returns.std()
         n_trades = len(trade_returns)
@@ -822,7 +821,7 @@ def walk_forward_with_embargo(
     embargo: int = 5,
     test_window: int = 60,
     slide_freq: str = "weekly",
-    risk_free_rate: float = 0.04,
+    risk_free_rate: float = RISK_FREE_RATE,
 ) -> WalkForwardEmbargoResult:
     """Walk-forward evaluation with embargo gap.
 
@@ -1054,16 +1053,9 @@ def detect_ic_decay(
 # ── Private helpers ──────────────────────────────────────────────────
 
 
-def _sharpe(returns: np.ndarray, risk_free_rate: float = 0.04) -> float:
+def _sharpe(returns: np.ndarray, risk_free_rate: float = RISK_FREE_RATE) -> float:
     """Annualized Sharpe ratio from a return array."""
-    if len(returns) < 2:
-        return 0.0
-    rf_per_day = risk_free_rate / 252.0
-    excess = returns - rf_per_day
-    std = float(np.std(returns, ddof=1))
-    if std < 1e-12:
-        return 0.0
-    return float(np.mean(excess) / std * np.sqrt(252))
+    return compute_sharpe(returns, rf_annual=risk_free_rate, frequency="daily", annualize=True)
 
 
 def _spearman_ic(predictions: np.ndarray, returns: np.ndarray) -> float:

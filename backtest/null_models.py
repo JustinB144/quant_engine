@@ -26,6 +26,8 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from .sharpe_utils import compute_sharpe
+
 logger = logging.getLogger(__name__)
 
 
@@ -229,10 +231,8 @@ def _compute_metrics(name: str, returns: List[float]) -> NullBaselineMetrics:
 
     total_return = float(np.prod(1 + ret_arr) - 1)
 
-    # Annualized Sharpe (assume 252 trading days)
-    mean_ret = float(np.mean(ret_arr))
-    std_ret = float(np.std(ret_arr, ddof=1)) if len(ret_arr) > 1 else 1e-10
-    sharpe = (mean_ret / max(std_ret, 1e-10)) * np.sqrt(252)
+    # Annualized Sharpe via canonical utility
+    sharpe = compute_sharpe(ret_arr, frequency="daily")
 
     # Max drawdown
     cum = np.cumprod(1 + ret_arr)

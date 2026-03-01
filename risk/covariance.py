@@ -91,9 +91,9 @@ class CovarianceEstimator:
             )
             return CovarianceEstimate(covariance=cov, n_observations=int(clean.shape[0]), method="fallback")
 
-        # Forward-fill then back-fill partial NaN; drop rows still missing.
-        # Avoids biasing covariance toward zero from naive fillna(0).
-        clean = clean.ffill().bfill().dropna(how="any")
+        # Forward-fill only (no bfill) to prevent look-ahead bias.
+        # Assets with missing data at series start are dropped, not back-filled.
+        clean = clean.ffill().dropna(how="any")
         if clean.shape[0] < min(30, max(5, clean.shape[1] + 1)):
             cov = pd.DataFrame(
                 np.eye(returns.shape[1], dtype=float) * 1e-8,
@@ -135,7 +135,7 @@ class CovarianceEstimator:
         Parameters
         ----------
         clean : pd.DataFrame
-            Cleaned returns (no NaN/inf, ffill/bfill already applied).
+            Cleaned returns (no NaN/inf, ffill already applied).
 
         Returns
         -------
@@ -271,8 +271,9 @@ def compute_regime_covariance(
     returns = returns.loc[common_idx]
     regimes = regimes.loc[common_idx]
 
-    # Clean returns: replace infinities, forward/back-fill, drop remaining NaN.
-    clean = returns.replace([np.inf, -np.inf], np.nan).ffill().bfill().dropna(how="any")
+    # Clean returns: replace infinities, forward-fill only (no bfill to prevent
+    # look-ahead bias), drop remaining NaN.
+    clean = returns.replace([np.inf, -np.inf], np.nan).ffill().dropna(how="any")
     regimes = regimes.reindex(clean.index)
 
     assets = clean.columns
