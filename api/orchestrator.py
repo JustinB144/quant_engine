@@ -190,6 +190,18 @@ class PipelineOrchestrator:
                 recency_weight=recency_weight,
             )
 
+            if result.global_model is None:
+                logger.warning(
+                    "Training rejected by quality gates for horizon=%d — "
+                    "no model was saved.",
+                    horizon,
+                )
+                results[str(horizon)] = {
+                    "status": "rejected",
+                    "reason": "quality_gates",
+                }
+                continue
+
             latest_id = registry.latest_version_id
             gov_result = {}
             if latest_id is not None:

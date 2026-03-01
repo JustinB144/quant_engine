@@ -213,6 +213,7 @@ class ModelTrainer:
         cv_folds: int = CV_FOLDS,
         holdout_fraction: float = HOLDOUT_FRACTION,
         max_gap: float = MAX_IS_OOS_GAP,
+        model_dir: Optional[Path] = None,
     ):
         """Initialize ModelTrainer."""
         # Truth Layer: validate execution contract preconditions
@@ -224,6 +225,7 @@ class ModelTrainer:
         self.cv_folds = cv_folds
         self.holdout_fraction = holdout_fraction
         self.max_gap = max_gap
+        self.model_dir = model_dir
 
     @staticmethod
     def _spearmanr(x: np.ndarray, y: np.ndarray) -> tuple[float, float]:
@@ -1495,7 +1497,7 @@ class ModelTrainer:
             version_id, save_dir = registry.create_version_dir()
         else:
             version_id = None
-            save_dir = MODEL_DIR
+            save_dir = self.model_dir if self.model_dir is not None else MODEL_DIR
             save_dir.mkdir(parents=True, exist_ok=True)
 
         prefix = save_dir / f"ensemble_{horizon}d"

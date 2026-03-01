@@ -421,16 +421,17 @@ class EnsemblePredictor:
             result["prediction_interval_width"] = np.nan
             result["uncertainty_scalar"] = 1.0
 
-        # ── Regime suppression ──
-        # Suppress predictions for the configured regime by zeroing
-        # confidence and flagging the row.  This centralizes the trade gate
-        # so both backtester AND live trading honor it.
+        # ── Regime suppression flag ──
+        # Mark rows in the suppressed regime but preserve original confidence
+        # so downstream consumers (backtest engine, live trader) can apply
+        # REGIME_TRADE_POLICY with the high-confidence override intact.
         # See config.py REGIME_NAMES: {0: trending_bull, 1: trending_bear,
         #   2: mean_reverting, 3: high_volatility}
         regime_vals = regimes.reindex(features.index).fillna(-1).astype(int).values
         regime_suppress_mask = regime_vals == REGIME_SUPPRESS_ID  # high_volatility (canonical regime 3)
         result["regime_suppressed"] = regime_suppress_mask
-        result.loc[regime_suppress_mask, "confidence"] = 0.0
+        # DO NOT zero confidence here — let the backtest engine / live trader
+        # apply REGIME_TRADE_POLICY gating with its min_confidence override.
 
         # Attach member predictions as DataFrame metadata for disagreement
         # tracking (SPEC-H02).  Callers can access via result.attrs.

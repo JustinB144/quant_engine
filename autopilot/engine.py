@@ -8,6 +8,7 @@ End-to-end autopilot cycle:
 """
 import json
 import logging
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import re
@@ -500,8 +501,12 @@ class AutopilotEngine:
             test_features = features.iloc[test_idx]
             test_regimes = regimes.iloc[test_idx]
 
-            # Train a fresh model on this fold's training window
-            trainer = ModelTrainer()
+            # Train in an isolated temp directory to prevent registry contamination
+            fold_dir_ctx = tempfile.TemporaryDirectory(prefix="wf_fold_")
+            fold_dir = fold_dir_ctx.__enter__()
+            fold_model_dir = Path(fold_dir)
+
+            trainer = ModelTrainer(model_dir=fold_model_dir)
             try:
                 trainer.train_ensemble(
                     features=train_features,
@@ -514,13 +519,19 @@ class AutopilotEngine:
                 )
             except (ValueError, RuntimeError, ImportError) as e:
                 self._log(f"    Fold {fold_idx + 1} training failed: {e}")
+                fold_dir_ctx.cleanup()
                 continue
 
-            # Load the just-trained model for OOS prediction
+            # Load from the isolated fold directory — no registry can interfere
             try:
-                fold_predictor = EnsemblePredictor(horizon=self.horizon, version="latest")
+                fold_predictor = EnsemblePredictor(
+                    horizon=self.horizon,
+                    version="latest",
+                    model_dir=fold_model_dir,
+                )
             except (FileNotFoundError, ImportError, RuntimeError) as e:
                 self._log(f"    Fold {fold_idx + 1} predictor load failed: {e}")
+                fold_dir_ctx.cleanup()
                 continue
 
             # Generate OOS predictions per permno in the test window
@@ -544,6 +555,9 @@ class AutopilotEngine:
                     all_oos_preds.append(preds_idx)
                 except (ValueError, KeyError, RuntimeError):
                     continue
+
+            # Clean up the temporary fold directory
+            fold_dir_ctx.cleanup()
 
         if not all_oos_preds:
             self._log("  Walk-forward produced no OOS predictions, falling back to single-split.")

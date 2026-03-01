@@ -52,6 +52,7 @@ from ..config import (
     EXEC_CALIBRATION_MIN_SEGMENT_TRADES,
     EXEC_CALIBRATION_SMOOTHING,
     OPTIMIZER_BLEND_WEIGHT,
+    REGIME_TRADE_POLICY,
 )
 from ..backtest.execution import ExecutionModel
 from ..backtest.adv_tracker import ADVTracker
@@ -1043,6 +1044,16 @@ class PaperTrader:
 
                     regime = int(row.get("regime", 2))
                     confidence = float(row.get("confidence", 0.5))
+
+                    # ── Per-regime trade gating (REGIME_TRADE_POLICY) ──
+                    _policy = REGIME_TRADE_POLICY.get(
+                        regime, {"enabled": True, "min_confidence": 0.0},
+                    )
+                    if not _policy["enabled"]:
+                        if _policy["min_confidence"] <= 0 or confidence < _policy["min_confidence"]:
+                            continue
+                    elif confidence < _policy["min_confidence"]:
+                        continue
 
                     # ── A/B test variant routing ──
                     ab_variant = ""

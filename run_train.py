@@ -87,6 +87,7 @@ def main():
     manifest = build_run_manifest(
         run_type="train",
         config_snapshot=vars(args),
+        script_name="run_train",
     )
 
     # ── Select universe ──
@@ -193,6 +194,12 @@ def main():
             survivorship_mode=args.survivorship,
             recency_weight=args.recency,
         )
+
+        if result.global_model is None:
+            if verbose:
+                print(f"  Training rejected by quality gates for horizon={horizon}d — "
+                      "no model was saved.")
+            continue
 
         if not args.no_version:
             latest_id = registry.latest_version_id

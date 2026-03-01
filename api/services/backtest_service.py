@@ -101,12 +101,9 @@ class BacktestService:
                 training_date = training_date.replace(tzinfo=timezone.utc)
             now = datetime.now(timezone.utc)
             days = (now - training_date).days
-            # Default retrain threshold: 30 days
-            try:
-                from quant_engine.models.retrain_trigger import RETRAIN_MAX_DAYS
-                overdue = days > RETRAIN_MAX_DAYS
-            except (ImportError, AttributeError):
-                overdue = days > 30
+            # Default retrain threshold from config
+            from quant_engine.config import RETRAIN_MAX_DAYS
+            overdue = days > RETRAIN_MAX_DAYS
             return {"days": days, "overdue": overdue, "version_id": version_id}
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             logger.warning("Failed to compute model staleness: %s", exc)

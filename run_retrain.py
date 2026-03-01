@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from quant_engine.config import (
     UNIVERSE_FULL, UNIVERSE_QUICK, FORWARD_HORIZONS, FEATURE_MODE_DEFAULT,
-    RETRAIN_REGIME_CHANGE_DAYS, RESULTS_DIR,
+    RETRAIN_REGIME_CHANGE_DAYS, RESULTS_DIR, LOOKBACK_YEARS,
 )
 from quant_engine.data.loader import load_universe, load_survivorship_universe, warn_if_survivorship_biased
 from quant_engine.features.pipeline import FeaturePipeline
@@ -82,12 +82,13 @@ def main():
     parser.add_argument("--full", action="store_true", help="Use full universe")
     parser.add_argument("--tickers", nargs="+", help="Specific tickers")
     parser.add_argument("--horizon", type=int, nargs="+", default=[10], help="Prediction horizons")
-    parser.add_argument("--years", type=int, default=15, help="Years of data")
+    parser.add_argument("--years", type=int, default=LOOKBACK_YEARS,
+                        help=f"Years of data (default: {LOOKBACK_YEARS})")
     parser.add_argument(
         "--feature-mode",
-        choices=["core", "full"],
+        choices=["minimal", "core", "full"],
         default=FEATURE_MODE_DEFAULT,
-        help="Feature profile: core (reduced complexity) or full",
+        help="Feature profile: minimal (~20 indicators), core (reduced complexity), or full",
     )
     parser.add_argument("--recency", action="store_true", help="Apply exponential recency weighting")
     parser.add_argument(
@@ -196,6 +197,7 @@ def main():
     manifest = build_run_manifest(
         run_type="retrain",
         config_snapshot=vars(args),
+        script_name="run_retrain",
     )
 
     # ── Load data ──
@@ -275,6 +277,12 @@ def main():
             recency_weight=args.recency,
         )
 
+        if result.global_model is None:
+            if verbose:
+                print(f"  Training rejected by quality gates for horizon={horizon}d — "
+                      "no model was saved.")
+            continue
+
         latest_id = registry.latest_version_id
         if latest_id is not None:
             metrics = {
@@ -307,7 +315,7 @@ def main():
         # Persist the dominant regime at training time for regime-change trigger
         if dominant_training_regime is not None:
             trigger.metadata["trained_regime"] = dominant_training_regime
-            trigger._save_metadata()
+            trigger.save_metadata()
 
     # ── Write reproducibility manifest ──
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
