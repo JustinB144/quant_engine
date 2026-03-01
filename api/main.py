@@ -115,10 +115,17 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
 
     # CORS
     origins = [o.strip() for o in settings.cors_origins.split(",")]
+    allow_creds = "*" not in origins
+    if not allow_creds:
+        logger.warning(
+            "CORS_ORIGINS contains '*'. Credentials will NOT be allowed. "
+            "Set explicit origins (e.g. 'http://localhost:5173') for "
+            "credentialed cross-origin requests."
+        )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_credentials=True,
+        allow_credentials=allow_creds,
         allow_methods=["*"],
         allow_headers=["*"],
     )

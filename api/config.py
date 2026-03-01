@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Set
+from typing import Any, Callable, Dict, Optional, Set
 
 from pydantic_settings import BaseSettings
 
@@ -23,13 +23,58 @@ _ADJUSTABLE_KEYS: Set[str] = {
     "MAX_HOLDING_DAYS",
 }
 
+# Semantic validators: key -> (validator_fn, human-readable description).
+# Validator returns True if the value is acceptable.
+CONFIG_VALIDATORS: Dict[str, tuple[Callable[[Any], bool], str]] = {
+    "ENTRY_THRESHOLD": (
+        lambda v: 0.0 <= v <= 1.0,
+        "Must be between 0.0 and 1.0",
+    ),
+    "CONFIDENCE_THRESHOLD": (
+        lambda v: 0.0 <= v <= 1.0,
+        "Must be between 0.0 and 1.0",
+    ),
+    "MAX_POSITIONS": (
+        lambda v: 1 <= v <= 100,
+        "Must be between 1 and 100",
+    ),
+    "POSITION_SIZE_PCT": (
+        lambda v: 0.0 < v <= 1.0,
+        "Must be between 0.0 (exclusive) and 1.0",
+    ),
+    "DRAWDOWN_WARNING_THRESHOLD": (
+        lambda v: -1.0 <= v <= 0.0,
+        "Must be between -1.0 and 0.0",
+    ),
+    "DRAWDOWN_CAUTION_THRESHOLD": (
+        lambda v: -1.0 <= v <= 0.0,
+        "Must be between -1.0 and 0.0",
+    ),
+    "DRAWDOWN_CRITICAL_THRESHOLD": (
+        lambda v: -1.0 <= v <= 0.0,
+        "Must be between -1.0 and 0.0",
+    ),
+    "DRAWDOWN_DAILY_LOSS_LIMIT": (
+        lambda v: -1.0 <= v <= 0.0,
+        "Must be between -1.0 and 0.0",
+    ),
+    "DRAWDOWN_WEEKLY_LOSS_LIMIT": (
+        lambda v: -1.0 <= v <= 0.0,
+        "Must be between -1.0 and 0.0",
+    ),
+    "MAX_HOLDING_DAYS": (
+        lambda v: 1 <= v <= 365,
+        "Must be between 1 and 365",
+    ),
+}
+
 
 class ApiSettings(BaseSettings):
     """Immutable settings loaded from environment / .env file."""
 
     host: str = "0.0.0.0"
     port: int = 8000
-    cors_origins: str = "*"
+    cors_origins: str = "http://localhost:5173,http://localhost:8000"
     job_db_path: str = "api_jobs.db"
     log_level: str = "INFO"
 
@@ -67,9 +112,23 @@ class RuntimeConfig:
             # Coerce to same type as current value
             target_type = type(current)
             try:
-                coerced = target_type(value)
+                if target_type is bool:
+                    if isinstance(value, str):
+                        coerced = value.lower() in ("true", "1", "yes")
+                    else:
+                        coerced = bool(value)
+                else:
+                    coerced = target_type(value)
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"Cannot coerce {key}={value!r} to {target_type.__name__}") from exc
+            # Semantic validation
+            validator = CONFIG_VALIDATORS.get(key)
+            if validator is not None:
+                check_fn, description = validator
+                if not check_fn(coerced):
+                    raise ValueError(
+                        f"Invalid value for {key}: {coerced!r}. {description}"
+                    )
             setattr(self._cfg, key, coerced)
             logger.info("RuntimeConfig patched %s = %r", key, coerced)
         return self.get_adjustable()

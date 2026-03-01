@@ -6,6 +6,7 @@ import time
 
 from fastapi import APIRouter, Depends
 
+from ..deps.auth import require_auth
 from ..deps.providers import get_job_runner, get_job_store
 from ..jobs.runner import JobRunner
 from ..jobs.store import JobStore
@@ -70,7 +71,7 @@ async def paper_state() -> ApiResponse:
     return ApiResponse.success(data, elapsed_ms=elapsed, **meta_fields)
 
 
-@router.post("/run-cycle")
+@router.post("/run-cycle", dependencies=[Depends(require_auth)])
 async def run_cycle(
     req: AutopilotRequest,
     store: JobStore = Depends(get_job_store),

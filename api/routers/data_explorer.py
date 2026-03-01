@@ -12,6 +12,7 @@ import pandas as pd
 from fastapi import APIRouter, Depends, Query
 
 from ..cache.manager import CacheManager
+from ..deps.auth import require_auth
 from ..deps.providers import get_cache
 from ..errors import DataNotFoundError
 from ..schemas.envelope import ApiResponse
@@ -458,7 +459,7 @@ async def get_ticker_indicators(
     return ApiResponse.success(data, elapsed_ms=elapsed)
 
 
-@router.post("/ticker/{ticker}/indicators/batch")
+@router.post("/ticker/{ticker}/indicators/batch", dependencies=[Depends(require_auth)])
 async def batch_indicators(
     ticker: str,
     timeframe: str = Query("1d"),

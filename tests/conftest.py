@@ -198,10 +198,15 @@ class _InMemoryJobStore:
 @pytest.fixture
 async def app(tmp_path):
     """Create a test FastAPI app with a fresh per-test job store."""
+    import quant_engine.api.deps.auth as _auth
     import api.deps.providers as _prov
     from api.config import ApiSettings
     from api.jobs.runner import JobRunner
     from api.main import create_app
+
+    # Disable auth for tests so mutation endpoints are accessible
+    _orig_auth_enabled = _auth.API_AUTH_ENABLED
+    _auth.API_AUTH_ENABLED = False
 
     settings = ApiSettings(job_db_path=str(tmp_path / "test_jobs.db"))
 
@@ -224,6 +229,7 @@ async def app(tmp_path):
     yield application
 
     # Cleanup
+    _auth.API_AUTH_ENABLED = _orig_auth_enabled
     runner._active_tasks.clear()
     _prov._job_store = None
     _prov._job_runner = None

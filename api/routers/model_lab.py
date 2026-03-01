@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 
 from ..cache.invalidation import invalidate_on_train
 from ..cache.manager import CacheManager
+from ..deps.auth import require_auth
 from ..deps.providers import get_cache, get_job_runner, get_job_store
 from ..jobs.runner import JobRunner
 from ..jobs.store import JobStore
@@ -62,7 +63,7 @@ async def feature_correlations() -> ApiResponse:
     return ApiResponse.success(data, elapsed_ms=elapsed)
 
 
-@router.post("/train")
+@router.post("/train", dependencies=[Depends(require_auth)])
 async def train_model(
     req: TrainRequest,
     store: JobStore = Depends(get_job_store),
@@ -77,7 +78,7 @@ async def train_model(
     return ApiResponse.success({"job_id": rec.job_id, "job_type": "train", "status": "queued"})
 
 
-@router.post("/predict")
+@router.post("/predict", dependencies=[Depends(require_auth)])
 async def predict_model(
     req: PredictRequest,
     store: JobStore = Depends(get_job_store),

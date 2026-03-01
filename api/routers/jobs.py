@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
+from ..deps.auth import require_auth
 from ..deps.providers import get_job_runner, get_job_store
 from ..errors import JobNotFoundError
 from ..jobs.models import JobRecord
@@ -59,7 +60,7 @@ async def job_events(
     return EventSourceResponse(_generate())
 
 
-@router.post("/{job_id}/cancel")
+@router.post("/{job_id}/cancel", dependencies=[Depends(require_auth)])
 async def cancel_job(
     job_id: str,
     store: JobStore = Depends(get_job_store),

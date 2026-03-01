@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -30,6 +31,29 @@ import numpy as np
 from scipy.stats import norm
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_name(name: str) -> str:
+    """Sanitize a name for safe use in filesystem paths.
+
+    Strips path separators, parent-directory traversals, and null bytes.
+    Only alphanumeric characters, hyphens, and underscores are retained.
+
+    Raises
+    ------
+    ValueError
+        If the sanitized result is empty.
+    """
+    # Remove null bytes
+    cleaned = name.replace("\x00", "")
+    # Keep only alphanumeric, hyphens, underscores
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]", "", cleaned)
+    if not cleaned:
+        raise ValueError(
+            f"Invalid name {name!r}: must contain at least one "
+            "alphanumeric character, hyphen, or underscore."
+        )
+    return cleaned
 
 # Config overrides that A/B tests are allowed to modify.
 # max_positions is excluded to prevent imbalanced capital allocation.
@@ -611,6 +635,10 @@ class ABTestRegistry:
                 f"an existing test first."
             )
 
+        # Sanitize variant names to prevent path traversal
+        control_name = _sanitize_name(control_name)
+        treatment_name = _sanitize_name(treatment_name)
+
         # Validate overrides
         for key in (control_overrides or {}):
             if key not in ALLOWED_OVERRIDES:
@@ -707,9 +735,11 @@ class ABTestRegistry:
             trades_dir.mkdir(parents=True, exist_ok=True)
 
             for test in self._tests.values():
+                safe_test_id = _sanitize_name(test.test_id)
                 for variant in [test.control, test.treatment]:
+                    safe_name = _sanitize_name(variant.name)
                     parquet_path = (
-                        trades_dir / f"{test.test_id}_{variant.name}.parquet"
+                        trades_dir / f"{safe_test_id}_{safe_name}.parquet"
                     )
                     if variant.trades:
                         df = pd.DataFrame(variant.trades)
@@ -780,8 +810,10 @@ class ABTestRegistry:
             return
 
         for variant in [test.control, test.treatment]:
+            safe_test_id = _sanitize_name(test.test_id)
+            safe_name = _sanitize_name(variant.name)
             parquet_path = (
-                trades_dir / f"{test.test_id}_{variant.name}.parquet"
+                trades_dir / f"{safe_test_id}_{safe_name}.parquet"
             )
             if parquet_path.exists():
                 try:

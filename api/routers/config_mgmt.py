@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from ..cache.invalidation import invalidate_on_config_change
 from ..cache.manager import CacheManager
 from ..config import RuntimeConfig
+from ..deps.auth import require_auth
 from ..deps.providers import get_cache, get_runtime_config
 from ..schemas.envelope import ApiResponse
 
@@ -131,7 +132,7 @@ async def get_config_status() -> ApiResponse:
     return ApiResponse.success(_build_config_status())
 
 
-@router.patch("")
+@router.patch("", dependencies=[Depends(require_auth)])
 async def patch_config(
     updates: dict = Body(...),
     rc: RuntimeConfig = Depends(get_runtime_config),

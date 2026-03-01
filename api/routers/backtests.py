@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 
 from ..cache.invalidation import invalidate_on_backtest
 from ..cache.manager import CacheManager
+from ..deps.auth import require_auth
 from ..deps.providers import get_cache, get_job_runner, get_job_store
 from ..jobs.runner import JobRunner
 from ..jobs.store import JobStore
@@ -74,7 +75,7 @@ async def equity_curve(
     return ApiResponse.success(data, elapsed_ms=elapsed)
 
 
-@router.post("/run")
+@router.post("/run", dependencies=[Depends(require_auth)])
 async def run_backtest(
     req: BacktestRequest,
     store: JobStore = Depends(get_job_store),

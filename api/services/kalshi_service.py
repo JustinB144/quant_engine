@@ -24,7 +24,9 @@ class KalshiService:
             from quant_engine.kalshi.storage import EventTimeStore
 
             store = EventTimeStore(KALSHI_DB_PATH)
-            df = store.query_df("kalshi_markets", limit=200)
+            df = store.query_df(
+                "SELECT * FROM kalshi_markets LIMIT 200"
+            )
             if event_type:
                 df = df[df["event_type"].str.contains(event_type, case=False, na=False)]
             records = df.head(200).to_dict(orient="records")
@@ -42,7 +44,10 @@ class KalshiService:
             from quant_engine.kalshi.storage import EventTimeStore
 
             store = EventTimeStore(KALSHI_DB_PATH)
-            df = store.query_df("kalshi_contracts", where=f"event_id = '{market_id}'")
+            df = store.query_df(
+                "SELECT * FROM kalshi_contracts WHERE event_id = ?",
+                params=[market_id],
+            )
             records = df.to_dict(orient="records") if len(df) else []
             return {"enabled": True, "market_id": market_id, "contracts": records}
         except Exception as exc:
