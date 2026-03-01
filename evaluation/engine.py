@@ -40,6 +40,7 @@ from ..config import (
     EVAL_OVERFIT_GAP_THRESHOLD,
     EVAL_PNL_CONCENTRATION_THRESHOLD,
     EVAL_CALIBRATION_ERROR_THRESHOLD,
+    EVAL_DECILE_SPREAD_MIN,
 )
 
 from .slicing import PerformanceSlice, SliceRegistry
@@ -98,6 +99,8 @@ class EvaluationResult:
     ensemble_disagreement_result: Optional[Dict] = None
     # Red flags
     red_flags: List[RedFlag] = field(default_factory=list)
+    # Failed subsystems
+    failed_subsystems: List[str] = field(default_factory=list)
     # Summary
     overall_pass: bool = True
     summary: str = ""
@@ -191,6 +194,7 @@ class EvaluationEngine:
         EvaluationResult
         """
         red_flags: List[RedFlag] = []
+        failed_subsystems: List[str] = []
         pred_arr = np.asarray(predictions, dtype=float).ravel()
 
         # ── 1. Aggregate metrics ──
@@ -212,14 +216,18 @@ class EvaluationEngine:
             for slc in primary_slices:
                 filtered, info = slc.apply(returns, metadata)
                 if info["n_samples"] > 0:
-                    metrics = compute_slice_metrics(filtered, None)
+                    mask = np.asarray(slc.condition(metadata), dtype=bool)
+                    slice_preds = pred_arr[mask[:len(pred_arr)]] if len(mask) >= len(pred_arr) else pred_arr[mask[:len(mask)]]
+                    metrics = compute_slice_metrics(filtered, slice_preds)
                     metrics.update(info)
                     regime_slice_metrics[slc.name] = metrics
 
             for slc in individual_slices:
                 filtered, info = slc.apply(returns, metadata)
                 if info["n_samples"] > 0:
-                    metrics = compute_slice_metrics(filtered, None)
+                    mask = np.asarray(slc.condition(metadata), dtype=bool)
+                    slice_preds = pred_arr[mask[:len(pred_arr)]] if len(mask) >= len(pred_arr) else pred_arr[mask[:len(mask)]]
+                    metrics = compute_slice_metrics(filtered, slice_preds)
                     metrics.update(info)
                     individual_regime_metrics[slc.name] = metrics
 
@@ -230,11 +238,14 @@ class EvaluationEngine:
                     for slc in unc_slices:
                         filtered, info = slc.apply(returns, metadata)
                         if info["n_samples"] > 0:
-                            metrics = compute_slice_metrics(filtered, None)
+                            mask = np.asarray(slc.condition(metadata), dtype=bool)
+                            slice_preds = pred_arr[mask[:len(pred_arr)]] if len(mask) >= len(pred_arr) else pred_arr[mask[:len(mask)]]
+                            metrics = compute_slice_metrics(filtered, slice_preds)
                             metrics.update(info)
                             uncertainty_slice_metrics[slc.name] = metrics
                 except Exception as e:
-                    logger.warning("Uncertainty quantile slicing failed: %s", e)
+                    logger.warning("Subsystem %s failed: %s", "uncertainty_slicing", e)
+                    failed_subsystems.append("uncertainty_slicing")
             else:
                 logger.info(
                     "regime_states provided without regime_uncertainty — "
@@ -247,11 +258,14 @@ class EvaluationEngine:
                 for slc in transition_slices:
                     filtered, info = slc.apply(returns, metadata)
                     if info["n_samples"] > 0:
-                        metrics = compute_slice_metrics(filtered, None)
+                        mask = np.asarray(slc.condition(metadata), dtype=bool)
+                        slice_preds = pred_arr[mask[:len(pred_arr)]] if len(mask) >= len(pred_arr) else pred_arr[mask[:len(mask)]]
+                        metrics = compute_slice_metrics(filtered, slice_preds)
                         metrics.update(info)
                         transition_slice_metrics[slc.name] = metrics
             except Exception as e:
-                logger.warning("Regime transition slicing failed: %s", e)
+                logger.warning("Subsystem %s failed: %s", "transition_slicing", e)
+                failed_subsystems.append("transition_slicing")
 
             # Red flag: regime Sharpes diverge > threshold
             sharpes = [m["sharpe"] for m in individual_regime_metrics.values() if m["n_samples"] >= 20]
@@ -298,15 +312,17 @@ class EvaluationEngine:
                     for f in wf.folds
                 ],
             }
-            if wf.is_overfit:
+            if wf.is_overfit or wf.mean_overfit_gap > EVAL_OVERFIT_GAP_THRESHOLD:
                 red_flags.append(RedFlag(
                     category="overfit",
                     severity="critical",
-                    message=f"Walk-forward detects overfitting (gap={wf.mean_overfit_gap:.3f})",
+                    message=f"Walk-forward overfit detected (gap={wf.mean_overfit_gap:.3f}, "
+                            f"threshold={EVAL_OVERFIT_GAP_THRESHOLD})",
                     details={"mean_gap": wf.mean_overfit_gap, "test_sharpe": wf.mean_test_sharpe},
                 ))
         except Exception as e:
-            logger.warning("Walk-forward evaluation failed: %s", e)
+            logger.warning("Subsystem %s failed: %s", "walk_forward", e)
+            failed_subsystems.append("walk_forward")
 
         # ── 4. Rolling IC and decay ──
         ic_data = None
@@ -326,6 +342,7 @@ class EvaluationEngine:
 
             decaying, decay_info = detect_ic_decay(
                 ic_series, decay_threshold=self.ic_decay_threshold,
+                window=EVAL_IC_DECAY_LOOKBACK,
             )
             ic_decay_result = {"decaying": decaying, **decay_info}
 
@@ -337,7 +354,8 @@ class EvaluationEngine:
                     details=decay_info,
                 ))
         except Exception as e:
-            logger.warning("Rolling IC computation failed: %s", e)
+            logger.warning("Subsystem %s failed: %s", "ic_analysis", e)
+            failed_subsystems.append("ic_analysis")
 
         # ── 5. Decile spread ──
         ds_result = None
@@ -345,8 +363,16 @@ class EvaluationEngine:
             ds_result = decile_spread(
                 pred_arr, returns, regime_states=regime_states,
             )
+            if ds_result is not None and ds_result.get("spread", 0.0) < EVAL_DECILE_SPREAD_MIN:
+                red_flags.append(RedFlag(
+                    category="weak_signal",
+                    severity="warning",
+                    message=f"Decile spread {ds_result['spread']:.4f} below minimum "
+                            f"threshold {EVAL_DECILE_SPREAD_MIN}",
+                ))
         except Exception as e:
-            logger.warning("Decile spread computation failed: %s", e)
+            logger.warning("Subsystem %s failed: %s", "decile_spread", e)
+            failed_subsystems.append("decile_spread")
 
         # ── 6. Calibration ──
         cal_result = None
@@ -364,7 +390,8 @@ class EvaluationEngine:
                     details=cal_result,
                 ))
         except Exception as e:
-            logger.warning("Calibration analysis failed: %s", e)
+            logger.warning("Subsystem %s failed: %s", "calibration", e)
+            failed_subsystems.append("calibration")
 
         # ── 7. Fragility metrics ──
         frag_result = None
@@ -375,7 +402,10 @@ class EvaluationEngine:
 
         if trades:
             try:
-                frag_result = pnl_concentration(trades, self.top_n_trades)
+                frag_result = pnl_concentration(
+                    trades, self.top_n_trades,
+                    fragile_threshold=EVAL_PNL_CONCENTRATION_THRESHOLD,
+                )
                 if frag_result.get("fragile", False):
                     max_n = max(self.top_n_trades)
                     pct = frag_result.get(f"top_{max_n}_pct", 0)
@@ -386,12 +416,14 @@ class EvaluationEngine:
                         details=frag_result,
                     ))
             except Exception as e:
-                logger.warning("PnL concentration failed: %s", e)
+                logger.warning("Subsystem %s failed: %s", "pnl_concentration", e)
+                failed_subsystems.append("pnl_concentration")
 
         try:
             dd_result = drawdown_distribution(returns)
         except Exception as e:
-            logger.warning("Drawdown distribution failed: %s", e)
+            logger.warning("Subsystem %s failed: %s", "drawdown", e)
+            failed_subsystems.append("drawdown")
 
         try:
             rt_series = recovery_time_distribution(returns)
@@ -414,12 +446,14 @@ class EvaluationEngine:
                         details=cs_info,
                     ))
         except Exception as e:
-            logger.warning("Recovery time / critical slowing failed: %s", e)
+            logger.warning("Subsystem %s failed: %s", "recovery_time", e)
+            failed_subsystems.append("recovery_time")
 
         try:
             ls_result = consecutive_loss_frequency(returns)
         except Exception as e:
-            logger.warning("Loss streak analysis failed: %s", e)
+            logger.warning("Subsystem %s failed: %s", "loss_streaks", e)
+            failed_subsystems.append("loss_streaks")
 
         # ── 8. ML diagnostics ──
         feat_drift = None
@@ -438,7 +472,8 @@ class EvaluationEngine:
                         details=feat_drift,
                     ))
             except Exception as e:
-                logger.warning("Feature importance drift failed: %s", e)
+                logger.warning("Subsystem %s failed: %s", "feature_drift", e)
+                failed_subsystems.append("feature_drift")
 
         if ensemble_predictions:
             try:
@@ -451,11 +486,17 @@ class EvaluationEngine:
                         details=ens_disagree,
                     ))
             except Exception as e:
-                logger.warning("Ensemble disagreement failed: %s", e)
+                logger.warning("Subsystem %s failed: %s", "ensemble_disagreement", e)
+                failed_subsystems.append("ensemble_disagreement")
 
         # ── Overall assessment ──
         critical_flags = [f for f in red_flags if f.severity == "critical"]
         overall_pass = len(critical_flags) == 0
+
+        # Critical subsystem failures force FAIL regardless of red flags
+        critical_subsystems = {"walk_forward", "calibration", "ic_analysis"}
+        if critical_subsystems & set(failed_subsystems):
+            overall_pass = False
 
         summary_parts = []
         summary_parts.append(f"Sharpe={aggregate.get('sharpe', 0):.2f}")
@@ -464,6 +505,8 @@ class EvaluationEngine:
         if ic_data:
             summary_parts.append(f"IC={ic_data['mean_ic']:.4f}")
         summary_parts.append(f"RedFlags={len(red_flags)}")
+        if failed_subsystems:
+            summary_parts.append(f"FailedSubsystems={failed_subsystems}")
         summary_parts.append("PASS" if overall_pass else "FAIL")
         summary = " | ".join(summary_parts)
 
@@ -486,6 +529,7 @@ class EvaluationEngine:
             feature_drift=feat_drift,
             ensemble_disagreement_result=ens_disagree,
             red_flags=red_flags,
+            failed_subsystems=failed_subsystems,
             overall_pass=overall_pass,
             summary=summary,
         )
@@ -545,6 +589,7 @@ class EvaluationEngine:
                 {"category": f.category, "severity": f.severity, "message": f.message}
                 for f in results.red_flags
             ],
+            "failed_subsystems": results.failed_subsystems,
         }
 
         with open(path, "w") as f:

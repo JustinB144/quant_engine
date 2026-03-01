@@ -188,6 +188,15 @@ def plot_underwater(
         Keys: 'html' (str or None), 'data' (dict).
     """
     ret_arr = returns.values.astype(float)
+    # Forward-fill NaN with 0.0 to prevent cumprod corruption
+    valid = np.isfinite(ret_arr)
+    if not np.all(valid):
+        logger.info(
+            "plot_underwater: %d NaN returns forward-filled with 0.0",
+            (~valid).sum(),
+        )
+        ret_arr = np.where(valid, ret_arr, 0.0)
+
     cum_eq = np.cumprod(1 + ret_arr)
     running_max = np.maximum.accumulate(cum_eq)
     drawdowns = (cum_eq - running_max) / np.where(running_max > 0, running_max, 1.0)
@@ -348,8 +357,8 @@ def plot_walk_forward_folds(
     dict
         Keys: 'html' (str or None), 'data' (dict).
     """
-    is_sharpes = [f.get("train_sharpe", f.get("train_sharpe", 0.0)) for f in folds]
-    oos_sharpes = [f.get("test_sharpe", f.get("test_sharpe", 0.0)) for f in folds]
+    is_sharpes = [f.get("train_sharpe", 0.0) for f in folds]
+    oos_sharpes = [f.get("test_sharpe", 0.0) for f in folds]
 
     data = {"is_sharpes": is_sharpes, "oos_sharpes": oos_sharpes}
 

@@ -17,7 +17,7 @@ try:
 except ImportError:
     sp_stats = None
 
-from ..config import EVAL_MIN_SLICE_SAMPLES, EVAL_DECILE_SPREAD_MIN
+from ..config import EVAL_MIN_SLICE_SAMPLES
 
 logger = logging.getLogger(__name__)
 
@@ -48,21 +48,44 @@ def compute_slice_metrics(
         recovery_time_mean, n_samples, start_date, end_date, win_rate, ic,
         confidence (str: "high", "medium", or "low").
     """
-    n = len(returns)
-    if n == 0:
+    if len(returns) == 0:
         return _empty_metrics()
 
-    ret_arr = returns.values.astype(float)
-    ret_arr = ret_arr[np.isfinite(ret_arr)]
+    ret_arr = returns.values.astype(float).ravel()
+
+    # Build unified validity mask over both returns and predictions
+    valid_mask = np.isfinite(ret_arr)
+
+    if predictions is not None:
+        pred_arr = np.asarray(predictions, dtype=float).ravel()
+        if len(pred_arr) == len(ret_arr):
+            valid_mask &= np.isfinite(pred_arr)
+            pred_arr = pred_arr[valid_mask]
+        else:
+            logger.warning(
+                "Predictions length %d != returns length %d, IC will be skipped",
+                len(pred_arr), len(ret_arr),
+            )
+            pred_arr = None
+    else:
+        pred_arr = None
+
+    # Filter returns with the same mask
+    ret_arr = ret_arr[valid_mask]
     n = len(ret_arr)
+
     if n == 0:
         return _empty_metrics()
 
     mean_ret = float(np.mean(ret_arr))
     std_ret = float(np.std(ret_arr, ddof=1)) if n > 1 else 0.0
 
-    # Annualized return (compounded)
-    ann_return = float((1 + mean_ret) ** annual_trading_days - 1)
+    # Geometric annualized return (CAGR-equivalent)
+    cumulative = np.prod(1 + ret_arr)
+    n_years = len(ret_arr) / annual_trading_days
+    ann_return = float(cumulative ** (1 / n_years) - 1) if n_years > 0 else 0.0
+    # Keep arithmetic annualized return for comparison
+    ann_return_arithmetic = float((1 + mean_ret) ** annual_trading_days - 1)
 
     # Sharpe ratio
     rf_per_period = risk_free_rate / annual_trading_days
@@ -101,13 +124,10 @@ def compute_slice_metrics(
 
     # Information coefficient (Spearman rank correlation)
     ic = 0.0
-    if predictions is not None:
-        pred_arr = np.asarray(predictions, dtype=float).ravel()
-        if len(pred_arr) == n:
-            valid = np.isfinite(pred_arr) & np.isfinite(ret_arr)
-            if valid.sum() > 2 and sp_stats is not None:
-                corr, _ = sp_stats.spearmanr(pred_arr[valid], ret_arr[valid])
-                ic = float(corr) if np.isfinite(corr) else 0.0
+    if pred_arr is not None and len(pred_arr) == n:
+        if n > 2 and sp_stats is not None:
+            corr, _ = sp_stats.spearmanr(pred_arr, ret_arr)
+            ic = float(corr) if np.isfinite(corr) else 0.0
 
     # Confidence level based on sample size
     if n >= 100:
@@ -117,13 +137,19 @@ def compute_slice_metrics(
     else:
         confidence = "low"
 
-    # Date range
-    start_date = str(returns.index[0]) if hasattr(returns, 'index') and n > 0 else "N/A"
-    end_date = str(returns.index[-1]) if hasattr(returns, 'index') and n > 0 else "N/A"
+    # Use filtered index for accurate date reporting
+    if hasattr(returns, 'index'):
+        filtered_index = returns.index[valid_mask]
+        start_date = str(filtered_index[0]) if len(filtered_index) > 0 else "N/A"
+        end_date = str(filtered_index[-1]) if len(filtered_index) > 0 else "N/A"
+    else:
+        start_date = "N/A"
+        end_date = "N/A"
 
     return {
         "mean_return": mean_ret,
         "annualized_return": ann_return,
+        "annualized_return_arithmetic": ann_return_arithmetic,
         "sharpe": sharpe,
         "sharpe_se": sharpe_se,
         "max_dd": max_dd,
@@ -179,9 +205,8 @@ def decile_spread(
     if n < n_quantiles * 2:
         return _empty_decile_result(n_quantiles)
 
-    # Rank predictions into quantiles
-    ranks = pd.Series(pred_arr).rank(method="first", pct=True)
-    bins = np.clip((ranks.values * n_quantiles).astype(int), 0, n_quantiles - 1)
+    # True quantile binning via pd.qcut for balanced bins
+    bins = pd.qcut(pred_arr, q=n_quantiles, labels=False, duplicates='drop').astype(int)
 
     # Compute mean return per quantile
     decile_returns = []
@@ -295,6 +320,7 @@ def _empty_metrics() -> Dict:
     return {
         "mean_return": 0.0,
         "annualized_return": 0.0,
+        "annualized_return_arithmetic": 0.0,
         "sharpe": 0.0,
         "sharpe_se": 0.0,
         "max_dd": 0.0,

@@ -206,6 +206,16 @@ class SliceRegistry:
             slices.append(
                 PerformanceSlice(name=label, condition=_make_cond(code))
             )
+
+        # Unknown regime slice for NaN-sourced regime=-1 values
+        def _unknown_cond(meta: pd.DataFrame) -> np.ndarray:
+            if "regime" in meta.columns:
+                return meta["regime"].values == -1
+            return np.zeros(len(meta), dtype=bool)
+
+        slices.append(
+            PerformanceSlice(name="unknown", condition=_unknown_cond)
+        )
         return slices
 
     @staticmethod
@@ -356,7 +366,13 @@ class SliceRegistry:
         if len(regime_states) == n:
             meta["regime"] = regime_states
         else:
-            meta["regime"] = np.full(n, 2, dtype=int)
+            logger.warning(
+                "regime_states length %d != returns length %d — "
+                "defaulting all bars to regime -1 (unknown). "
+                "This may indicate a data alignment bug.",
+                len(regime_states), n,
+            )
+            meta["regime"] = np.full(n, -1, dtype=int)
 
         # Cumulative return (from start of series)
         cum_ret = (1 + returns).cumprod() - 1
@@ -396,5 +412,15 @@ class SliceRegistry:
                     len(unc_arr), n,
                 )
 
-        meta = meta.fillna(0.0)
+        # Per-column NaN defaults (NOT blanket fillna(0.0) which fabricates states)
+        if 'regime' in meta.columns:
+            meta['regime'] = meta['regime'].fillna(-1).astype(int)
+        if 'uncertainty' in meta.columns:
+            meta['uncertainty'] = meta['uncertainty'].fillna(1.0)
+        if 'cumulative_return' in meta.columns:
+            meta['cumulative_return'] = meta['cumulative_return'].fillna(0.0)
+        # Other numeric columns default to 0.0
+        for col in meta.columns:
+            if col not in ('regime', 'uncertainty', 'cumulative_return'):
+                meta[col] = meta[col].fillna(0.0)
         return meta

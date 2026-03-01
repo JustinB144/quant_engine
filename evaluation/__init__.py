@@ -12,6 +12,7 @@ from .fragility import (
     drawdown_distribution,
     recovery_time_distribution,
     detect_critical_slowing_down,
+    consecutive_loss_frequency,
 )
 from .ml_diagnostics import feature_importance_drift, ensemble_disagreement
 from .calibration_analysis import analyze_calibration
@@ -26,6 +27,7 @@ __all__ = [
     "drawdown_distribution",
     "recovery_time_distribution",
     "detect_critical_slowing_down",
+    "consecutive_loss_frequency",
     "feature_importance_drift",
     "ensemble_disagreement",
     "analyze_calibration",

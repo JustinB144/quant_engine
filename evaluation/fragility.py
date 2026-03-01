@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 def pnl_concentration(
     trades: List[Dict],
     top_n_list: Optional[List[int]] = None,
+    fragile_threshold: float = 0.70,
 ) -> Dict:
     """Compute percentage of total PnL attributable to the top N trades.
 
@@ -66,11 +67,21 @@ def pnl_concentration(
     n_trades = len(pnl_arr)
     total_pnl = float(np.sum(pnl_arr))
 
-    if n_trades == 0 or abs(total_pnl) < 1e-12:
-        result = {"total_pnl": 0.0, "n_trades": 0, "herfindahl_index": 0.0, "fragile": False}
+    if n_trades == 0:
+        result: Dict = {"total_pnl": 0.0, "n_trades": 0, "herfindahl_index": 0.0, "fragile": False}
         for n_val in top_n_list:
             result[f"top_{n_val}_pct"] = 0.0
         return result
+
+    if abs(total_pnl) < 1e-12:
+        result_zero: Dict = {
+            "total_pnl": float(total_pnl), "n_trades": n_trades,
+            "concentration": "undefined (net PnL ≈ 0)",
+            "herfindahl_index": 0.0, "fragile": False,
+        }
+        for n_val in top_n_list:
+            result_zero[f"top_{n_val}_pct"] = 0.0
+        return result_zero
 
     # Sort by absolute PnL (largest contributors first)
     sorted_pnl = np.sort(np.abs(pnl_arr))[::-1]
@@ -95,10 +106,10 @@ def pnl_concentration(
         hhi = 0.0
     result["herfindahl_index"] = hhi
 
-    # Flag as fragile if top 20 trades drive > 70% of PnL
+    # Flag as fragile if top-N trades drive > threshold of PnL
     max_n = max(top_n_list) if top_n_list else 20
     fragile_key = f"top_{max_n}_pct"
-    result["fragile"] = result.get(fragile_key, 0.0) > 0.70
+    result["fragile"] = result.get(fragile_key, 0.0) > fragile_threshold
 
     return result
 
@@ -128,6 +139,11 @@ def drawdown_distribution(
     """
     ret_arr = returns.values.astype(float)
     ret_arr = ret_arr[np.isfinite(ret_arr)]
+
+    # Limit to last `window` observations
+    if window > 0 and len(ret_arr) > window:
+        ret_arr = ret_arr[-window:]
+
     n = len(ret_arr)
 
     if n < 2:
@@ -206,8 +222,12 @@ def recovery_time_distribution(
     pd.Series
         Recovery times (one per episode), indexed by trough date.
     """
+    # Limit to last `lookback` observations
+    if lookback > 0 and len(returns) > lookback:
+        returns = returns.iloc[-lookback:]
+
     ret_arr = returns.values.astype(float)
-    ret_arr = ret_arr[np.isfinite(ret_arr)]
+    ret_arr = np.where(np.isfinite(ret_arr), ret_arr, 0.0)  # Keep index alignment
     n = len(ret_arr)
 
     if n < 10:
@@ -238,7 +258,7 @@ def recovery_time_distribution(
     if not recovery_times:
         return pd.Series(dtype=float, name="recovery_time")
 
-    # Build index from trough dates
+    # Build index from trough dates — indices are now aligned with returns.index
     index = returns.index
     trough_dates = [index[min(i, len(index) - 1)] for i in trough_indices]
 
@@ -282,6 +302,11 @@ def detect_critical_slowing_down(
 
     rt_arr = recovery_times.values.astype(float)
     rt_arr = rt_arr[np.isfinite(rt_arr)]
+
+    # Limit to last `window` recovery episodes
+    if window > 0 and len(rt_arr) > window:
+        rt_arr = rt_arr[-window:]
+
     n = len(rt_arr)
 
     if n < 3:

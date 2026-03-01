@@ -1068,7 +1068,8 @@ boundaries:
     readers:
     - api/services/backtest_service.py
     - api/services/results_service.py
-    - evaluation/engine.py
+    # NOTE: evaluation/engine.py receives data via function parameters,
+    # not via direct file reads of backtest summary JSON.
     schema_fields:
     - horizon
     - total_trades
