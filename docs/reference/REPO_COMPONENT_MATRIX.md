@@ -47,6 +47,7 @@ Source-derived inventory of active code components in the current repository sta
 | `run_train.py` | 196 | 0 | 1 | Train the regime-conditional ensemble model. |
 | `run_wrds_daily_refresh.py` | 349 | 0 | 5 | Re-download all daily OHLCV data from WRDS CRSP to replace old cache files |
 | `run_wrds_taq_intraday_download.py` | 680 | 0 | 12 | Download NYSE TAQ Daily Product intraday OHLCV for 128 tickers (2003-present) |
+| `run_intraday_indicators.py` | 460 | 0 | 5 | Compute 14 intraday microstructure indicators from cached TAQ OHLCV and store in feature store (intraday_v1) |
 
 ## FastAPI Router Matrix
 

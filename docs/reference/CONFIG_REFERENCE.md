@@ -140,6 +140,14 @@ Notes:
 | `MARKET_OPEN` | `"09:30"` | `ACTIVE` | features/intraday.py; US equity regular-session open (ET) | 166 |
 | `MARKET_CLOSE` | `"16:00"` | `ACTIVE` | features/intraday.py; US equity regular-session close (ET) | 167 |
 
+### Intraday Indicators (SPEC_INTRADAY_02)
+
+| Constant | Value (source) | Status | Notes | Line |
+|---|---|---|---|---|
+| `INTRADAY_MIN_BARS` | `100` | `ACTIVE` | run_intraday_indicators.py; minimum 1m bars per ticker to compute indicators | 165 |
+| `REQUIRE_PERMNO` | `True` | `ACTIVE` | run_intraday_indicators.py; resolve ticker → CRSP PERMNO for feature store keys | 111 |
+| Feature version | `intraday_v1` | n/a | Feature store version tag for intraday indicators | n/a |
+
 ## Intraday Data Integrity (SPEC_11)
 
 | Constant | Value (source) | Status | Notes | Line |

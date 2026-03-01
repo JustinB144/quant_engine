@@ -734,6 +734,9 @@ key_files:
   - path: run_wrds_taq_intraday_download.py
     role: NYSE TAQ Daily Product intraday OHLCV download (2003-present, 128 tickers, 6 timeframes)
     lines: 680
+  - path: run_intraday_indicators.py
+    role: Compute and cache 14 intraday microstructure indicators from cached TAQ OHLCV bars into feature store
+    lines: 460
   - path: run_rehydrate_cache_metadata.py
     role: Cache metadata repair utility
     lines: 102
