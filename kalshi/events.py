@@ -9,6 +9,11 @@ from typing import Dict, Iterable, List, Optional
 import numpy as np
 import pandas as pd
 
+from ..config import (
+    KALSHI_PURGE_WINDOW_BY_EVENT,
+    KALSHI_DEFAULT_PURGE_WINDOW,
+)
+
 
 @dataclass
 class EventTimestampMeta:
@@ -91,13 +96,18 @@ def build_event_snapshot_grid(
     for _, row in e.iterrows():
         event_id = str(row["event_id"])
         release_ts = pd.Timestamp(row["release_ts"])
+        event_type = str(row.get("event_type", ""))
+        purge_days = KALSHI_PURGE_WINDOW_BY_EVENT.get(event_type, KALSHI_DEFAULT_PURGE_WINDOW)
+        purge_delta = pd.Timedelta(days=purge_days)
         for h in horizons:
             delta = pd.to_timedelta(str(h))
             asof_ts = release_ts - delta
+            # Ensure feature snapshot is at least purge_delta before release
+            asof_ts = min(asof_ts, release_ts - purge_delta)
             rows.append(
                 {
                     "event_id": event_id,
-                    "event_type": str(row.get("event_type", "")),
+                    "event_type": event_type,
                     "release_ts": release_ts,
                     "horizon": str(h),
                     "asof_ts": asof_ts,

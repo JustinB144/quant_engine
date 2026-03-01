@@ -31,6 +31,14 @@ class EventWalkForwardConfig:
     n_label_windows: int = 1
     n_markets: int = 1
 
+    def __post_init__(self) -> None:
+        if not self.purge_window_by_event:
+            from ..config import KALSHI_PURGE_WINDOW_BY_EVENT
+            self.purge_window_by_event = dict(KALSHI_PURGE_WINDOW_BY_EVENT)
+        if self.default_purge_days == 10:  # sentinel for "not explicitly set"
+            from ..config import KALSHI_DEFAULT_PURGE_WINDOW
+            self.default_purge_days = KALSHI_DEFAULT_PURGE_WINDOW
+
 
 @dataclass
 class EventWalkForwardFold:

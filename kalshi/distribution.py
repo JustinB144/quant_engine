@@ -19,6 +19,50 @@ from .quality import (
 
 _EPS = 1e-12
 
+# Canonical empty snapshot template — ensures all return paths produce
+# schema-consistent output with the same set of keys.
+_EMPTY_SNAPSHOT_TEMPLATE: Dict[str, object] = {
+    "mean": np.nan,
+    "var": np.nan,
+    "skew": np.nan,
+    "entropy": np.nan,
+    "quality_score": 0.0,
+    "coverage_ratio": 0.0,
+    "median_spread": np.nan,
+    "median_quote_age_seconds": np.nan,
+    "volume_oi_proxy": 0.0,
+    "constraint_violation_score": 0.0,
+    "tail_p_1": np.nan,
+    "tail_p_2": np.nan,
+    "tail_p_3": np.nan,
+    "tail_threshold_1": np.nan,
+    "tail_threshold_2": np.nan,
+    "tail_threshold_3": np.nan,
+    "tail_left_missing": 1,
+    "tail_right_missing": 1,
+    "mass_missing_estimate": 1.0,
+    "moment_truncated": 1,
+    "direction_resolved": False,
+    "direction_source": "none",
+    "direction_confidence": "none",
+    "bin_overlap_count": 0,
+    "bin_gap_mass_estimate": 0.0,
+    "bin_support_is_ordered": 0,
+    "isotonic_adjustment_magnitude": 0.0,
+    "renormalization_delta": 0.0,
+    "violated_constraints_pre": 0,
+    "violated_constraints_post": 0,
+    "monotonic_violations_pre": 0,
+    "monotonic_violation_magnitude": 0.0,
+    "renorm_delta": 0.0,
+    "isotonic_l1": 0.0,
+    "isotonic_l2": 0.0,
+    "quality_low": 1,
+    "quality_flags": [],
+    "_support": [],
+    "_mass": [],
+}
+
 # T1: Word-boundary regex for threshold direction inference (replaces substring matching)
 _ABOVE_PATTERN = re.compile(
     r'\b(>=|above|over|greater\s+than|at\s+least|or\s+higher)\b', re.IGNORECASE
@@ -514,36 +558,9 @@ def build_distribution_snapshot(
     )
     n_total = max(len(contracts), 1)
     if latest.empty:
-        return {
-            "mean": np.nan,
-            "var": np.nan,
-            "skew": np.nan,
-            "entropy": np.nan,
-            "quality_score": 0.0,
-            "coverage_ratio": 0.0,
-            "median_spread": np.nan,
-            "median_quote_age_seconds": np.nan,
-            "volume_oi_proxy": 0.0,
-            "constraint_violation_score": 0.0,
-            "tail_p_1": np.nan,
-            "tail_p_2": np.nan,
-            "tail_p_3": np.nan,
-            "tail_threshold_1": np.nan,
-            "tail_threshold_2": np.nan,
-            "tail_threshold_3": np.nan,
-            "tail_left_missing": 1,
-            "tail_right_missing": 1,
-            "mass_missing_estimate": 1.0,
-            "moment_truncated": 1,
-            "monotonic_violations_pre": 0,
-            "monotonic_violation_magnitude": 0.0,
-            "renorm_delta": 1.0,
-            "isotonic_l1": 0.0,
-            "isotonic_l2": 0.0,
-            "quality_low": 1,
-            "_support": [],
-            "_mass": [],
-        }
+        result = dict(_EMPTY_SNAPSHOT_TEMPLATE)
+        result["renorm_delta"] = 1.0
+        return result
 
     # Validate bins (B2)
     bin_validation = _validate_bins(contracts)
@@ -560,36 +577,9 @@ def build_distribution_snapshot(
         how="inner",
     )
     if merged.empty:
-        return {
-            "mean": np.nan,
-            "var": np.nan,
-            "skew": np.nan,
-            "entropy": np.nan,
-            "quality_score": 0.0,
-            "coverage_ratio": 0.0,
-            "median_spread": np.nan,
-            "median_quote_age_seconds": np.nan,
-            "volume_oi_proxy": 0.0,
-            "constraint_violation_score": 0.0,
-            "tail_p_1": np.nan,
-            "tail_p_2": np.nan,
-            "tail_p_3": np.nan,
-            "tail_threshold_1": np.nan,
-            "tail_threshold_2": np.nan,
-            "tail_threshold_3": np.nan,
-            "tail_left_missing": 1,
-            "tail_right_missing": 1,
-            "mass_missing_estimate": 1.0,
-            "moment_truncated": 1,
-            "monotonic_violations_pre": 0,
-            "monotonic_violation_magnitude": 0.0,
-            "renorm_delta": 1.0,
-            "isotonic_l1": 0.0,
-            "isotonic_l2": 0.0,
-            "quality_low": 1,
-            "_support": [],
-            "_mass": [],
-        }
+        result = dict(_EMPTY_SNAPSHOT_TEMPLATE)
+        result["renorm_delta"] = 1.0
+        return result
 
     merged = merged.assign(
         p_raw=pd.to_numeric(merged["mid"], errors="coerce").map(lambda x: _prob_from_mid(x, cfg.price_scale)),
@@ -597,36 +587,9 @@ def build_distribution_snapshot(
     merged = merged[merged["p_raw"].notna()].copy()
     n_live = len(merged)
     if n_live == 0:
-        return {
-            "mean": np.nan,
-            "var": np.nan,
-            "skew": np.nan,
-            "entropy": np.nan,
-            "quality_score": 0.0,
-            "coverage_ratio": 0.0,
-            "median_spread": np.nan,
-            "median_quote_age_seconds": np.nan,
-            "volume_oi_proxy": 0.0,
-            "constraint_violation_score": 0.0,
-            "tail_p_1": np.nan,
-            "tail_p_2": np.nan,
-            "tail_p_3": np.nan,
-            "tail_threshold_1": np.nan,
-            "tail_threshold_2": np.nan,
-            "tail_threshold_3": np.nan,
-            "tail_left_missing": 1,
-            "tail_right_missing": 1,
-            "mass_missing_estimate": 1.0,
-            "moment_truncated": 1,
-            "monotonic_violations_pre": 0,
-            "monotonic_violation_magnitude": 0.0,
-            "renorm_delta": 1.0,
-            "isotonic_l1": 0.0,
-            "isotonic_l2": 0.0,
-            "quality_low": 1,
-            "_support": [],
-            "_mass": [],
-        }
+        result = dict(_EMPTY_SNAPSHOT_TEMPLATE)
+        result["renorm_delta"] = 1.0
+        return result
 
     spread = np.abs(pd.to_numeric(merged.get("ask"), errors="coerce") - pd.to_numeric(merged.get("bid"), errors="coerce"))
     mid_abs = np.abs(pd.to_numeric(merged.get("mid"), errors="coerce")).replace(0.0, np.nan)

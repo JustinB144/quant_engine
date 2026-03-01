@@ -310,8 +310,8 @@ STRUCTURAL_WEIGHT_JUMP_PENALTY = _cfg.model.structural_weight_jump_penalty  # ST
 STRUCTURAL_WEIGHT_STRESS_PENALTY = _cfg.model.structural_weight_stress_penalty  # STATUS: ACTIVE — models/trainer.py; max weight reduction for high systemic stress
 
 # ── Kalshi Purge/Embargo by Event Type (E3) ─────────────────────────────
-KALSHI_PURGE_WINDOW_BY_EVENT = {"CPI": 14, "FOMC": 21, "NFP": 14, "GDP": 14}  # STATUS: PLACEHOLDER — defined but never imported
-KALSHI_DEFAULT_PURGE_WINDOW = 10                  # STATUS: PLACEHOLDER — defined but never imported; companion to KALSHI_PURGE_WINDOW_BY_EVENT
+KALSHI_PURGE_WINDOW_BY_EVENT = {"CPI": 3, "FOMC": 1, "UNEMPLOYMENT": 2, "GDP": 3}  # STATUS: ACTIVE — kalshi/events.py, kalshi/walkforward.py; event-type purge windows (days)
+KALSHI_DEFAULT_PURGE_WINDOW = 2                    # STATUS: ACTIVE — kalshi/events.py, kalshi/walkforward.py; default purge window (days)
 
 # ── Model ──────────────────────────────────────────────────────────────
 MODEL_PARAMS = dict(_cfg.model.params)             # STATUS: ACTIVE — models/trainer.py; GBR hyperparameters

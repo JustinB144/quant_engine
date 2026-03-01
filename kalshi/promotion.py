@@ -6,6 +6,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterable, Optional
 
+import logging
+
 import numpy as np
 import pandas as pd
 
@@ -14,6 +16,7 @@ from ..autopilot.strategy_discovery import StrategyCandidate
 from ..backtest.engine import BacktestResult
 from .walkforward import EventWalkForwardResult, evaluate_event_contract_metrics
 
+logger = logging.getLogger(__name__)
 
 _EPS = 1e-12
 
@@ -124,6 +127,36 @@ def _to_backtest_result(
     )
 
 
+def _compute_event_regime_performance(
+    walkforward_result: EventWalkForwardResult,
+) -> Dict[str, Dict[str, float]]:
+    """Compute regime-conditioned returns from walk-forward event types and returns."""
+    regime_returns: Dict[str, list] = {}
+    for etype, ret in zip(walkforward_result.event_types, walkforward_result.event_returns):
+        if np.isfinite(ret):
+            regime_returns.setdefault(etype, []).append(ret)
+
+    regime_perf: Dict[str, Dict[str, float]] = {}
+    for regime, rets in regime_returns.items():
+        arr = np.array(rets, dtype=float)
+        if len(arr) >= 3:
+            cum = np.cumprod(1 + arr)
+            running_max = np.maximum.accumulate(cum)
+            drawdowns = cum / running_max - 1
+            regime_perf[regime] = {
+                "mean_return": float(np.mean(arr)),
+                "sharpe": float(np.mean(arr) / max(np.std(arr), 1e-8)),
+                "max_drawdown": float(np.min(drawdowns)),
+                "n_trades": len(arr),
+            }
+            logger.debug(
+                "Event regime %s: n=%d, sharpe=%.3f, max_dd=%.4f",
+                regime, len(arr), regime_perf[regime]["sharpe"],
+                regime_perf[regime]["max_drawdown"],
+            )
+    return regime_perf
+
+
 def evaluate_event_promotion(
     walkforward_result: EventWalkForwardResult,
     config: Optional[EventPromotionConfig] = None,
@@ -153,6 +186,14 @@ def evaluate_event_promotion(
         event_returns=walkforward_result.event_returns,
         horizon_days=max(1, int(cfg.horizon)),
     )
+
+    regime_perf = _compute_event_regime_performance(walkforward_result)
+    backtest_like.regime_performance = regime_perf
+    if regime_perf:
+        logger.info(
+            "Event regime performance computed for %d event types: %s",
+            len(regime_perf), list(regime_perf.keys()),
+        )
 
     event_metrics = evaluate_event_contract_metrics(walkforward_result)
 

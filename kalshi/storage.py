@@ -586,20 +586,18 @@ class EventTimeStore:
         self._insert_or_replace("macro_events_versioned", version_rows)
 
     def upsert_event_outcomes(self, rows: Iterable[Mapping[str, object]]):
-        """Upsert event outcomes into storage."""
+        """Upsert event outcomes (latest/revised) into storage."""
         payload = list(rows)
         if not payload:
             return
         self._insert_or_replace("event_outcomes", payload)
-        self._insert_or_replace("event_outcomes_first_print", payload)
 
     def upsert_event_outcomes_first_print(self, rows: Iterable[Mapping[str, object]]):
-        """Upsert event outcomes first print into storage."""
+        """Upsert first-print event outcomes into storage."""
         payload = list(rows)
         if not payload:
             return
         self._insert_or_replace("event_outcomes_first_print", payload)
-        self._insert_or_replace("event_outcomes", payload)
 
     def upsert_event_outcomes_revised(self, rows: Iterable[Mapping[str, object]]):
         """Upsert event outcomes revised into storage."""

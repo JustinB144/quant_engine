@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import stat
 import subprocess
 import tempfile
 import threading
@@ -18,6 +19,8 @@ from urllib.parse import urlparse
 import requests
 
 from .router import KalshiDataRouter
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_env(value: str) -> str:
@@ -207,7 +210,9 @@ class KalshiSigner:
         return signature
 
     def _sign_with_openssl(self, message: bytes, key_path: str) -> bytes:
-        """Fallback: sign using OpenSSL subprocess."""
+        """Sign message using OpenSSL subprocess with secure passphrase handling."""
+        env = dict(os.environ)
+
         cmd = [
             "openssl",
             "dgst",
@@ -220,8 +225,10 @@ class KalshiSigner:
             "rsa_pss_saltlen:-1",
         ]
         if self.passphrase:
-            cmd.extend(["-passin", f"pass:{self.passphrase}"])
-        proc = subprocess.run(cmd, input=message, capture_output=True)
+            # Use environment variable to pass passphrase securely
+            env["_KALSHI_OPENSSL_PASS"] = self.passphrase
+            cmd.extend(["-passin", "env:_KALSHI_OPENSSL_PASS"])
+        proc = subprocess.run(cmd, input=message, capture_output=True, env=env)
         if proc.returncode == 0:
             return proc.stdout
 
@@ -239,8 +246,8 @@ class KalshiSigner:
             "digest:sha256",
         ]
         if self.passphrase:
-            cmd2.extend(["-passin", f"pass:{self.passphrase}"])
-        proc2 = subprocess.run(cmd2, input=message, capture_output=True)
+            cmd2.extend(["-passin", "env:_KALSHI_OPENSSL_PASS"])
+        proc2 = subprocess.run(cmd2, input=message, capture_output=True, env=env)
         if proc2.returncode == 0:
             return proc2.stdout
 
@@ -270,21 +277,22 @@ class KalshiSigner:
                 pass  # Fall through to OpenSSL subprocess
 
         # OpenSSL subprocess fallback
+        logger.warning("Using OpenSSL subprocess fallback for Kalshi signing — less secure than in-process cryptography")
         key_path = self.private_key_path
         if key_path:
             raw_sig = self._sign_with_openssl(payload, key_path)
         else:
-            with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as tf:
-                tf.write(str(self.private_key_pem))
-                tf.flush()
-                tmp_path = tf.name
+            fd, tmp_path = tempfile.mkstemp(suffix=".pem")
             try:
+                os.fchmod(fd, stat.S_IRUSR | stat.S_IWUSR)  # 0o600
+                with os.fdopen(fd, "w") as f:
+                    f.write(str(self.private_key_pem))
                 raw_sig = self._sign_with_openssl(payload, tmp_path)
             finally:
                 try:
                     os.unlink(tmp_path)
                 except OSError:
-                    pass
+                    logger.warning("Failed to clean up temporary key file: %s", tmp_path)
 
         return base64.b64encode(raw_sig).decode("ascii")
 
