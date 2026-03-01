@@ -51,6 +51,7 @@ class ADVTracker:
         )
         self._ema: Dict[str, float] = {}
         self._volume_trend: Dict[str, float] = {}
+        self._zero_vol_count: Dict[str, int] = defaultdict(int)
 
     def update(self, symbol: str, daily_volume: float) -> None:
         """Update ADV estimates with the latest daily volume observation.
@@ -64,6 +65,12 @@ class ADVTracker:
         """
         daily_volume = float(max(0.0, daily_volume))
         if daily_volume <= 0:
+            self._zero_vol_count[symbol] += 1
+            if self._zero_vol_count[symbol] % 10 == 0:
+                logger.warning(
+                    "ADV tracker: %d zero-volume days dropped for %s",
+                    self._zero_vol_count[symbol], symbol,
+                )
             return
 
         self._volume_history[symbol].append(daily_volume)

@@ -14,98 +14,18 @@ Anti-leakage measures:
 """
 from dataclasses import dataclass, field
 from itertools import combinations
-from math import erf
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
+
+import logging
 
 import numpy as np
 import pandas as pd
 
 from ..config import IC_ROLLING_WINDOW, RISK_FREE_RATE, VALIDATION_FDR_FLOOR_ENABLED
 from .sharpe_utils import compute_sharpe
-try:
-    from scipy import stats
-except ImportError:  # pragma: no cover - optional dependency fallback
-    class _NormFallback:
-        @staticmethod
-        def cdf(x):
-            """cdf."""
-            arr = np.asarray(x, dtype=float)
-            vals = 0.5 * (1.0 + np.vectorize(erf)(arr / np.sqrt(2.0)))
-            if np.isscalar(x):
-                return float(vals)
-            return vals
+from ._scipy_compat import sp_stats as stats
 
-    class _StatsFallback:
-        norm = _NormFallback()
-
-        @staticmethod
-        def spearmanr(a, b):
-            """spearmanr."""
-            x = np.asarray(a, dtype=float)
-            y = np.asarray(b, dtype=float)
-            mask = np.isfinite(x) & np.isfinite(y)
-            if mask.sum() < 2:
-                return np.nan, np.nan
-
-            rx = pd.Series(x[mask]).rank(method="average").to_numpy(dtype=float)
-            ry = pd.Series(y[mask]).rank(method="average").to_numpy(dtype=float)
-            rx = rx - rx.mean()
-            ry = ry - ry.mean()
-            denom = np.sqrt(np.sum(rx**2) * np.sum(ry**2))
-            if denom <= 1e-12:
-                return np.nan, np.nan
-            return float(np.sum(rx * ry) / denom), np.nan
-
-        @staticmethod
-        def ttest_1samp(a, popmean):
-            """ttest 1samp."""
-            x = np.asarray(a, dtype=float)
-            x = x[np.isfinite(x)]
-            n = len(x)
-            if n < 2:
-                return np.nan, np.nan
-
-            delta = float(np.mean(x) - popmean)
-            std = float(np.std(x, ddof=1))
-            if std <= 1e-12:
-                if abs(delta) <= 1e-12:
-                    return 0.0, 1.0
-                return (np.inf if delta > 0 else -np.inf), 0.0
-
-            tstat = delta / (std / np.sqrt(n))
-            # Normal approximation for optional SciPy fallback path.
-            p_two_sided = 2.0 * (1.0 - _NormFallback.cdf(abs(tstat)))
-            return float(tstat), float(p_two_sided)
-
-        @staticmethod
-        def skew(a):
-            """skew."""
-            x = np.asarray(a, dtype=float)
-            x = x[np.isfinite(x)]
-            if len(x) < 3:
-                return 0.0
-            mu = float(np.mean(x))
-            sigma = float(np.std(x, ddof=0))
-            if sigma <= 1e-12:
-                return 0.0
-            z = (x - mu) / sigma
-            return float(np.mean(z**3))
-
-        @staticmethod
-        def kurtosis(a):
-            """kurtosis."""
-            x = np.asarray(a, dtype=float)
-            x = x[np.isfinite(x)]
-            if len(x) < 4:
-                return 0.0
-            mu = float(np.mean(x))
-            sigma = float(np.std(x, ddof=0))
-            if sigma <= 1e-12:
-                return 0.0
-            z = (x - mu) / sigma
-            return float(np.mean(z**4) - 3.0)
-
-    stats = _StatsFallback()
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -163,6 +83,7 @@ class StatisticalTests:
     fdr_threshold: float  # Benjamini-Hochberg adjusted threshold
     passes: bool
     details: dict = field(default_factory=dict)
+    null_comparison: Optional[object] = None  # NullModelResults when wired
 
 
 @dataclass
@@ -724,7 +645,7 @@ def strategy_signal_returns(
 def superior_predictive_ability(
     strategy_returns: pd.Series,
     benchmark_returns: Optional[pd.Series] = None,
-    n_bootstraps: int = 400,
+    n_bootstraps: int = 1000,
     block_size: int = 10,
     random_state: int = 42,
 ) -> SPAResult:
@@ -1073,3 +994,39 @@ def _spearman_ic(predictions: np.ndarray, returns: np.ndarray) -> float:
         return 0.0
     corr, _ = stats.spearmanr(predictions, returns)
     return float(corr) if not np.isnan(corr) else 0.0
+
+
+def attach_null_baselines(
+    stat_result: StatisticalTests,
+    ohlcv_dict: Dict[str, pd.DataFrame],
+    null_baseline_enabled: bool = True,
+) -> StatisticalTests:
+    """Optionally compute and attach null model baselines to a StatisticalTests result.
+
+    Parameters
+    ----------
+    stat_result : StatisticalTests
+        Previously computed statistical test results.
+    ohlcv_dict : dict
+        Universe OHLCV data for null model computation.
+    null_baseline_enabled : bool
+        Whether to compute null baselines.
+
+    Returns
+    -------
+    StatisticalTests
+        The same result with ``null_comparison`` populated if enabled.
+    """
+    if not null_baseline_enabled:
+        return stat_result
+
+    from .null_models import compute_null_baselines
+
+    try:
+        null_results = compute_null_baselines(ohlcv_dict)
+        stat_result.null_comparison = null_results
+        _logger.info("Null baselines attached to validation results")
+    except Exception:
+        _logger.warning("Failed to compute null baselines", exc_info=True)
+
+    return stat_result

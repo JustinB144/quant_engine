@@ -183,6 +183,9 @@ class ExecutionModel:
         self,
         spread_bps: float = 3.0,
         max_participation_rate: float = 0.02,
+        # TODO: When ALMGREN_CHRISS_ENABLED is activated, add a conversion bridge
+        # between AlmgrenChriss per-share impact units and ExecutionModel bps units.
+        # See Audit Report 05, F-27 for details.
         impact_coefficient_bps: float = 25.0,
         min_fill_ratio: float = 0.20,
         dynamic_costs: bool = True,

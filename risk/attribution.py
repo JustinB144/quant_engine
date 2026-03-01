@@ -1,7 +1,7 @@
 """
 Performance Attribution --- decompose portfolio returns into market, factor, and alpha.
 
-Implements Brinson-style return attribution:
+Implements factor regression decomposition:
 
     total_return = benchmark_return + active_return
     active_return = market_contribution + factor_contribution + residual_alpha
@@ -33,7 +33,7 @@ def _estimate_beta(
     """
     common = portfolio_returns.index.intersection(benchmark_returns.index)
     if len(common) < 5:
-        return 1.0  # Assume market-neutral fallback
+        return 1.0  # Assume market-tracking fallback (beta=1.0)
 
     p = portfolio_returns.loc[common].values.astype(float)
     b = benchmark_returns.loc[common].values.astype(float)

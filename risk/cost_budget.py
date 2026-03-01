@@ -19,11 +19,14 @@ Integration points:
     - PaperTrader: constrain rebalance to cost budget
     - Autopilot: cost-aware strategy evaluation
 """
+import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -170,6 +173,10 @@ def optimize_rebalance_cost(
         )
 
     # Over budget: prioritize trades by |weight change| / cost ratio
+    logger.warning(
+        "Rebalance cost %.1f bps exceeds budget %.1f bps — partial rebalance",
+        total_cost, total_budget_bps,
+    )
     # Larger weight changes matter more for tracking error
     priority = pd.Series({
         ticker: abs(trades[ticker]) / max(costs[ticker], 1e-10)

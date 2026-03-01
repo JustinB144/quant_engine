@@ -26,6 +26,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from ..config import TRANSACTION_COST_BPS
 from .sharpe_utils import compute_sharpe
 
 logger = logging.getLogger(__name__)
@@ -228,6 +229,10 @@ def _compute_metrics(name: str, returns: List[float]) -> NullBaselineMetrics:
 
     if len(ret_arr) == 0:
         return NullBaselineMetrics(name=name)
+
+    # Apply transaction costs to match the main backtest fairness
+    cost_per_trade = TRANSACTION_COST_BPS / 10_000
+    ret_arr = ret_arr - cost_per_trade
 
     total_return = float(np.prod(1 + ret_arr) - 1)
 

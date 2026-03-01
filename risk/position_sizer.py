@@ -17,7 +17,7 @@ Spec 05: Risk Governor + Kelly Unification + Uncertainty-Aware Sizing
 import json
 import logging
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -83,6 +83,10 @@ class PositionSizer:
         bayesian_beta: float = 2.0,              # Beta prior beta (losses + 1)
     ):
         """Initialize PositionSizer."""
+        assert target_portfolio_vol > 0, "target_portfolio_vol must be positive"
+        assert max_position_pct > min_position_pct, "max_position_pct must exceed min_position_pct"
+        assert 0 < kelly_fraction <= 1.0, "kelly_fraction must be in (0, 1]"
+
         self.target_vol = target_portfolio_vol
         self.max_position = max_position_pct
         self.min_position = min_position_pct
@@ -266,6 +270,11 @@ class PositionSizer:
         # SPEC-P02: Apply regime uncertainty gate to Kelly components.
         # During uncertain regime transitions, shrink Kelly-derived sizes
         # using the REGIME_UNCERTAINTY_SIZING_MAP interpolation.
+        # NOTE: Two uncertainty reductions are applied:
+        # 1. UncertaintyGate reduces Kelly component by up to 20% (regime_uncertainty)
+        # 2. _compute_uncertainty_scale() reduces composite by up to 30% (regime_entropy)
+        # Combined worst-case: ~44% reduction. This is intentional — both dimensions
+        # (regime model confidence and entropy) contribute independently to position sizing risk.
         regime_uncertainty_mult = 1.0
         if regime_uncertainty > 0:
             regime_uncertainty_mult = self._uncertainty_gate.compute_size_multiplier(
@@ -1155,6 +1164,9 @@ class PositionSizer:
         price_data: dict,
         trade_history: Optional[pd.DataFrame] = None,
         max_positions: int = 20,
+        regime: Optional[str] = None,
+        regime_entropy: float = 0.0,
+        portfolio_equity: float = 1_000_000.0,
     ) -> pd.DataFrame:
         """
         Size all candidate positions for the portfolio.
@@ -1164,6 +1176,9 @@ class PositionSizer:
             price_data: dict of security-id -> OHLCV DataFrames
             trade_history: historical trades for win rate estimation
             max_positions: max simultaneous positions
+            regime: current market regime label (passed through to size_position)
+            regime_entropy: normalized entropy of regime posterior [0, 1]
+            portfolio_equity: total portfolio equity in USD
 
         Returns:
             DataFrame with position sizes added
@@ -1219,6 +1234,9 @@ class PositionSizer:
                 confidence=float(row.get("confidence", 0.5)),
                 n_current_positions=len(sizes),
                 max_positions=max_positions,
+                regime=regime,
+                regime_entropy=regime_entropy,
+                portfolio_equity=portfolio_equity,
             )
             sizes.append({
                 "permno": ticker,

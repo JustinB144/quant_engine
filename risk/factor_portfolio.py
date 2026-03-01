@@ -9,10 +9,13 @@ Components:
     - compute_factor_exposures: OLS regression of returns against factors
     - compute_residual_returns: strips out systematic factor risk
 """
+import logging
 from typing import Optional
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def compute_factor_exposures(
@@ -121,6 +124,11 @@ def compute_factor_exposures(
         index=factor_returns.columns,
     ).T
     beta_df.index.name = "asset"
+
+    logger.debug(
+        "Factor exposures computed for %d assets, %d factors, %d observations",
+        len(clean_returns.columns), n_factors, len(clean_returns),
+    )
 
     return beta_df
 

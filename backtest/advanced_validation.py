@@ -10,7 +10,6 @@ References:
     - White (2000): "Reality Check" bootstrap
 """
 from dataclasses import dataclass, field
-from math import erf
 from typing import List, Optional, Dict
 
 import numpy as np
@@ -18,24 +17,7 @@ import pandas as pd
 
 from ..config import RISK_FREE_RATE
 from .sharpe_utils import compute_sharpe
-
-try:
-    from scipy import stats
-except ImportError:  # pragma: no cover - optional dependency fallback
-    class _NormFallback:
-        @staticmethod
-        def cdf(x):
-            """cdf."""
-            arr = np.asarray(x, dtype=float)
-            vals = 0.5 * (1.0 + np.vectorize(erf)(arr / np.sqrt(2.0)))
-            if np.isscalar(x):
-                return float(vals)
-            return vals
-
-    class _StatsFallback:
-        norm = _NormFallback()
-
-    stats = _StatsFallback()
+from ._scipy_compat import sp_stats as stats
 
 
 @dataclass

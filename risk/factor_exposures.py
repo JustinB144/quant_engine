@@ -108,8 +108,9 @@ class FactorExposureManager:
             else:
                 momentum = 0.0
 
-            # Value proxy: inverse of price-to-trailing-return ratio
-            # Higher value = cheaper stock (lower P/R ratio)
+            # "Value" proxy: negative trailing return (mean-reversion / contrarian signal).
+            # This is NOT a fundamental value factor (P/B, P/E). Consider renaming to
+            # "reversal" or adding a proper fundamental value proxy when data is available.
             if len(close) >= 252:
                 trailing_return = float(close.iloc[-1] / close.iloc[-252] - 1)
                 value_proxy = -trailing_return  # Negative return = cheap = high value

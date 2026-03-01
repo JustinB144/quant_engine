@@ -229,7 +229,7 @@ class ValidationConfig:
 
     cpcv_partitions: int = 8
     cpcv_test_partitions: int = 4
-    spa_bootstraps: int = 400
+    spa_bootstraps: int = 1000
     ic_rolling_window: int = 60
 
 

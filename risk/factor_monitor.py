@@ -17,11 +17,15 @@ Factor proxies (all computable from price data):
     - Volatility tilt:  20d realized vol z-score vs universe
     - Liquidity tilt:   avg dollar volume z-score vs universe
 """
+import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -94,6 +98,7 @@ class FactorExposureMonitor:
         positions: Dict[str, float],
         price_data: Dict[str, pd.DataFrame],
         benchmark_returns: Optional[pd.Series] = None,
+        universe_stats: Optional[Dict[str, Dict[str, float]]] = None,
     ) -> Dict[str, float]:
         """Compute portfolio factor exposures from positions and price data.
 
@@ -103,6 +108,10 @@ class FactorExposureMonitor:
                 and 'Volume' columns.
             benchmark_returns: Optional benchmark return series for beta
                 computation.
+            universe_stats: Optional universe-level statistics for proper
+                z-scoring. Dict of {factor_name: {"mean": float, "std": float}}.
+                If provided, z-scores use universe-level mean/std instead of
+                within-portfolio statistics (which are less meaningful).
 
         Returns:
             Dict of {factor_name: exposure_value}.
@@ -178,17 +187,26 @@ class FactorExposureMonitor:
         weights = np.array([abs(m["weight"]) for m in position_metrics])
         if len(dollar_vols) > 1 and dollar_vols.std() > 1e-6:
             log_dvols = np.log1p(np.maximum(dollar_vols, 1.0))
-            universe_mean = log_dvols.mean()
-            universe_std = log_dvols.std()
-            if universe_std > 1e-6:
-                zscores = (log_dvols - universe_mean) / universe_std
+            if universe_stats is not None and "size_zscore" in universe_stats:
+                u_mean = universe_stats["size_zscore"]["mean"]
+                u_std = universe_stats["size_zscore"]["std"]
+            else:
+                # Fallback: within-portfolio z-scores (less meaningful)
+                u_mean = log_dvols.mean()
+                u_std = log_dvols.std()
+            if u_std > 1e-6:
+                zscores = (log_dvols - u_mean) / u_std
                 exposures["size_zscore"] = float(np.average(zscores, weights=weights))
 
         # ── Momentum tilt ──
         momentums = np.array([m["momentum"] for m in position_metrics])
         if len(momentums) > 1 and momentums.std() > 1e-6:
-            mom_mean = momentums.mean()
-            mom_std = momentums.std()
+            if universe_stats is not None and "momentum_zscore" in universe_stats:
+                mom_mean = universe_stats["momentum_zscore"]["mean"]
+                mom_std = universe_stats["momentum_zscore"]["std"]
+            else:
+                mom_mean = momentums.mean()
+                mom_std = momentums.std()
             if mom_std > 1e-6:
                 mom_z = (momentums - mom_mean) / mom_std
                 exposures["momentum_zscore"] = float(np.average(mom_z, weights=weights))
@@ -196,16 +214,24 @@ class FactorExposureMonitor:
         # ── Volatility tilt ──
         vols = np.array([m["realized_vol"] for m in position_metrics])
         if len(vols) > 1 and vols.std() > 1e-6:
-            vol_mean = vols.mean()
-            vol_std = vols.std()
+            if universe_stats is not None and "volatility_zscore" in universe_stats:
+                vol_mean = universe_stats["volatility_zscore"]["mean"]
+                vol_std = universe_stats["volatility_zscore"]["std"]
+            else:
+                vol_mean = vols.mean()
+                vol_std = vols.std()
             if vol_std > 1e-6:
                 vol_z = (vols - vol_mean) / vol_std
                 exposures["volatility_zscore"] = float(np.average(vol_z, weights=weights))
 
         # ── Liquidity tilt ──
         if len(dollar_vols) > 1 and dollar_vols.std() > 1e-6:
-            liq_mean = dollar_vols.mean()
-            liq_std = dollar_vols.std()
+            if universe_stats is not None and "liquidity_zscore" in universe_stats:
+                liq_mean = universe_stats["liquidity_zscore"]["mean"]
+                liq_std = universe_stats["liquidity_zscore"]["std"]
+            else:
+                liq_mean = dollar_vols.mean()
+                liq_std = dollar_vols.std()
             if liq_std > 1e-6:
                 liq_z = (dollar_vols - liq_mean) / liq_std
                 exposures["liquidity_zscore"] = float(np.average(liq_z, weights=weights))
@@ -252,14 +278,15 @@ class FactorExposureMonitor:
                 in_bounds=in_bounds,
             )
             if not in_bounds:
-                violations.append(
-                    f"{factor}={val:.2f} outside [{lo}, {hi}]"
-                )
+                msg = f"{factor}={val:.2f} outside [{lo}, {hi}]"
+                violations.append(msg)
+                logger.warning("Factor constraint violation: %s", msg)
 
         return FactorExposureReport(
             exposures=factor_exposures,
             all_passed=len(violations) == 0,
             violations=violations,
+            timestamp=datetime.now(timezone.utc).isoformat(),
         )
 
     def compute_report(

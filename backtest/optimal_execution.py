@@ -23,6 +23,9 @@ def almgren_chriss_trajectory(
     daily_volume: float,
     daily_volatility: float,
     risk_aversion: float = ALMGREN_CHRISS_RISK_AVERSION,
+    # TODO: When ALMGREN_CHRISS_ENABLED is activated, add a conversion bridge
+    # between AlmgrenChriss per-share impact units and ExecutionModel bps units.
+    # See Audit Report 05, F-27 for details.
     temporary_impact: float = 0.01,
     permanent_impact: float = 0.01,
 ) -> np.ndarray:

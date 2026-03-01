@@ -15,8 +15,12 @@ Strategy:
 """
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 import re
+
+if TYPE_CHECKING:
+    from ..risk.metrics import RiskReport
+    from .null_models import NullModelResults
 
 import numpy as np
 import pandas as pd
@@ -25,7 +29,7 @@ import logging
 
 from ..config import (
     TRANSACTION_COST_BPS, ENTRY_THRESHOLD, CONFIDENCE_THRESHOLD,
-    MAX_POSITIONS, POSITION_SIZE_PCT,
+    MAX_POSITIONS, POSITION_SIZE_PCT, MODEL_DIR,
     BACKTEST_ASSUMED_CAPITAL_USD, EXEC_SPREAD_BPS, EXEC_MAX_PARTICIPATION,
     EXEC_IMPACT_COEFF_BPS, EXEC_MIN_FILL_RATIO, REGIME_RISK_MULTIPLIER,
     EXEC_DYNAMIC_COSTS, EXEC_DOLLAR_VOLUME_REF_USD, EXEC_VOL_REF,
@@ -33,7 +37,6 @@ from ..config import (
     EXEC_VOL_IMPACT_BETA,
     REQUIRE_PERMNO,
     ALMGREN_CHRISS_ENABLED, ALMGREN_CHRISS_ADV_THRESHOLD,
-    ALMGREN_CHRISS_RISK_AVERSION,
     MAX_ANNUALIZED_TURNOVER,
     ALMGREN_CHRISS_FALLBACK_VOL, REGIME_TRADE_POLICY,
     # Spec 06: structural state-aware costs
@@ -133,7 +136,7 @@ class BacktestResult:
     regime_breakdown: Dict = field(default_factory=dict)
     regime_performance: Dict = field(default_factory=dict)
     tca_report: Dict = field(default_factory=dict)
-    risk_report: Optional[object] = field(repr=False, default=None)
+    risk_report: Optional["RiskReport"] = field(repr=False, default=None)
     drawdown_summary: Optional[Dict] = field(repr=False, default=None)
     exit_reason_breakdown: Dict = field(default_factory=dict)
     # Turnover tracking
@@ -142,7 +145,7 @@ class BacktestResult:
     avg_daily_turnover: float = 0.0
     turnover_history: List[float] = field(repr=False, default_factory=list)
     # Truth Layer: null model baselines and cost stress results
-    null_baselines: Optional[object] = field(repr=False, default=None)
+    null_baselines: Optional["NullModelResults"] = field(repr=False, default=None)
     cost_stress_result: Optional[object] = field(repr=False, default=None)
     # Backtest configuration metadata (e.g. stop-loss bar model assumption)
     backtest_metadata: Dict = field(default_factory=dict)
@@ -302,7 +305,6 @@ class Backtester:
         # SPEC-W02: Per-market-cap-segment cost calibrator.
         # Provides differentiated impact coefficients (micro ~40 bps,
         # large ~15 bps) instead of the flat 25 bps default.
-        from pathlib import Path
         if EXEC_CALIBRATION_ENABLED:
             self._cost_calibrator = CostCalibrator(
                 default_coefficients=EXEC_COST_IMPACT_COEFF_BY_MARKETCAP,
@@ -310,7 +312,7 @@ class Backtester:
                 min_total_trades=EXEC_CALIBRATION_MIN_TRADES,
                 min_segment_trades=EXEC_CALIBRATION_MIN_SEGMENT_TRADES,
                 smoothing=EXEC_CALIBRATION_SMOOTHING,
-                model_dir=Path("trained_models"),
+                model_dir=MODEL_DIR,
             )
         else:
             self._cost_calibrator = None
@@ -1036,11 +1038,9 @@ class Backtester:
         # the same HMM regime as the model, not the legacy SMA50 proxy.
         self._regime_lookup = {}
         if "regime" in predictions.columns:
-            for idx, row in predictions.iterrows():
-                if isinstance(idx, tuple) and len(idx) == 2:
-                    self._regime_lookup[idx] = int(row["regime"])
-                else:
-                    self._regime_lookup[idx] = int(row["regime"])
+            self._regime_lookup = dict(
+                zip(predictions.index, predictions["regime"].astype(int).values)
+            )
 
         # Reset per-run ADV dedup set
         self._adv_counted = set()
