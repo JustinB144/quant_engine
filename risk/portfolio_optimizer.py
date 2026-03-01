@@ -256,10 +256,26 @@ def optimize_portfolio(
 
     if not result.success:
         logger.warning(
-            "Portfolio optimizer did not converge: %s. Falling back to equal weight.",
+            "Portfolio optimizer did not converge: %s. Falling back to constrained equal weight.",
             result.message,
         )
-        return pd.Series(1.0 / n, index=assets, name="weight")
+        equal_w = np.full(n, 1.0 / n)
+        # Clip to max_position constraint
+        if max_position is not None and max_position > 0:
+            equal_w = np.minimum(equal_w, max_position)
+        # Re-normalize to sum to 1, then iteratively project to respect max_position
+        w_sum = equal_w.sum()
+        if w_sum > 1e-10:
+            equal_w = equal_w / w_sum
+        if max_position is not None and max_position > 0:
+            for _ in range(5):  # Iterative projection
+                equal_w = np.minimum(equal_w, max_position)
+                w_sum = equal_w.sum()
+                if w_sum > 1e-10:
+                    equal_w = equal_w / w_sum
+                if np.all(equal_w <= max_position + 1e-8):
+                    break
+        return pd.Series(equal_w, index=assets, name="weight")
 
     optimal_weights = result.x[:n]
 

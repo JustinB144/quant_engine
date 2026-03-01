@@ -349,16 +349,17 @@ class PortfolioRiskManager:
                 avg_corr, corr_stress_mult,
             )
 
-        # ── Single-name check ──
-        if position_size > eff_single:
+        # ── Single-name check — use absolute position size ──
+        abs_position = abs(position_size)
+        if abs_position > eff_single:
             violations.append(
-                f"Position size {position_size:.1%} > max {eff_single:.1%}"
+                f"Position size {abs_position:.1%} > max {eff_single:.1%}"
             )
         if eff_single > 0:
-            constraint_util["single_name"] = position_size / eff_single
+            constraint_util["single_name"] = abs_position / eff_single
 
-        # ── Gross exposure check ──
-        gross = sum(proposed_positions.values())
+        # ── Gross exposure check — sum of absolute weights ──
+        gross = sum(abs(w) for w in proposed_positions.values())
         metrics["gross_exposure"] = gross
         if eff_gross > 0:
             constraint_util["gross_exposure"] = gross / eff_gross
@@ -367,12 +368,12 @@ class PortfolioRiskManager:
                 f"Gross exposure {gross:.1%} > max {eff_gross:.1%}"
             )
 
-        # ── Sector concentration check ──
+        # ── Sector concentration check — use absolute weights ──
         sector = self._resolve_sector(ticker, price_data)
-        sector_exposure = position_size
+        sector_exposure = abs(position_size)
         for t, s in current_positions.items():
             if self._resolve_sector(t, price_data) == sector:
-                sector_exposure += s
+                sector_exposure += abs(s)
         metrics["sector_exposure"] = {sector: sector_exposure}
         if eff_sector_cap > 0:
             constraint_util["sector_cap"] = sector_exposure / eff_sector_cap
@@ -494,23 +495,32 @@ class PortfolioRiskManager:
             eff_sector_cap *= corr_stress_mult
             eff_gross *= corr_stress_mult
 
-        # Gross
-        gross = sum(positions.values())
+        # Gross — sum of absolute weights
+        gross = sum(abs(w) for w in positions.values())
         if eff_gross > 0:
             util["gross_exposure"] = gross / eff_gross
 
-        # Single name
+        # Net exposure (informational)
+        util["net_exposure"] = sum(positions.values())
+
+        # Single name — use absolute weights
         eff_single = self.max_single * corr_stress_mult
         if positions and eff_single > 0:
-            util["single_name"] = max(positions.values()) / eff_single
+            util["single_name"] = max(abs(w) for w in positions.values()) / eff_single
 
-        # Sector
+        # Sector — sum absolute weights per sector
         sector_weights: Dict[str, float] = {}
         for t, w in positions.items():
             sector = self._resolve_sector(t, price_data)
-            sector_weights[sector] = sector_weights.get(sector, 0.0) + w
+            sector_weights[sector] = sector_weights.get(sector, 0.0) + abs(w)
         if sector_weights and eff_sector_cap > 0:
             util["sector_cap"] = max(sector_weights.values()) / eff_sector_cap
+
+        # Correlation utilization
+        if self.max_corr > 0:
+            util["correlation"] = avg_corr / self.max_corr
+        else:
+            util["correlation"] = 0.0
 
         return util
 
@@ -791,14 +801,19 @@ class PortfolioRiskManager:
         price_data: Dict[str, pd.DataFrame],
         benchmark_data: pd.DataFrame,
     ) -> float:
-        """Estimate portfolio beta vs benchmark."""
+        """Estimate portfolio beta vs benchmark.
+
+        Normalizes by sum of absolute weights so net-short portfolios
+        produce correctly scaled beta.  Short positions contribute
+        negative beta (hedging effect).
+        """
         bench_returns = benchmark_data["Close"].pct_change().iloc[-self.corr_lookback:]
         bench_var = bench_returns.var()
         if bench_var == 0:
             return 0.0
 
         weighted_beta = 0.0
-        total_weight = 0.0
+        total_abs_weight = 0.0
 
         for ticker, weight in positions.items():
             if ticker not in price_data:
@@ -809,13 +824,14 @@ class PortfolioRiskManager:
                 continue
             cov = stock_returns.loc[common].cov(bench_returns.loc[common])
             beta = cov / bench_var
+            # Signed weight: short positions contribute negative beta
             weighted_beta += weight * beta
-            total_weight += weight
+            total_abs_weight += abs(weight)
 
-        if total_weight > 0:
-            return float(weighted_beta / total_weight)
+        if total_abs_weight > 1e-8:
+            return float(weighted_beta / total_abs_weight)
         else:
-            return 1.0  # Default market-neutral assumption
+            return 0.0
 
     def _estimate_portfolio_vol(
         self,

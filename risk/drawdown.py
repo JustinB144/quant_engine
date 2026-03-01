@@ -122,26 +122,48 @@ class DrawdownController:
         daily = daily_pnl
         weekly = sum(self.daily_pnl_history[-5:]) if self.daily_pnl_history else daily
 
-        # Determine state
+        # Determine state — most severe first
+        # Compute all breach severities independently then take the max
         prev_state = self.state
         messages = []
 
-        # Check daily/weekly limits first (override tier logic)
-        if daily < self.daily_limit:
-            new_state = DrawdownState.CAUTION
-            messages.append(f"Daily loss {daily:.1%} breached limit {self.daily_limit:.1%}")
-        elif weekly < self.weekly_limit:
-            new_state = DrawdownState.CAUTION
-            messages.append(f"Weekly loss {weekly:.1%} breached limit {self.weekly_limit:.1%}")
-        elif dd <= self.critical_thresh:
-            new_state = DrawdownState.CRITICAL
+        _severity_order = {
+            DrawdownState.NORMAL: 0,
+            DrawdownState.RECOVERY: 1,
+            DrawdownState.WARNING: 2,
+            DrawdownState.CAUTION: 3,
+            DrawdownState.CRITICAL: 4,
+        }
+
+        severities: List[DrawdownState] = []
+
+        # Cumulative drawdown tiers (most severe first)
+        if dd <= self.critical_thresh:
+            severities.append(DrawdownState.CRITICAL)
             messages.append(f"CRITICAL: Drawdown {dd:.1%} breached {self.critical_thresh:.1%}")
         elif dd <= self.caution_thresh:
-            new_state = DrawdownState.CAUTION
+            severities.append(DrawdownState.CAUTION)
             messages.append(f"CAUTION: Drawdown {dd:.1%} breached {self.caution_thresh:.1%}")
         elif dd <= self.warning_thresh:
-            new_state = DrawdownState.WARNING
+            severities.append(DrawdownState.WARNING)
             messages.append(f"WARNING: Drawdown {dd:.1%} breached {self.warning_thresh:.1%}")
+
+        # Daily/weekly limits
+        if daily < self.daily_limit:
+            # Daily loss that also breaches critical threshold is CRITICAL
+            if daily < self.critical_thresh:
+                severities.append(DrawdownState.CRITICAL)
+                messages.append(f"CRITICAL: Daily loss {daily:.1%} breached limit {self.daily_limit:.1%}")
+            else:
+                severities.append(DrawdownState.CAUTION)
+                messages.append(f"Daily loss {daily:.1%} breached limit {self.daily_limit:.1%}")
+        if weekly < self.weekly_limit:
+            severities.append(DrawdownState.CAUTION)
+            messages.append(f"Weekly loss {weekly:.1%} breached limit {self.weekly_limit:.1%}")
+
+        # Determine final state: take max severity across all breaches
+        if severities:
+            new_state = max(severities, key=lambda s: _severity_order[s])
         elif prev_state in (DrawdownState.CAUTION, DrawdownState.CRITICAL):
             # Recovering from crisis — enter recovery mode
             new_state = DrawdownState.RECOVERY

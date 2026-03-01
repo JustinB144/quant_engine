@@ -136,16 +136,17 @@ class FactorExposureManager:
         if not position_data:
             return exposures
 
-        abs_weights = np.array([abs(p["weight"]) for p in position_data])
+        signed_weights = np.array([p["weight"] for p in position_data])
+        abs_weights = np.abs(signed_weights)
         total_abs_weight = abs_weights.sum()
         if total_abs_weight < 1e-8:
             return exposures
 
         norm_weights = abs_weights / total_abs_weight
 
-        # Weighted-average beta
+        # Beta: signed weight contribution (shorts contribute negative beta)
         betas = np.array([p["beta"] for p in position_data])
-        exposures["beta"] = float(np.average(betas, weights=norm_weights))
+        exposures["beta"] = float(np.sum(signed_weights * betas) / total_abs_weight)
 
         # Size: z-score of log dollar volume (relative to portfolio universe)
         log_dvols = np.array([p["log_dollar_vol"] for p in position_data])

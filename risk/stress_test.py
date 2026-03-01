@@ -395,8 +395,8 @@ CRISIS_SCENARIOS: Dict[str, Dict[str, float]] = {
 # ---------------------------------------------------------------------------
 
 def correlation_stress_test(
-    portfolio_weights: Dict[str, float],
-    covariance: np.ndarray,
+    portfolio_weights: "pd.Series | Dict[str, float]",
+    covariance: "pd.DataFrame | np.ndarray",
     stress_correlation: float = 0.9,
     annual_trading_days: int = 252,
 ) -> Dict[str, float]:
@@ -408,12 +408,14 @@ def correlation_stress_test(
 
     Parameters
     ----------
-    portfolio_weights : Dict[str, float]
-        Mapping of asset name to weight.  Need not sum to 1; will be
-        normalised internally.
-    covariance : np.ndarray
-        Current (normal-regime) covariance matrix, shape ``(n, n)``.
-        Must be annualised or match the annualisation factor passed.
+    portfolio_weights : pd.Series or Dict[str, float]
+        Asset weights with asset labels as index/keys.  Need not sum to 1;
+        will be normalised internally.  When a dict is passed, it is
+        converted to a pd.Series for explicit index alignment.
+    covariance : pd.DataFrame or np.ndarray
+        Current (normal-regime) covariance matrix.  When a pd.DataFrame is
+        passed, assets are aligned by index/column labels.  When an ndarray
+        is passed, asset order is assumed to match ``portfolio_weights``.
     stress_correlation : float
         Target pairwise correlation under stress (default 0.9).
     annual_trading_days : int
@@ -428,11 +430,39 @@ def correlation_stress_test(
         ``stress_var_99_daily``: parametric daily 99% VaR under stress.
         ``max_loss_3sigma``: 3-sigma daily loss estimate under stress.
         ``diversification_benefit_lost``: fraction of diversification benefit erased.
+        ``normal_diversification_benefit``: diversification benefit under normal regime.
     """
+    import logging as _logging
+    _logger = _logging.getLogger(__name__)
     from scipy.stats import norm as normal_dist
 
-    n = covariance.shape[0]
-    w = np.array(list(portfolio_weights.values()), dtype=float)
+    # Backward compatibility: convert dict -> pd.Series, ndarray -> pd.DataFrame
+    if isinstance(portfolio_weights, dict):
+        portfolio_weights = pd.Series(portfolio_weights)
+    if isinstance(covariance, np.ndarray):
+        _logger.warning(
+            "Passing ndarray covariance without asset labels is unsafe; "
+            "assuming order matches weights"
+        )
+        covariance = pd.DataFrame(
+            covariance,
+            index=portfolio_weights.index,
+            columns=portfolio_weights.index,
+        )
+
+    # Align weight vector to covariance column order
+    common_assets = covariance.columns.intersection(portfolio_weights.index)
+    if len(common_assets) < len(portfolio_weights):
+        missing = set(portfolio_weights.index) - set(common_assets)
+        _logger.warning("Assets in weights but not in covariance: %s", missing)
+
+    if len(common_assets) == 0:
+        raise ValueError("No common assets between weights and covariance")
+
+    cov_aligned = covariance.loc[common_assets, common_assets]
+    w = portfolio_weights.reindex(common_assets, fill_value=0.0).values.astype(float)
+    cov = cov_aligned.values.astype(float)
+    n = len(common_assets)
 
     if len(w) != n:
         raise ValueError(
@@ -479,13 +509,25 @@ def correlation_stress_test(
     z_99 = normal_dist.ppf(0.01)
     stress_var_99 = float(-z_99 * stress_vol)  # positive = loss magnitude
 
-    # Diversification benefit lost: 1 - (portfolio_vol / weighted_avg_vol)
+    # Normal diversification benefit: 1 - (portfolio_vol / weighted_avg_vol)
     weighted_avg_vol = float(np.abs(w) @ vols)
-    div_benefit_lost = (
+    normal_div_benefit = (
         1.0 - (normal_vol / weighted_avg_vol)
         if weighted_avg_vol > 1e-12
         else 0.0
     )
+
+    # Stress diversification benefit: how much diversification remains under stress
+    # Under stress, individual vols stay the same but correlations spike
+    stress_weighted_avg_vol = weighted_avg_vol  # Individual vols unchanged
+    stress_div_benefit = (
+        1.0 - (stress_vol / stress_weighted_avg_vol)
+        if stress_weighted_avg_vol > 1e-12
+        else 0.0
+    )
+
+    # Benefit lost = how much diversification shrinks under stress
+    div_benefit_lost = max(0.0, normal_div_benefit - stress_div_benefit)
 
     return {
         "normal_portfolio_vol": round(normal_vol_ann, 6),
@@ -494,6 +536,7 @@ def correlation_stress_test(
         "stress_var_99_daily": round(stress_var_99, 6),
         "max_loss_3sigma": round(stress_vol * 3.0, 6),
         "max_loss_extreme": round(stress_var_99 * 3.0, 6),
+        "normal_diversification_benefit": round(normal_div_benefit, 6),
         "diversification_benefit_lost": round(div_benefit_lost, 6),
     }
 

@@ -24,6 +24,48 @@ from .universe_config import UniverseConfig, ConfigError
 logger = logging.getLogger(__name__)
 
 
+def _estimate_position_beta(
+    ticker: str,
+    price_data: Dict[str, pd.DataFrame],
+    lookback: int = 60,
+) -> float:
+    """Estimate a single position's beta vs equal-weight market proxy.
+
+    Returns 1.0 as conservative default when data is insufficient.
+    """
+    if ticker not in price_data:
+        return 1.0
+
+    close = price_data[ticker].get("Close")
+    if close is None or len(close) < lookback:
+        return 1.0
+
+    asset_ret = close.pct_change().iloc[-lookback:].dropna()
+    if len(asset_ret) < 20:
+        return 1.0
+
+    # Market proxy: equal-weight average of all available tickers
+    all_rets = []
+    for t, df in price_data.items():
+        c = df.get("Close")
+        if c is not None and len(c) >= lookback:
+            all_rets.append(c.pct_change().iloc[-lookback:])
+    if not all_rets:
+        return 1.0
+
+    market = pd.concat(all_rets, axis=1).mean(axis=1)
+    common = asset_ret.index.intersection(market.index)
+    if len(common) < 20:
+        return 1.0
+
+    market_var = market.loc[common].var()
+    if market_var < 1e-14:
+        return 1.0
+
+    cov = asset_ret.loc[common].cov(market.loc[common])
+    return float(cov / market_var)
+
+
 def replay_with_stress_constraints(
     portfolio_history: List[Dict],
     price_data: Dict[str, pd.DataFrame],
@@ -90,40 +132,48 @@ def replay_with_stress_constraints(
             market_shock = scenario_params.get("market_return", 0.0)
             vol_multiplier = scenario_params.get("volatility_multiplier", 1.0)
 
-            # Apply volatility multiplier to position weights (larger vol = larger effective exposure)
-            shocked_positions = {k: v * vol_multiplier for k, v in positions.items()}
+            # Apply market shock to position values via beta estimate
+            stressed_positions: Dict[str, float] = {}
+            for ticker, weight in positions.items():
+                beta = _estimate_position_beta(ticker, price_data)
+                stressed_weight = weight * (1.0 + market_shock * beta)
+                stressed_positions[ticker] = stressed_weight
 
-            # Compute constraint utilization under stress regime with shocked positions
+            # Tighten constraints under high-vol scenario
+            stress_tightening = min(1.0, 1.0 / max(vol_multiplier, 1.0))
+
+            # Compute constraint utilization under stress regime with stressed positions
             util = risk_mgr.compute_constraint_utilization(
-                positions=shocked_positions,
+                positions=stressed_positions,
                 price_data=price_data,
                 regime=stress_regime,
             )
 
-            # Compute detailed sector breakdown with shocked positions
+            # Compute detailed sector breakdown with stressed positions — absolute weights
             sector_weights: Dict[str, float] = {}
-            for ticker, weight in shocked_positions.items():
+            for ticker, weight in stressed_positions.items():
                 sector = risk_mgr._resolve_sector(ticker, price_data)
-                sector_weights[sector] = sector_weights.get(sector, 0.0) + weight
+                sector_weights[sector] = sector_weights.get(sector, 0.0) + abs(weight)
 
-            # Get stress-conditioned limits
+            # Get stress-conditioned limits, tightened by vol multiplier
             mults = risk_mgr.multiplier.get_multipliers(stress_regime)
-            eff_sector_cap = risk_mgr.max_sector_pct * mults.get("sector_cap", 1.0)
-            eff_gross = risk_mgr.max_gross * mults.get("gross_exposure", 1.0)
+            eff_sector_cap = risk_mgr.max_sector_pct * mults.get("sector_cap", 1.0) * stress_tightening
+            eff_gross = risk_mgr.max_gross * mults.get("gross_exposure", 1.0) * stress_tightening
 
-            # Sector utilization
+            # Sector utilization — absolute weights
             max_sector_util = 0.0
             if sector_weights and eff_sector_cap > 0:
-                max_sector_util = max(sector_weights.values()) / eff_sector_cap
+                max_sector_util = max(abs(v) for v in sector_weights.values()) / eff_sector_cap
 
-            # Gross utilization (with shocked positions)
-            gross = sum(shocked_positions.values())
+            # Gross utilization — sum of absolute weights
+            gross = sum(abs(w) for w in stressed_positions.values())
             gross_util = gross / eff_gross if eff_gross > 0 else 0.0
 
-            # Single name (with shocked positions)
+            # Single name — absolute weights, tightened by vol
+            eff_single = risk_mgr.max_single * stress_tightening
             single_util = 0.0
-            if shocked_positions and risk_mgr.max_single > 0:
-                single_util = max(shocked_positions.values()) / risk_mgr.max_single
+            if stressed_positions and eff_single > 0:
+                single_util = max(abs(w) for w in stressed_positions.values()) / eff_single
 
             # Correlation utilization (from overall util)
             corr_util = util.get("correlation", 0.0)

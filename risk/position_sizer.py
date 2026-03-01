@@ -898,23 +898,39 @@ class PositionSizer:
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             logger.warning("Failed to load regime stats from %s: %s", path, exc)
 
-    def update_kelly_bayesian(self, trades: pd.DataFrame, regime_col: str = "regime"):
+    def update_kelly_bayesian(
+        self,
+        trades: pd.DataFrame,
+        regime_col: str = "regime",
+        incremental: bool = False,
+    ) -> None:
         """Update per-regime and global Bayesian posteriors from trade history.
 
         Maintains separate Beta-Binomial priors for each regime so that
         bull-market wins don't inflate bear-market posteriors.
 
-        Args:
-            trades: DataFrame with ``net_return`` column and optionally a
-                ``regime`` column (integer regime IDs 0-3).
-            regime_col: column name containing regime labels.
+        Parameters
+        ----------
+        trades : pd.DataFrame
+            DataFrame with ``net_return`` column and optionally a
+            ``regime`` column (integer regime IDs 0-3).
+        regime_col : str
+            Column name containing regime labels.
+        incremental : bool
+            If True, add to existing counts (caller guarantees no overlap).
+            If False (default), reset counts and recompute from full history.
         """
         if trades.empty or "net_return" not in trades.columns:
             return
 
+        if not incremental:
+            # Reset counters before recomputing to prevent double-counting
+            for regime_id in self._bayesian_regime:
+                self._bayesian_regime[regime_id] = {"wins": 0, "losses": 0}
+
         returns = trades["net_return"].dropna()
 
-        # Update global counters
+        # Update global counters (always full replacement for global)
         self._bayesian_wins = int((returns > 0).sum())
         self._bayesian_losses = int((returns <= 0).sum())
 
@@ -926,8 +942,22 @@ class PositionSizer:
                 if len(regime_returns) > 0:
                     wins = int((regime_returns > 0).sum())
                     losses = int((regime_returns <= 0).sum())
-                    self._bayesian_regime[regime_id]["wins"] += wins
-                    self._bayesian_regime[regime_id]["losses"] += losses
+                    if incremental:
+                        self._bayesian_regime[regime_id]["wins"] += wins
+                        self._bayesian_regime[regime_id]["losses"] += losses
+                    else:
+                        self._bayesian_regime[regime_id]["wins"] = wins
+                        self._bayesian_regime[regime_id]["losses"] = losses
+
+        total_regime_trades = sum(
+            s["wins"] + s["losses"] for s in self._bayesian_regime.values()
+        )
+        logger.debug(
+            "Bayesian Kelly updated: global=%d wins + %d losses, "
+            "regime_total=%d trades, incremental=%s",
+            self._bayesian_wins, self._bayesian_losses,
+            total_regime_trades, incremental,
+        )
 
     def get_bayesian_kelly(
         self,

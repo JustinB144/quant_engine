@@ -149,9 +149,11 @@ class StopLossManager:
         effective_trail_mult = self.trail_mult * regime_mult
 
         # ── 1. Hard stop (spread-adjusted) ──
+        # Spread buffer widens the stop: stop price is lowered by spread_buf
         hard_stop_price = entry_price * (1 + self.hard_stop) - spread_buf
-        hard_stop_adjusted = self.hard_stop - (self.spread_buffer_bps / 10_000)
-        if unrealized <= hard_stop_adjusted:
+        # Derive effective threshold from spread-buffered price
+        effective_hard_stop = (hard_stop_price / entry_price) - 1.0
+        if unrealized <= effective_hard_stop:
             return StopResult(
                 should_exit=True,
                 reason=StopReason.HARD_STOP,
