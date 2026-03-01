@@ -170,11 +170,11 @@ class TestComputeShockVectors:
             assert result[dt].hmm_regime == 3
 
     def test_confidence_series_used(self):
-        """When confidence_series is provided, uncertainty = 1 - confidence."""
+        """When regime_confidence_series is provided, uncertainty = 1 - confidence."""
         ohlcv = _make_ohlcv(n=50)
         confidence = pd.Series(0.8, index=ohlcv.index)
         result = compute_shock_vectors(
-            ohlcv=ohlcv, confidence_series=confidence, ticker="TEST",
+            ohlcv=ohlcv, regime_confidence_series=confidence, ticker="TEST",
         )
 
         for sv in result.values():

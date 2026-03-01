@@ -1064,10 +1064,21 @@ class Backtester:
                         ticker_preds["regime"].astype(int)
                         if "regime" in ticker_preds.columns else None
                     )
-                    conf_s = (
-                        ticker_preds["confidence"]
-                        if "confidence" in ticker_preds.columns else None
-                    )
+                    # Use regime confidence (max posterior probability) for
+                    # ShockVector uncertainty, NOT model prediction confidence.
+                    # SPEC_AUDIT_FIX_25 T1: regime_confidence is semantically
+                    # correct for compute_shock_vectors.
+                    if "regime_confidence" in ticker_preds.columns:
+                        conf_s = ticker_preds["regime_confidence"]
+                    elif "confidence" in ticker_preds.columns:
+                        conf_s = ticker_preds["confidence"]
+                        logger.warning(
+                            "Using model confidence as ShockVector uncertainty proxy for %s — "
+                            "regime_confidence column not available. This is semantically imprecise.",
+                            ticker,
+                        )
+                    else:
+                        conf_s = None
                 except KeyError:
                     regime_s = None
                     conf_s = None
@@ -1087,7 +1098,7 @@ class Backtester:
                     shock_vecs = compute_shock_vectors(
                         ohlcv=ohlcv,
                         regime_series=regime_s,
-                        confidence_series=conf_s,
+                        regime_confidence_series=conf_s,
                         ticker=str(ticker),
                         ensemble_model_type=_model_type,
                     )

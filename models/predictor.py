@@ -361,6 +361,9 @@ class EnsemblePredictor:
         result["regime_prediction"] = regime_pred
         result["blend_alpha"] = blend_alpha
         result["regime"] = regimes.values
+        # Pass through regime detection confidence so downstream consumers
+        # (e.g. compute_shock_vectors) can use it directly.
+        result["regime_confidence"] = regime_confidence.reindex(features.index).fillna(0.5).values
 
         # ── Ensemble disagreement (SPEC-H02) ──
         # Compute per-row std across all member predictions that are available.

@@ -22,7 +22,7 @@ boundaries:
     imported_by: backtest/engine.py
     import_line: 77
     import_type: top_level
-    signature: 'def compute_shock_vectors(ohlcv: pd.DataFrame, regime_series: Optional[pd.Series] = None, confidence_series:
+    signature: 'def compute_shock_vectors(ohlcv: pd.DataFrame, regime_series: Optional[pd.Series] = None, regime_confidence_series:
       Optional[pd.Series] = None, ticker: str = '''', bocpd_hazard_lambda: float = 1.0/60, bocpd_hazard_func: str = ''constant'',
       bocpd_max_runlength: int = 200, jump_sigma_threshold: float = 2.5, vol_lookback: int = 20) -> Dict'
     parameters:
@@ -32,7 +32,7 @@ boundaries:
     - name: regime_series
       type: Optional[pd.Series]
       required: false
-    - name: confidence_series
+    - name: regime_confidence_series
       type: Optional[pd.Series]
       required: false
     - name: ticker

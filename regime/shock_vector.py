@@ -418,7 +418,7 @@ def _build_structural_features(
 def compute_shock_vectors(
     ohlcv: "pd.DataFrame",
     regime_series: Optional["pd.Series"] = None,
-    confidence_series: Optional["pd.Series"] = None,
+    regime_confidence_series: Optional["pd.Series"] = None,
     ticker: str = "",
     bocpd_hazard_lambda: float = 1.0 / 60,
     bocpd_hazard_func: str = "constant",
@@ -444,9 +444,11 @@ def compute_shock_vectors(
     regime_series : pd.Series, optional
         Per-bar regime labels (0-3), aligned to ``ohlcv.index``.
         If ``None``, defaults to regime 0 for all bars.
-    confidence_series : pd.Series, optional
-        Per-bar regime confidence in [0, 1], aligned to ``ohlcv.index``.
-        If ``None``, defaults to 0.5 for all bars.
+    regime_confidence_series : pd.Series, optional
+        Per-bar **regime detection** confidence in [0, 1], aligned to
+        ``ohlcv.index``. This is the maximum posterior probability across
+        regime states (from RegimeDetector), NOT model prediction confidence.
+        If ``None``, defaults to 0.5 (maximum uncertainty).
     ticker : str
         Security identifier embedded in each ShockVector.
     bocpd_hazard_lambda : float
@@ -533,12 +535,21 @@ def compute_shock_vectors(
                 jump_flags[i] = True
             jump_magnitudes[i] = current_ret
 
-    # ── Per-bar uncertainty from confidence ──
+    # ── Per-bar uncertainty from regime confidence ──
     # Uncertainty ≈ 1 - confidence.  When the regime detector is confident
     # (high probability on one state), uncertainty is low.  This is a
     # monotone proxy for the full entropy computation.
-    if confidence_series is not None and len(confidence_series) > 0:
-        conf_vals = confidence_series.reindex(ohlcv.index).fillna(0.5).values
+    if regime_confidence_series is not None and len(regime_confidence_series) > 0:
+        # Warn if values look like model confidence (typically > 0.8 for most bars)
+        # vs regime confidence (typically 0.4-0.9 with more variance)
+        mean_conf = float(regime_confidence_series.mean())
+        if mean_conf > 0.95:
+            logger.warning(
+                "regime_confidence_series mean=%.3f is suspiciously high — "
+                "verify this is regime confidence, not model prediction confidence",
+                mean_conf,
+            )
+        conf_vals = regime_confidence_series.reindex(ohlcv.index).fillna(0.5).values
         conf_vals = np.clip(conf_vals.astype(float), 0.0, 1.0)
         uncertainty_vals = 1.0 - conf_vals
     else:

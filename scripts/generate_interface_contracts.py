@@ -33,7 +33,7 @@ def build_contracts():
                     "def compute_shock_vectors("
                     "ohlcv: pd.DataFrame, "
                     "regime_series: Optional[pd.Series] = None, "
-                    "confidence_series: Optional[pd.Series] = None, "
+                    "regime_confidence_series: Optional[pd.Series] = None,"
                     "ticker: str = '', "
                     "bocpd_hazard_lambda: float = 1.0/60, "
                     "bocpd_hazard_func: str = 'constant', "
@@ -45,7 +45,7 @@ def build_contracts():
                 "parameters": [
                     {"name": "ohlcv", "type": "pd.DataFrame", "required": True},
                     {"name": "regime_series", "type": "Optional[pd.Series]", "required": False},
-                    {"name": "confidence_series", "type": "Optional[pd.Series]", "required": False},
+                    {"name": "regime_confidence_series", "type": "Optional[pd.Series]", "required": False},
                     {"name": "ticker", "type": "str", "required": False},
                     {"name": "bocpd_hazard_lambda", "type": "float", "required": False},
                     {"name": "bocpd_hazard_func", "type": "str", "required": False},

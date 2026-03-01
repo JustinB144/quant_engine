@@ -1712,20 +1712,24 @@ class AutopilotEngine:
 
             if current_uncertainty > 0.0:
                 gate = UncertaintyGate()
-                weights = pd.Series(
-                    gate.apply_uncertainty_gate(weights.values, current_uncertainty),
-                    index=weights.index,
-                )
-                # Re-normalise so weights sum to 1 after gate scaling
-                w_sum = weights.sum()
-                if abs(w_sum) > 1e-10:
-                    weights = weights / w_sum
+                multiplier = gate.compute_size_multiplier(current_uncertainty)
+
+                # SPEC_AUDIT_FIX_25 T2: Scale weights to reduce total invested
+                # capital.  multiplier=0.7 means invest 70% of capital, hold
+                # 30% in cash.  Weights still sum to multiplier (not 1.0), so
+                # the remaining (1 - multiplier) fraction is implicitly cash.
+                # Do NOT renormalize to sum=1 — the sub-1.0 sum represents
+                # intentional cash allocation from uncertainty gating.
+                weights = weights * multiplier
+
+                # Clean up near-zero weights
                 weights[weights.abs() < 1e-6] = 0.0
-                w_sum = weights.sum()
-                if abs(w_sum) > 1e-10:
-                    weights = weights / w_sum
-                self._log(f"  Uncertainty gate: multiplier={gate.compute_size_multiplier(current_uncertainty):.3f} "
-                          f"(entropy={current_uncertainty:.3f})")
+
+                self._log(
+                    f"  Uncertainty gate: multiplier={multiplier:.3f} "
+                    f"(entropy={current_uncertainty:.3f}), "
+                    f"invested_fraction={weights.sum():.1%}"
+                )
 
             self._log(f"  Portfolio optimizer: {(weights != 0).sum()} non-zero weights "
                       f"out of {len(common)} assets (confidence-weighted, uncertainty-gated)")
