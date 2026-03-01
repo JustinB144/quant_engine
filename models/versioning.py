@@ -13,13 +13,17 @@ Layout:
     └── ensemble_10d_*.pkl         # legacy flat files (backward compat)
 """
 import json
+import logging
 import shutil
+import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from ..config import MODEL_DIR, MAX_MODEL_VERSIONS
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -126,10 +130,19 @@ class ModelRegistry:
             (version_id, version_dir_path)
         """
         if version_id is None:
-            version_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            version_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
         version_dir = self.model_dir / version_id
-        version_dir.mkdir(parents=True, exist_ok=True)
+        if version_dir.exists():
+            # Extremely unlikely with microsecond precision, but handle it
+            original_id = version_id
+            version_id = f"{version_id}_{uuid.uuid4().hex[:6]}"
+            version_dir = self.model_dir / version_id
+            logger.warning(
+                "Version directory collision for %s; using fallback %s",
+                original_id, version_id,
+            )
+        version_dir.mkdir(parents=True, exist_ok=False)
         return version_id, version_dir
 
     def register_version(self, version: ModelVersion):
@@ -172,7 +185,9 @@ class ModelRegistry:
         """
         Remove old versions beyond keep_n most recent.
 
-        Never removes the current latest version.
+        Never removes the current latest version.  Guarantees exactly
+        ``keep_n`` entries (or fewer if fewer exist), with the latest
+        always included.
         """
         if keep_n is None:
             keep_n = MAX_MODEL_VERSIONS
@@ -187,11 +202,24 @@ class ModelRegistry:
         to_keep = []
         to_remove = []
 
+        # Always keep the latest version first
+        latest_entry = None
         for v in versions:
-            if v["version_id"] == latest or len(to_keep) < keep_n:
+            if v["version_id"] == latest:
+                latest_entry = v
+                break
+
+        # Fill remaining slots from most recent
+        for v in versions:
+            if v["version_id"] == latest:
+                continue  # Already pinned
+            if len(to_keep) < keep_n - (1 if latest_entry else 0):
                 to_keep.append(v)
             else:
                 to_remove.append(v)
+
+        if latest_entry:
+            to_keep.insert(0, latest_entry)
 
         # Delete old version directories
         for v in to_remove:

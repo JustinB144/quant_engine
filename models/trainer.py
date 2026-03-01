@@ -17,7 +17,9 @@ Anti-overfitting:
     - Median imputation (not zero-fill)
     - Shallow trees (max_depth=4) + subsampling
 """
+import hashlib
 import json
+import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -86,6 +88,17 @@ from ..config import (
 from .feature_stability import FeatureStabilityTracker
 from .versioning import ModelVersion, ModelRegistry
 
+logger = logging.getLogger(__name__)
+
+
+def _compute_checksum(filepath: Path) -> str:
+    """Compute SHA-256 checksum of a file."""
+    sha = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            sha.update(chunk)
+    return sha.hexdigest()
+
 
 class IdentityScaler:
     """No-op scaler that passes data through unchanged.
@@ -96,6 +109,13 @@ class IdentityScaler:
 
     def fit(self, X, y=None):
         """Fit the transformer to the provided data."""
+        X = np.asarray(X)
+        n = X.shape[1] if X.ndim > 1 else 1
+        self.n_features_in_ = n
+        self.mean_ = np.zeros(n)
+        self.scale_ = np.ones(n)
+        self.var_ = np.ones(n)
+        self.n_samples_seen_ = X.shape[0]
         return self
 
     def transform(self, X):
@@ -1558,6 +1578,12 @@ class ModelTrainer:
         if survivorship_mode:
             meta["survivorship_mode"] = True
             meta["universe_as_of"] = universe_as_of
+
+        # Compute SHA-256 checksums for all saved .pkl artifacts
+        artifact_checksums = {}
+        for pkl_path in save_dir.glob(f"ensemble_{horizon}d_*.pkl"):
+            artifact_checksums[pkl_path.name] = _compute_checksum(pkl_path)
+        meta["artifact_checksums"] = artifact_checksums
 
         with open(f"{prefix}_meta.json", "w") as f:
             json.dump(meta, f, indent=2)

@@ -10,6 +10,10 @@ from .walk_forward import walk_forward_select
 from .feature_stability import FeatureStabilityTracker
 from .shift_detection import DistributionShiftDetector
 from .conformal import ConformalPredictor
+from .trainer import ModelTrainer
+from .predictor import EnsemblePredictor
+from .versioning import ModelRegistry, ModelVersion
+from .retrain_trigger import RetrainTrigger
 
 __all__ = [
     "ModelGovernance",
@@ -21,4 +25,9 @@ __all__ = [
     "FeatureStabilityTracker",
     "DistributionShiftDetector",
     "ConformalPredictor",
+    "ModelTrainer",
+    "EnsemblePredictor",
+    "ModelRegistry",
+    "ModelVersion",
+    "RetrainTrigger",
 ]
