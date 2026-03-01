@@ -35,7 +35,7 @@ import logging
 import os
 import threading
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -97,6 +97,26 @@ def _sanitize_permno_list(permnos: list) -> str:
     if not clean:
         return "-1"
     return ",".join(clean)
+
+_DATE_RE = _re.compile(r'^\d{4}-\d{2}-\d{2}$')
+
+
+def _validate_date(date_str: str, param_name: str) -> str:
+    """Validate date string format to prevent SQL injection.
+
+    Accepts YYYY-MM-DD format only. Raises ValueError for invalid input.
+    """
+    if not isinstance(date_str, str):
+        # Convert datetime objects to string
+        date_str = str(date_str)[:10]
+    date_str = date_str.strip()
+    if not _DATE_RE.match(date_str):
+        raise ValueError(
+            f"Invalid date format for {param_name}: {date_str!r} "
+            f"(expected YYYY-MM-DD)"
+        )
+    return date_str
+
 _WRDS_HOST = 'wrds-pgdata.wharton.upenn.edu'
 _WRDS_PORT = '9737'
 _WRDS_DB = 'wrds'
@@ -277,7 +297,7 @@ class WRDSProvider:
             universe = provider.get_sp500_universe('2008-01-01')
             # → ~500 tickers including Lehman Brothers, Bear Stearns, etc.
         """
-        date = as_of_date or datetime.now().strftime('%Y-%m-%d')
+        date = _validate_date(as_of_date, "as_of_date") if as_of_date else datetime.now().strftime('%Y-%m-%d')
 
         # Strategy 1: crsp_a_stock.dsp500list (requires crsp_a_indexes schema)
         # Strategy 2: comp.idxcst_his — Compustat index constituent history (fallback)
@@ -368,7 +388,8 @@ class WRDSProvider:
             DataFrame with columns: date, permno, ticker
             Each row = one stock that was in the index on that snapshot date.
         """
-        end = end_date or datetime.now().strftime('%Y-%m-%d')
+        start_date = _validate_date(start_date, "start_date")
+        end = _validate_date(end_date, "end_date") if end_date else datetime.now().strftime('%Y-%m-%d')
 
         # Generate snapshot dates
         dates = pd.date_range(start=start_date, end=end,
@@ -403,7 +424,7 @@ class WRDSProvider:
         t = str(ticker).upper().strip()
         if not _TICKER_RE.match(t):
             return None
-        ref_date = as_of_date or datetime.now().strftime('%Y-%m-%d')
+        ref_date = _validate_date(as_of_date, "as_of_date") if as_of_date else datetime.now().strftime('%Y-%m-%d')
         sql = f"""
             SELECT b.permno
             FROM crsp.msenames AS b
@@ -448,7 +469,8 @@ class WRDSProvider:
             back to prc (close) when not.  CRSP prices are negative when
             they represent bid/ask midpoints — .abs() is applied.
         """
-        end = end_date or datetime.now().strftime('%Y-%m-%d')
+        start_date = _validate_date(start_date, "start_date")
+        end = _validate_date(end_date, "end_date") if end_date else datetime.now().strftime('%Y-%m-%d')
         if not tickers:
             return {}
 
@@ -538,6 +560,8 @@ class WRDSProvider:
         stock that later gets delisted (e.g. bankruptcy), the backtest must
         include the terminal loss via returns, not by fabricating 0-price bars.
         """
+        start_date = _validate_date(start_date, "start_date")
+        end_date = _validate_date(end_date, "end_date") if end_date else None
         prices = self.get_crsp_prices(tickers, start_date, end_date)
 
         end = end_date or datetime.now().strftime('%Y-%m-%d')
@@ -617,9 +641,10 @@ class WRDSProvider:
 
         Tries common WRDS table variants; returns empty DataFrame if unavailable.
         """
+        start_date = _validate_date(start_date, "start_date")
         if not permnos:
             return pd.DataFrame(columns=["permno", "secid", "link_start", "link_end"])
-        end = end_date or datetime.now().strftime('%Y-%m-%d')
+        end = _validate_date(end_date, "end_date") if end_date else datetime.now().strftime('%Y-%m-%d')
         permno_list = _sanitize_permno_list(permnos)
 
         candidates = [
@@ -690,12 +715,13 @@ class WRDSProvider:
         Output columns:
             iv_atm_30, iv_atm_60, iv_atm_90, iv_put_25d, iv_call_25d
         """
+        start_date = _validate_date(start_date, "start_date")
         empty = pd.DataFrame(
             columns=["iv_atm_30", "iv_atm_60", "iv_atm_90", "iv_put_25d", "iv_call_25d"],
         )
         if not permnos:
             return empty
-        end = end_date or datetime.now().strftime('%Y-%m-%d')
+        end = _validate_date(end_date, "end_date") if end_date else datetime.now().strftime('%Y-%m-%d')
 
         link = self.get_optionmetrics_link(
             permnos=permnos,
@@ -859,7 +885,8 @@ class WRDSProvider:
                 pe_ratio — trailing P/E (prccq / epspxq annualised)
                 debt_equity — dlttq / ceqq
         """
-        end = end_date or datetime.now().strftime('%Y-%m-%d')
+        start_date = _validate_date(start_date, "start_date")
+        end = _validate_date(end_date, "end_date") if end_date else datetime.now().strftime('%Y-%m-%d')
         if not tickers:
             return pd.DataFrame()
 
@@ -937,7 +964,8 @@ class WRDSProvider:
                 surprise_pct — (actual - meanest) / abs(meanest) * 100
                 beat         — True if surprise_pct > 0
         """
-        end = end_date or datetime.now().strftime('%Y-%m-%d')
+        start_date = _validate_date(start_date, "start_date")
+        end = _validate_date(end_date, "end_date") if end_date else datetime.now().strftime('%Y-%m-%d')
         if not tickers:
             return pd.DataFrame()
 
@@ -1004,7 +1032,8 @@ class WRDSProvider:
                 num_institutions  — number of reporting institutions
                 pct_institutional — shares held / shares outstanding (approx)
         """
-        end = end_date or datetime.now().strftime('%Y-%m-%d')
+        start_date = _validate_date(start_date, "start_date")
+        end = _validate_date(end_date, "end_date") if end_date else datetime.now().strftime('%Y-%m-%d')
         if not tickers:
             return pd.DataFrame()
 
@@ -1075,6 +1104,10 @@ class WRDSProvider:
             DataFrame with DatetimeIndex and columns: Open, High, Low, Close, Volume
             Empty DataFrame if TAQmsec is not accessible or no data found.
         """
+        if start_date:
+            start_date = _validate_date(start_date, "start_date")
+        if end_date:
+            end_date = _validate_date(end_date, "end_date")
         if self._db is None:
             return pd.DataFrame()
 
@@ -1195,6 +1228,8 @@ class WRDSProvider:
         Each row is one trading date. Returns ``None`` if WRDS is unavailable
         or no data is found.
         """
+        start_date = _validate_date(start_date, "start_date")
+        end_date = _validate_date(end_date, "end_date") if end_date else None
         if self._db is None:
             return None
 
@@ -1286,6 +1321,8 @@ class WRDSProvider:
 
         Returns ``None`` if WRDS is unavailable or no data is found.
         """
+        start_date = _validate_date(start_date, "start_date")
+        end_date = _validate_date(end_date, "end_date") if end_date else None
         if self._db is None:
             return None
 
@@ -1446,6 +1483,8 @@ class WRDSProvider:
 
         Returns ``None`` if WRDS is unavailable or no data is found.
         """
+        start_date = _validate_date(start_date, "start_date")
+        end_date = _validate_date(end_date, "end_date") if end_date else None
         if self._db is None:
             return None
 
@@ -1601,14 +1640,19 @@ class WRDSProvider:
 # Singleton factory
 # ─────────────────────────────────────────────────────────────────────────────
 
+_provider_lock = threading.Lock()
 _default_provider: Optional['WRDSProvider'] = None
 
 
 def get_wrds_provider() -> 'WRDSProvider':
-    """Get or create the default WRDSProvider singleton."""
+    """Get or create the default WRDSProvider singleton (thread-safe)."""
     global _default_provider
-    if _default_provider is None:
-        _default_provider = WRDSProvider()
+    if _default_provider is not None:
+        return _default_provider
+    with _provider_lock:
+        # Double-checked locking
+        if _default_provider is None:
+            _default_provider = WRDSProvider()
     return _default_provider
 
 

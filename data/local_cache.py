@@ -621,23 +621,6 @@ def list_cached_tickers(cache_dir: Optional[Path] = None) -> List[str]:
     return sorted(tickers)
 
 
-def _daily_cache_files(root: Path) -> List[Path]:
-    """Return de-duplicated daily-cache candidate files for one root."""
-    candidates: List[Path] = []
-    candidates.extend(sorted(root.glob("*_1d.parquet")))
-    candidates.extend(sorted(root.glob("*_daily_*.parquet")))
-    candidates.extend(sorted(root.glob("*_1d.csv")))
-    candidates.extend(sorted(root.glob("*_daily_*.csv")))
-    unique: List[Path] = []
-    seen = set()
-    for p in candidates:
-        if p in seen:
-            continue
-        seen.add(p)
-        unique.append(p)
-    return unique
-
-
 _INTRADAY_TIMEWORD_TO_CANONICAL = {
     "4HOUR": "4h", "1HOUR": "1h", "30MIN": "30m",
     "15MIN": "15m", "5MIN": "5m", "1MIN": "1m",

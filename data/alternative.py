@@ -832,7 +832,7 @@ def get_earnings_surprise(
     )
 
 
-def get_fundamentals(
+def get_institutional_ownership_data(
     ticker: str,
     as_of_date: Optional[datetime] = None,
 ) -> Optional[pd.DataFrame]:
@@ -844,6 +844,20 @@ def get_fundamentals(
     return _get_default_provider().get_institutional_ownership(
         ticker, as_of_date=as_of_date,
     )
+
+
+def get_fundamentals(
+    ticker: str,
+    as_of_date: Optional[datetime] = None,
+) -> Optional[pd.DataFrame]:
+    """Deprecated: Use get_institutional_ownership_data() instead."""
+    import warnings
+    warnings.warn(
+        "get_fundamentals() is deprecated and misleadingly named. "
+        "Use get_institutional_ownership_data() instead.",
+        DeprecationWarning, stacklevel=2,
+    )
+    return get_institutional_ownership_data(ticker, as_of_date)
 
 
 def get_short_interest(

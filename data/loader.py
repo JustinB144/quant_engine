@@ -11,7 +11,7 @@ No external sys.path dependencies.
 import logging
 import re
 from datetime import date, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -243,9 +243,6 @@ def _cached_universe_subset(candidates: List[str]) -> List[str]:
     subset: List[str] = []
     for ticker in candidates:
         t = str(ticker).upper()
-        if t not in named_cached:
-            # Alias lookup via metadata may still resolve this symbol.
-            pass
         local_df, local_meta, _ = cache_load_with_meta(t)
         if _cache_is_usable(
             cached=local_df,
