@@ -30,7 +30,6 @@ _MAX_EXEC_QUALITY_RECORDS = 500
 def _get_health_db_path() -> Path:
     """Return the path to the health history SQLite database."""
     from quant_engine.config import RESULTS_DIR
-
     return Path(RESULTS_DIR) / "health_history.db"
 
 
@@ -53,12 +52,14 @@ def _ensure_health_table(db_path: Path) -> None:
         conn.close()
 
 
-def save_health_snapshot(health_result: Dict[str, Any]) -> None:
+def save_health_snapshot(health_result: Dict[str, Any],
+                         max_records: Optional[int] = None,
+                         db_path: Optional[Path] = None) -> None:
     """Save a health check snapshot to the SQLite database."""
     try:
-        db_path = _get_health_db_path()
-        _ensure_health_table(db_path)
-        conn = sqlite3.connect(str(db_path))
+        path = db_path if db_path is not None else _get_health_db_path()
+        _ensure_health_table(path)
+        conn = sqlite3.connect(str(path))
         try:
             timestamp = datetime.now(timezone.utc).isoformat()
             overall_score = health_result.get("overall_score")
@@ -74,11 +75,12 @@ def save_health_snapshot(health_result: Dict[str, Any]) -> None:
                 (timestamp, overall_score, domain_scores, check_results),
             )
 
-            # Prune old entries beyond _MAX_SNAPSHOTS
+            # Prune old entries beyond max
+            limit = max_records if max_records is not None else _MAX_SNAPSHOTS
             conn.execute(
                 "DELETE FROM health_history WHERE id NOT IN "
                 "(SELECT id FROM health_history ORDER BY id DESC LIMIT ?)",
-                (_MAX_SNAPSHOTS,),
+                (limit,),
             )
             conn.commit()
         finally:
@@ -87,12 +89,13 @@ def save_health_snapshot(health_result: Dict[str, Any]) -> None:
         logger.warning("Failed to save health snapshot: %s", e)
 
 
-def get_health_history(limit: int = 30) -> List[Dict[str, Any]]:
+def get_health_history(limit: int = 30,
+                       db_path: Optional[Path] = None) -> List[Dict[str, Any]]:
     """Retrieve recent health snapshots for trend visualization."""
     try:
-        db_path = _get_health_db_path()
-        _ensure_health_table(db_path)
-        conn = sqlite3.connect(str(db_path))
+        path = db_path if db_path is not None else _get_health_db_path()
+        _ensure_health_table(path)
+        conn = sqlite3.connect(str(path))
         try:
             cursor = conn.execute(
                 "SELECT timestamp, overall_score, domain_scores "
@@ -176,9 +179,10 @@ def detect_trend(
     return (trend, slope)
 
 
-def get_health_history_with_trends(limit: int = 90) -> Dict[str, Any]:
+def get_health_history_with_trends(limit: int = 90,
+                                   db_path: Optional[Path] = None) -> Dict[str, Any]:
     """Retrieve health history with rolling averages and trend analysis."""
-    history = get_health_history(limit=limit)
+    history = get_health_history(limit=limit, db_path=db_path)
 
     if not history:
         return {
@@ -238,12 +242,14 @@ def save_ic_snapshot(
     n_candidates: int = 0,
     n_passed: int = 0,
     best_strategy_id: str = "",
+    max_records: Optional[int] = None,
+    db_path: Optional[Path] = None,
 ) -> None:
     """Save IC metrics from an autopilot cycle."""
     try:
-        db_path = _get_ic_db_path()
-        _ensure_ic_table(db_path)
-        conn = sqlite3.connect(str(db_path))
+        path = db_path if db_path is not None else _get_ic_db_path()
+        _ensure_ic_table(path)
+        conn = sqlite3.connect(str(path))
         try:
             timestamp = datetime.now(timezone.utc).isoformat()
             conn.execute(
@@ -252,10 +258,11 @@ def save_ic_snapshot(
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (timestamp, ic_mean, ic_ir, n_candidates, n_passed, best_strategy_id),
             )
+            limit = max_records if max_records is not None else _MAX_IC_SNAPSHOTS
             conn.execute(
                 "DELETE FROM ic_history WHERE id NOT IN "
                 "(SELECT id FROM ic_history ORDER BY id DESC LIMIT ?)",
-                (_MAX_IC_SNAPSHOTS,),
+                (limit,),
             )
             conn.commit()
         finally:
@@ -264,12 +271,13 @@ def save_ic_snapshot(
         logger.warning("Failed to save IC snapshot: %s", e)
 
 
-def get_ic_history(limit: int = 20) -> List[Dict[str, Any]]:
+def get_ic_history(limit: int = 20,
+                   db_path: Optional[Path] = None) -> List[Dict[str, Any]]:
     """Retrieve recent IC snapshots."""
     try:
-        db_path = _get_ic_db_path()
-        _ensure_ic_table(db_path)
-        conn = sqlite3.connect(str(db_path))
+        path = db_path if db_path is not None else _get_ic_db_path()
+        _ensure_ic_table(path)
+        conn = sqlite3.connect(str(path))
         try:
             cursor = conn.execute(
                 "SELECT timestamp, ic_mean, ic_ir, n_candidates, n_passed, best_strategy_id "
@@ -330,12 +338,14 @@ def save_disagreement_snapshot(
     n_assets: int = 0,
     pct_high_disagreement: float = 0.0,
     member_names: Optional[List[str]] = None,
+    max_records: Optional[int] = None,
+    db_path: Optional[Path] = None,
 ) -> None:
     """Save ensemble disagreement metrics from a prediction cycle."""
     try:
-        db_path = _get_disagreement_db_path()
-        _ensure_disagreement_table(db_path)
-        conn = sqlite3.connect(str(db_path))
+        path = db_path if db_path is not None else _get_disagreement_db_path()
+        _ensure_disagreement_table(path)
+        conn = sqlite3.connect(str(path))
         try:
             timestamp = datetime.now(timezone.utc).isoformat()
             names_str = json.dumps(member_names) if member_names else "[]"
@@ -347,10 +357,11 @@ def save_disagreement_snapshot(
                 (timestamp, mean_disagreement, max_disagreement,
                  n_members, n_assets, pct_high_disagreement, names_str),
             )
+            limit = max_records if max_records is not None else _MAX_DISAGREEMENT_SNAPSHOTS
             conn.execute(
                 "DELETE FROM disagreement_history WHERE id NOT IN "
                 "(SELECT id FROM disagreement_history ORDER BY id DESC LIMIT ?)",
-                (_MAX_DISAGREEMENT_SNAPSHOTS,),
+                (limit,),
             )
             conn.commit()
         finally:
@@ -359,12 +370,13 @@ def save_disagreement_snapshot(
         logger.warning("Failed to save disagreement snapshot: %s", e)
 
 
-def get_disagreement_history(limit: int = 20) -> List[Dict[str, Any]]:
+def get_disagreement_history(limit: int = 20,
+                             db_path: Optional[Path] = None) -> List[Dict[str, Any]]:
     """Retrieve recent disagreement snapshots."""
     try:
-        db_path = _get_disagreement_db_path()
-        _ensure_disagreement_table(db_path)
-        conn = sqlite3.connect(str(db_path))
+        path = db_path if db_path is not None else _get_disagreement_db_path()
+        _ensure_disagreement_table(path)
+        conn = sqlite3.connect(str(path))
         try:
             cursor = conn.execute(
                 "SELECT timestamp, mean_disagreement, max_disagreement, "
@@ -435,13 +447,15 @@ def save_execution_quality_fill(
     fill_ratio: Optional[float] = None,
     participation_rate: Optional[float] = None,
     regime: Optional[int] = None,
+    max_records: Optional[int] = None,
+    db_path: Optional[Path] = None,
 ) -> None:
     """Save a paper-trade fill's execution quality."""
     try:
-        db_path = _get_exec_quality_db_path()
-        _ensure_exec_quality_table(db_path)
+        path = db_path if db_path is not None else _get_exec_quality_db_path()
+        _ensure_exec_quality_table(path)
         cost_surprise = float(actual_cost_bps) - float(predicted_cost_bps)
-        conn = sqlite3.connect(str(db_path))
+        conn = sqlite3.connect(str(path))
         try:
             timestamp = datetime.now(timezone.utc).isoformat()
             conn.execute(
@@ -461,10 +475,11 @@ def save_execution_quality_fill(
                     int(regime) if regime is not None else None,
                 ),
             )
+            limit = max_records if max_records is not None else _MAX_EXEC_QUALITY_RECORDS
             conn.execute(
                 "DELETE FROM exec_quality WHERE id NOT IN "
                 "(SELECT id FROM exec_quality ORDER BY id DESC LIMIT ?)",
-                (_MAX_EXEC_QUALITY_RECORDS,),
+                (limit,),
             )
             conn.commit()
         finally:
@@ -475,12 +490,13 @@ def save_execution_quality_fill(
 
 def get_execution_quality_history(
     limit: int = 50,
+    db_path: Optional[Path] = None,
 ) -> List[Dict[str, Any]]:
     """Retrieve recent execution quality fill records."""
     try:
-        db_path = _get_exec_quality_db_path()
-        _ensure_exec_quality_table(db_path)
-        conn = sqlite3.connect(str(db_path))
+        path = db_path if db_path is not None else _get_exec_quality_db_path()
+        _ensure_exec_quality_table(path)
+        conn = sqlite3.connect(str(path))
         try:
             cursor = conn.execute(
                 "SELECT timestamp, symbol, side, predicted_cost_bps, "

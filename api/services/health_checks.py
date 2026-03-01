@@ -16,9 +16,51 @@ import numpy as np
 import pandas as pd
 from scipy import stats as sp_stats
 
-from .health_service import HealthCheckResult, _unavailable
+from .health_types import HealthCheckResult, _unavailable
 
 logger = logging.getLogger(__name__)
+
+
+# ── Quick health status ───────────────────────────────────────────────
+
+def quick_status() -> Dict[str, Any]:
+    """Lightweight health check for ``GET /api/health``."""
+    from datetime import timezone
+    from quant_engine.config import DATA_CACHE_DIR, MODEL_DIR
+    status, checks = "healthy", {}
+    cache_dir = Path(DATA_CACHE_DIR)
+    if cache_dir.exists():
+        parquets = list(cache_dir.glob("*.parquet"))
+        if parquets:
+            ages = [(datetime.now() - datetime.fromtimestamp(f.stat().st_mtime)).days
+                    for f in parquets[:10]]
+            checks["cache_max_age_days"] = str(max(ages))
+            if max(ages) > 21:
+                status = "degraded"
+        else:
+            checks["cache"], status = "no_parquet_files", "degraded"
+    else:
+        checks["cache"], status = "missing", "unhealthy"
+    registry_path = Path(MODEL_DIR) / "registry.json"
+    checks["model_registry"] = "present" if registry_path.exists() else "missing"
+    if not registry_path.exists() and status == "healthy":
+        status = "degraded"
+    try:
+        from quant_engine.config import WRDS_ENABLED
+        if WRDS_ENABLED:
+            from quant_engine.data.wrds_provider import WRDSProvider
+            p = WRDSProvider()
+            checks["wrds"] = "connected" if p.available() else "unavailable"
+            if not p.available() and status == "healthy":
+                status = "degraded"
+        else:
+            checks["wrds"] = "disabled"
+    except Exception as e:
+        checks["wrds"] = f"error: {e}"
+        if status == "healthy":
+            status = "degraded"
+    return {"status": status, "checks": checks,
+            "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 # ── Shared helper ──────────────────────────────────────────────────────
