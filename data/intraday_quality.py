@@ -74,6 +74,8 @@ class IntradayQualityReport:
     # Aggregates
     total_rejected: int = 0
     total_flagged: int = 0
+    unique_rejected_bars: int = 0
+    unique_flagged_bars: int = 0
     total_bars_output: int = 0
     quality_score: float = 1.0
     quarantine: bool = False
@@ -86,19 +88,26 @@ class IntradayQualityReport:
         self.total_flagged += check.flagged_count
 
     def compute_quality_score(self, total_bars_output: int) -> None:
-        """Compute quality score based on rejection and flag rates."""
+        """Compute quality score based on rejection and flag rates.
+
+        Uses deduplicated counts (``unique_rejected_bars`` / ``unique_flagged_bars``)
+        for quarantine decisions so bars triggering multiple checks are not
+        double-counted.  Per-check breakdowns remain in ``total_rejected`` /
+        ``total_flagged`` for diagnostic detail.
+        """
         if self.total_bars_input == 0:
             self.quality_score = 0.0
             return
 
-        hard_rejection_rate = self.total_rejected / self.total_bars_input
-        soft_flag_rate = self.total_flagged / self.total_bars_input
+        # Use deduplicated counts for the score and quarantine decisions
+        hard_rejection_rate = self.unique_rejected_bars / self.total_bars_input
+        soft_flag_rate = self.unique_flagged_bars / self.total_bars_input
 
         self.quality_score = 1.0 - (0.6 * hard_rejection_rate + 0.4 * soft_flag_rate)
         self.total_bars_output = total_bars_output
 
-        # Determine quarantine status
-        if self.total_rejected / self.total_bars_input > 0.05:
+        # Determine quarantine status using deduplicated counts
+        if hard_rejection_rate > 0.05:
             self.quarantine = True
             self.quarantine_reason = (
                 f"Hard rejection rate {hard_rejection_rate:.1%} exceeds 5% threshold"
@@ -1051,21 +1060,31 @@ def validate_intraday_bars(
 
     # Remove hard-rejected bars
     df_cleaned = df.drop(all_hard_rejected)
+    report.unique_rejected_bars = len(all_hard_rejected)
     logger.info(f"Removed {len(all_hard_rejected)} hard-rejected bars")
 
     # ========== SOFT FLAG CHECKS ==========
 
+    # Deduplicate soft flags: a bar triggering multiple soft checks is counted once
+    all_soft_flagged: set = set()
+
     # Check 5: Extreme bar return
     result, flagged = _check_extreme_bar_return(df_cleaned, timeframe)
     report.add_check(result)
+    all_soft_flagged.update(flagged)
 
     # Check 6: Stale price
     result, flagged = _check_stale_price(df_cleaned)
     report.add_check(result)
+    all_soft_flagged.update(flagged)
 
     # Check 7: Zero volume liquid
     result, flagged = _check_zero_volume_liquid(df_cleaned)
     report.add_check(result)
+    all_soft_flagged.update(flagged)
+
+    # Set deduplicated soft-flag count for quarantine decisions
+    report.unique_flagged_bars = len(all_soft_flagged)
 
     # ========== SERIES-LEVEL CHECKS ==========
 

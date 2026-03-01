@@ -9,6 +9,7 @@ Priority order:
 No external sys.path dependencies.
 """
 import logging
+import re
 from datetime import date, timedelta
 from typing import Dict, List, Optional, Tuple
 
@@ -54,6 +55,10 @@ from .quality import assess_ohlcv_quality
 REQUIRED_OHLCV = ["Open", "High", "Low", "Close", "Volume"]
 OPTIONAL_PANEL_COLUMNS = ["Return", "total_ret", "dlret", "delist_event", "permno", "ticker"]
 TRUSTED_CACHE_SOURCES = {str(s).lower().strip() for s in CACHE_TRUSTED_SOURCES}
+
+# Ticker validation — consistent with wrds_provider._TICKER_RE.
+# Prevents path traversal and rejects empty / overly long inputs.
+_TICKER_RE = re.compile(r'^[A-Z0-9.\-/^]{1,12}$')
 
 
 def _permno_from_meta(meta: Optional[Dict[str, object]]) -> Optional[str]:
@@ -350,6 +355,9 @@ def load_ohlcv(
     and a DatetimeIndex, or None if fetch fails.
     """
     requested_symbol = str(ticker).upper().strip()
+    if not _TICKER_RE.match(requested_symbol):
+        logger.warning("Invalid ticker format rejected: %r", ticker)
+        return None
     cached = None
     cache_meta: Dict[str, object] = {}
     if use_cache:
@@ -487,11 +495,13 @@ def load_ohlcv(
             requested_symbol,
             source,
         )
+        permno_key = cached_permno if cached_permno is not None else requested_symbol
         _fallback_tracker[requested_symbol] = {
             "source": source,
             "reason": "wrds_unavailable" if use_wrds else "wrds_disabled",
             "bars": len(cached),
             "trusted": False,
+            "permno": permno_key,  # Cross-reference to data dict key
         }
         return cached
 
@@ -501,8 +511,13 @@ def load_ohlcv(
 def get_data_provenance() -> Dict[str, Dict[str, object]]:
     """Return a summary of data source provenance and any fallbacks that occurred.
 
-    Returns dict mapping ticker -> {"source": str, "reason": str, "trusted": bool, ...}.
+    Returns dict mapping ticker -> {"source": str, "reason": str, "trusted": bool,
+    "permno": str, ...}.  The ``permno`` key cross-references the data dict key
+    returned by ``load_universe()``.
     Useful for auditing whether the system is running on institutional or demo data.
+
+    Note: The tracker is reset at the start of each ``load_universe()`` call to
+    prevent stale entries from accumulating across multiple invocations.
     """
     return dict(_fallback_tracker)
 
@@ -524,15 +539,22 @@ def load_universe(
     use_wrds: bool = WRDS_ENABLED,
 ) -> Dict[str, pd.DataFrame]:
     """Load OHLCV data for multiple symbols. Returns {permno: DataFrame}."""
-    global _skip_tracker
+    global _skip_tracker, _fallback_tracker
     _skip_tracker = {}
+    _fallback_tracker = {}  # Reset per load cycle to avoid stale entries
+
+    # Validate ticker strings before processing
+    valid_tickers = [t for t in tickers if _TICKER_RE.match(str(t).upper().strip())]
+    if len(valid_tickers) < len(tickers):
+        logger.warning("Rejected %d invalid ticker strings", len(tickers) - len(valid_tickers))
+
     data: Dict[str, pd.DataFrame] = {}
     skipped: Dict[str, str] = {}
-    for i, symbol in enumerate(tickers):
+    for i, symbol in enumerate(valid_tickers):
         if verbose:
-            print(f"  Loading {symbol} ({i+1}/{len(tickers)})...", end="", flush=True)
+            print(f"  Loading {symbol} ({i+1}/{len(valid_tickers)})...", end="", flush=True)
         df = load_ohlcv(symbol, years=years, use_cache=use_cache, use_wrds=use_wrds)
-        if df is not None and len(df) >= 500:
+        if df is not None and len(df) >= MIN_BARS:  # Config-driven threshold
             if DATA_QUALITY_ENABLED:
                 quality = assess_ohlcv_quality(df)
                 if not quality.passed:
@@ -559,7 +581,7 @@ def load_universe(
                 print(f" {len(df)} bars (permno={key}, ticker={ticker_lbl})")
         else:
             bars = len(df) if df is not None else 0
-            reason = f"insufficient data ({bars} bars, need 500)" if df is not None else "load_ohlcv returned None"
+            reason = f"insufficient data ({bars} bars, need {MIN_BARS})" if df is not None else "load_ohlcv returned None"
             skipped[symbol] = reason
             if verbose:
                 print(f" SKIPPED ({reason})")
@@ -568,7 +590,7 @@ def load_universe(
     if skipped:
         logger.warning(
             "load_universe: %d/%d tickers skipped — %s",
-            len(skipped), len(tickers),
+            len(skipped), len(valid_tickers),
             "; ".join(f"{sym}: {r}" for sym, r in skipped.items()),
         )
     # Persist skip reasons for downstream consumers (e.g. orchestrator error messages)
