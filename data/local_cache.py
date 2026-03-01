@@ -19,7 +19,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-from ..config import DATA_CACHE_DIR, FRAMEWORK_DIR
+from ..config import DATA_CACHE_DIR, DATA_CACHE_ALPACA_DIR, FRAMEWORK_DIR
 
 REQUIRED_OHLCV = ["Open", "High", "Low", "Close", "Volume"]
 OPTIONAL_CACHE_COLUMNS = ["Return", "total_ret", "dlret", "delist_event", "permno", "ticker"]
@@ -380,6 +380,10 @@ def load_intraday_ohlcv(
     Handles IBKR naming: {TICKER}_{timeword}_{start}_{end}.parquet
     Does NOT apply _to_daily_ohlcv() (which rejects sub-daily data).
 
+    Searches the primary cache dir, DATA_CACHE_ALPACA_DIR, and
+    FALLBACK_SOURCE_DIRS so that data downloaded by any provider
+    script is discoverable without requiring a custom cache_dir.
+
     Args:
         ticker: Stock symbol (e.g. "AAPL")
         timeframe: Canonical code ("4h", "1h", "30m", "15m", "5m", "1m")
@@ -392,49 +396,58 @@ def load_intraday_ohlcv(
     t = ticker.upper()
     ibkr_tf = _IBKR_TIMEFRAME_MAP.get(timeframe, timeframe)
 
-    # Try parquet first (faster, preserves dtypes)
-    for pattern in [f"{t}_{ibkr_tf}_*.parquet", f"{t}_{timeframe}_*.parquet",
-                    f"{t}_{timeframe}.parquet"]:
-        matches = sorted(d.glob(pattern))
-        for path in matches:
-            try:
-                df = pd.read_parquet(path)
-                if not isinstance(df.index, pd.DatetimeIndex):
-                    df.index = pd.DatetimeIndex(pd.to_datetime(df.index, errors="coerce"))
-                df = _normalize_ohlcv_columns(df)
-                if set(REQUIRED_OHLCV).issubset(df.columns):
-                    df = df[REQUIRED_OHLCV].copy()
-                    df = df.sort_index()
-                    df = df[~df.index.isna()]
-                    df = df[~df.index.duplicated(keep="last")]
-                    df = df.dropna(subset=REQUIRED_OHLCV)
-                    if len(df) > 0:
-                        return df
-            except (OSError, ValueError, ImportError) as e:
-                logger.debug("Could not read intraday parquet %s: %s", path.name, e)
-                continue
+    # Build search roots: primary + Alpaca + fallback dirs
+    search_roots: List[Path] = [d]
+    if DATA_CACHE_ALPACA_DIR.exists() and DATA_CACHE_ALPACA_DIR != d:
+        search_roots.append(DATA_CACHE_ALPACA_DIR)
+    for fallback in FALLBACK_SOURCE_DIRS:
+        if fallback.exists() and fallback not in search_roots:
+            search_roots.append(fallback)
 
-    # CSV fallback
-    for pattern in [f"{t}_{ibkr_tf}_*.csv", f"{t}_{timeframe}_*.csv",
-                    f"{t}_{timeframe}.csv"]:
-        matches = sorted(d.glob(pattern))
-        for path in matches:
-            try:
-                df = pd.read_csv(path, parse_dates=True, index_col=0)
-                if not isinstance(df.index, pd.DatetimeIndex):
-                    df.index = pd.DatetimeIndex(pd.to_datetime(df.index, errors="coerce"))
-                df = _normalize_ohlcv_columns(df)
-                if set(REQUIRED_OHLCV).issubset(df.columns):
-                    df = df[REQUIRED_OHLCV].copy()
-                    df = df.sort_index()
-                    df = df[~df.index.isna()]
-                    df = df[~df.index.duplicated(keep="last")]
-                    df = df.dropna(subset=REQUIRED_OHLCV)
-                    if len(df) > 0:
-                        return df
-            except (OSError, pd.errors.ParserError, UnicodeDecodeError, ValueError) as e:
-                logger.debug("Could not read intraday CSV %s: %s", path.name, e)
-                continue
+    for root in search_roots:
+        # Try parquet first (faster, preserves dtypes)
+        for pattern in [f"{t}_{ibkr_tf}_*.parquet", f"{t}_{timeframe}_*.parquet",
+                        f"{t}_{timeframe}.parquet"]:
+            matches = sorted(root.glob(pattern))
+            for path in matches:
+                try:
+                    df = pd.read_parquet(path)
+                    if not isinstance(df.index, pd.DatetimeIndex):
+                        df.index = pd.DatetimeIndex(pd.to_datetime(df.index, errors="coerce"))
+                    df = _normalize_ohlcv_columns(df)
+                    if set(REQUIRED_OHLCV).issubset(df.columns):
+                        df = df[REQUIRED_OHLCV].copy()
+                        df = df.sort_index()
+                        df = df[~df.index.isna()]
+                        df = df[~df.index.duplicated(keep="last")]
+                        df = df.dropna(subset=REQUIRED_OHLCV)
+                        if len(df) > 0:
+                            return df
+                except (OSError, ValueError, ImportError) as e:
+                    logger.debug("Could not read intraday parquet %s: %s", path.name, e)
+                    continue
+
+        # CSV fallback
+        for pattern in [f"{t}_{ibkr_tf}_*.csv", f"{t}_{timeframe}_*.csv",
+                        f"{t}_{timeframe}.csv"]:
+            matches = sorted(root.glob(pattern))
+            for path in matches:
+                try:
+                    df = pd.read_csv(path, parse_dates=True, index_col=0)
+                    if not isinstance(df.index, pd.DatetimeIndex):
+                        df.index = pd.DatetimeIndex(pd.to_datetime(df.index, errors="coerce"))
+                    df = _normalize_ohlcv_columns(df)
+                    if set(REQUIRED_OHLCV).issubset(df.columns):
+                        df = df[REQUIRED_OHLCV].copy()
+                        df = df.sort_index()
+                        df = df[~df.index.isna()]
+                        df = df[~df.index.duplicated(keep="last")]
+                        df = df.dropna(subset=REQUIRED_OHLCV)
+                        if len(df) > 0:
+                            return df
+                except (OSError, pd.errors.ParserError, UnicodeDecodeError, ValueError) as e:
+                    logger.debug("Could not read intraday CSV %s: %s", path.name, e)
+                    continue
     return None
 
 

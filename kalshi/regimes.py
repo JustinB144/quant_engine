@@ -76,10 +76,11 @@ def tag_event_regime(
     vix_level: Optional[float] = None,
 ) -> EventRegimeTag:
     """Tag an event with macro regime classifications."""
+    # T5: Use explicit None check instead of `or` to preserve valid zero values
     return EventRegimeTag(
-        inflation_regime=classify_inflation_regime(cpi_yoy or np.nan),
-        policy_regime=classify_policy_regime(fed_funds_change_bps or np.nan),
-        vol_regime=classify_vol_regime(vix_level or np.nan),
+        inflation_regime=classify_inflation_regime(cpi_yoy if cpi_yoy is not None else np.nan),
+        policy_regime=classify_policy_regime(fed_funds_change_bps if fed_funds_change_bps is not None else np.nan),
+        vol_regime=classify_vol_regime(vix_level if vix_level is not None else np.nan),
     )
 
 

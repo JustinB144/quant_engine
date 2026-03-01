@@ -33,6 +33,7 @@ Usage:
 
 import argparse
 import json
+import logging
 import os
 import sys
 import time
@@ -89,6 +90,8 @@ except Exception:
         with open(meta_path, "w") as f:
             json.dump(info, f, indent=2)
 
+
+logger = logging.getLogger(__name__)
 
 REQUIRED_OHLCV = ["Open", "High", "Low", "Close", "Volume"]
 
@@ -697,9 +700,20 @@ def save_intraday(
             if df.index.tz is not None:
                 df.index = df.index.tz_localize(None)
             cols = [c for c in REQUIRED_OHLCV if c in old.columns and c in df.columns]
-            merged = pd.concat([old[cols], df[cols]]).sort_index()
-            merged = merged[~merged.index.duplicated(keep="last")]
-            merged = merged.dropna(subset=cols)
+            missing = set(REQUIRED_OHLCV) - set(cols)
+            if missing:
+                logger.warning(
+                    "%s: Merge would drop required OHLCV columns %s — skipping merge, using new data only",
+                    ticker, missing,
+                )
+                # Fallback: use new data only (which should have all columns)
+                merged = df[REQUIRED_OHLCV] if all(c in df.columns for c in REQUIRED_OHLCV) else df
+            else:
+                merged = pd.concat([old[cols], df[cols]]).sort_index()
+                merged = merged[~merged.index.duplicated(keep="last")]
+                merged = merged.dropna(subset=cols)
+            assert all(c in merged.columns for c in REQUIRED_OHLCV), \
+                f"Post-merge OHLCV assertion failed: missing {set(REQUIRED_OHLCV) - set(merged.columns)}"
             df = merged
         except (OSError, ValueError):
             pass

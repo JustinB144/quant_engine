@@ -111,6 +111,20 @@ class EventTimeStore:
             return []
         return [str(x) for x in df["name"].tolist()]
 
+    def _get_primary_key_cols(self, table: str) -> List[str]:
+        """Return primary key column names for a table (T3)."""
+        if self.backend == "duckdb" and self._duckdb_conn is not None:
+            df = self._duckdb_conn.execute(f"PRAGMA table_info('{table}')").df()
+            if "name" in df.columns and "pk" in df.columns:
+                return [str(r["name"]) for _, r in df.iterrows() if int(r["pk"]) > 0]
+            return []
+        if self._sqlite_conn is None:
+            return []
+        df = pd.read_sql_query(f"PRAGMA table_info({table})", self._sqlite_conn)
+        if "name" not in df.columns or "pk" not in df.columns:
+            return []
+        return [str(r["name"]) for _, r in df.iterrows() if int(r["pk"]) > 0]
+
     @staticmethod
     def _norm_ts(value: object) -> Optional[str]:
         """Internal helper for norm ts."""
@@ -141,7 +155,11 @@ class EventTimeStore:
         return value
 
     def _insert_or_replace(self, table: str, rows: Iterable[Mapping[str, object]]) -> None:
-        """Internal helper for insert or replace."""
+        """Upsert rows using INSERT ... ON CONFLICT DO UPDATE (T3).
+
+        Preserves existing column values not present in the incoming row,
+        unlike INSERT OR REPLACE which nulls out missing columns.
+        """
         payload = list(rows)
         if not payload:
             return
@@ -157,7 +175,27 @@ class EventTimeStore:
 
         placeholders = ", ".join(["?"] * len(cols))
         col_sql = ", ".join(cols)
-        sql = f"INSERT OR REPLACE INTO {table} ({col_sql}) VALUES ({placeholders})"
+
+        # T3: Use ON CONFLICT DO UPDATE to avoid nulling out existing columns
+        key_cols = self._get_primary_key_cols(table)
+        if key_cols:
+            update_cols = [c for c in cols if c not in key_cols]
+            conflict_clause = ", ".join(key_cols)
+            if update_cols:
+                update_clause = ", ".join(f"{c} = excluded.{c}" for c in update_cols)
+                sql = (
+                    f"INSERT INTO {table} ({col_sql}) VALUES ({placeholders}) "
+                    f"ON CONFLICT({conflict_clause}) DO UPDATE SET {update_clause}"
+                )
+            else:
+                # All columns are key columns — nothing to update
+                sql = (
+                    f"INSERT INTO {table} ({col_sql}) VALUES ({placeholders}) "
+                    f"ON CONFLICT({conflict_clause}) DO NOTHING"
+                )
+        else:
+            # Fallback if no PK detected (should not happen with our schema)
+            sql = f"INSERT OR REPLACE INTO {table} ({col_sql}) VALUES ({placeholders})"
 
         rows_out: List[Sequence[object]] = []
         for row in payload:
@@ -624,13 +662,15 @@ class EventTimeStore:
         asof = self._norm_ts(asof_ts)
         if asof is None:
             return pd.DataFrame()
+        # T7: Numeric version ordering — extract integer from 'vN' for correct sort
         sql = """
             SELECT event_id, event_type, market_id, mapping_version, source,
                    effective_start_ts, effective_end_ts
             FROM event_market_map_versions
             WHERE effective_start_ts <= ?
               AND (effective_end_ts IS NULL OR effective_end_ts > ?)
-            ORDER BY event_id, market_id, mapping_version DESC
+            ORDER BY event_id, market_id,
+                     CAST(REPLACE(mapping_version, 'v', '') AS INTEGER) DESC
         """
         return self.query_df(sql, params=[asof, asof])
 

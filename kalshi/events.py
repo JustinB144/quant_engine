@@ -131,15 +131,31 @@ def _merge_event_market_map(grid: pd.DataFrame, event_market_map: pd.DataFrame) 
     if "event_type" in mapping.columns:
         m_ty = mapping.copy()
         m_ty = m_ty.assign(event_type=m_ty["event_type"].astype(str))
-        fallback = out.merge(m_ty, on="event_type", how="left", suffixes=("", "_map"))
+        fallback = out.merge(m_ty, on="event_type", how="left", suffixes=("", "_fb"))
         if merged is None:
             merged = fallback
         else:
-            if "market_id" in fallback.columns:
-                merged.loc[:, "market_id"] = merged["market_id"].fillna(fallback["market_id"])
+            # T2: Use keyed merge on event_id instead of index-aligned fillna
+            if "market_id" in fallback.columns and "event_id" in fallback.columns:
+                fb_map = fallback[["event_id", "market_id"]].rename(
+                    columns={"market_id": "market_id_fallback"}
+                ).drop_duplicates(subset=["event_id"])
+                merged = merged.merge(fb_map, on="event_id", how="left")
+                merged["market_id"] = merged["market_id"].fillna(merged["market_id_fallback"])
+                merged = merged.drop(columns=["market_id_fallback"])
 
     if merged is None:
         return pd.DataFrame()
+
+    # T2: Assert no duplicate market_id assignments per event
+    if "event_id" in merged.columns and "market_id" in merged.columns:
+        dup_check = merged.groupby("event_id")["market_id"].nunique()
+        if (dup_check > 1).any():
+            import logging
+            logging.getLogger(__name__).warning(
+                "Multiple market_id assignments found for events: %s",
+                dup_check[dup_check > 1].index.tolist(),
+            )
 
     merged = merged[merged["market_id"].notna()].copy()
     return merged

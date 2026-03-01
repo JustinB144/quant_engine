@@ -40,7 +40,7 @@ class PipelineOrchestrator:
     ) -> PipelineState:
         """Load data, compute features, detect regimes."""
         from quant_engine.config import UNIVERSE_FULL, UNIVERSE_QUICK, WRDS_ENABLED, REQUIRE_PERMNO
-        from quant_engine.data.loader import load_survivorship_universe, load_universe
+        from quant_engine.data.loader import load_survivorship_universe, load_universe, warn_if_survivorship_biased
         from quant_engine.features.pipeline import FeaturePipeline
         from quant_engine.regime.detector import RegimeDetector
 
@@ -110,6 +110,8 @@ class PipelineOrchestrator:
             msg_parts.append("To debug: Set verbose=True in load_universe() or check logs for per-ticker details.")
 
             raise RuntimeError("\n".join(msg_parts))
+
+        warn_if_survivorship_biased(state.data, context="orchestrator pipeline")
 
         # Step 2: features
         if progress_callback:
@@ -358,9 +360,42 @@ class PipelineOrchestrator:
                 "annualized_return": result.annualized_return,
                 "trades_per_year": result.trades_per_year,
                 "regime_breakdown": result.regime_breakdown,
+                "winning_trades": getattr(result, "winning_trades", 0),
+                "losing_trades": getattr(result, "losing_trades", 0),
+                "avg_win": getattr(result, "avg_win", 0.0),
+                "avg_loss": getattr(result, "avg_loss", 0.0),
+                "total_return": getattr(result, "total_return", 0.0),
+                "avg_holding_days": getattr(result, "avg_holding_days", 0.0),
             }
             with open(RESULTS_DIR / f"backtest_{horizon}d_summary.json", "w") as f:
                 _json.dump(summary, f, indent=2, default=str)
+        else:
+            # Write zero-trade summary to prevent stale artifacts
+            summary = {
+                "horizon": horizon,
+                "total_trades": 0,
+                "win_rate": 0.0,
+                "avg_return": 0.0,
+                "sharpe": 0.0,
+                "sortino": 0.0,
+                "max_drawdown": 0.0,
+                "profit_factor": 0.0,
+                "annualized_return": 0.0,
+                "trades_per_year": 0.0,
+                "regime_breakdown": {},
+                "winning_trades": 0,
+                "losing_trades": 0,
+                "avg_win": 0.0,
+                "avg_loss": 0.0,
+                "total_return": 0.0,
+                "avg_holding_days": 0.0,
+            }
+            with open(RESULTS_DIR / f"backtest_{horizon}d_summary.json", "w") as f:
+                _json.dump(summary, f, indent=2, default=str)
+
+            # Write empty trade CSV to prevent stale trade data
+            pd.DataFrame().to_csv(RESULTS_DIR / f"backtest_{horizon}d_trades.csv", index=False)
+            logger.info("Zero trades — wrote empty summary and cleared trade file.")
 
         if progress_callback:
             progress_callback(1.0, "Backtest complete")

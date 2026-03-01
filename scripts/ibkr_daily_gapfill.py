@@ -22,6 +22,7 @@ Usage:
 
 import argparse
 import json
+import logging
 import os
 import sys
 import time
@@ -55,6 +56,8 @@ from quant_engine.data.local_cache import (
 
 # Use the root-level config for correct DATA_CACHE_DIR path
 DATA_CACHE_DIR = _QE_ROOT / "data" / "cache"
+
+logger = logging.getLogger(__name__)
 
 REQUIRED_OHLCV = ["Open", "High", "Low", "Close", "Volume"]
 
@@ -218,7 +221,15 @@ def merge_and_save(
         if len(ibkr_new) > 0:
             # Ensure same columns
             common_cols = [c for c in REQUIRED_OHLCV if c in wrds_df.columns and c in ibkr_new.columns]
-            merged = pd.concat([wrds_df[common_cols], ibkr_new[common_cols]])
+            missing = set(REQUIRED_OHLCV) - set(common_cols)
+            if missing:
+                logger.warning(
+                    "%s: Merge would drop required OHLCV columns %s — skipping merge, using new data only",
+                    ticker, missing,
+                )
+                merged = ibkr_df[REQUIRED_OHLCV] if all(c in ibkr_df.columns for c in REQUIRED_OHLCV) else ibkr_df
+            else:
+                merged = pd.concat([wrds_df[common_cols], ibkr_new[common_cols]])
         else:
             merged = wrds_df[[c for c in REQUIRED_OHLCV if c in wrds_df.columns]]
     else:
@@ -227,6 +238,9 @@ def merge_and_save(
     merged = merged.sort_index()
     merged = merged[~merged.index.duplicated(keep="last")]
     merged = merged.dropna(subset=[c for c in REQUIRED_OHLCV if c in merged.columns])
+
+    assert all(c in merged.columns for c in REQUIRED_OHLCV), \
+        f"Post-merge OHLCV assertion failed for {ticker}: missing {set(REQUIRED_OHLCV) - set(merged.columns)}"
 
     if len(merged) == 0:
         raise ValueError(f"No data after merge for {ticker}")

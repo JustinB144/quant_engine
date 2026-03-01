@@ -28,11 +28,12 @@ logger = logging.getLogger(__name__)
 
 from quant_engine.config import (
     UNIVERSE_FULL, UNIVERSE_QUICK, RESULTS_DIR, REGIME_NAMES, ENTRY_THRESHOLD,
+    CONFIDENCE_THRESHOLD,
     CPCV_PARTITIONS, CPCV_TEST_PARTITIONS, SPA_BOOTSTRAPS,
     SURVIVORSHIP_UNIVERSE_NAME,
     FEATURE_MODE_DEFAULT, WF_MAX_TRAIN_DATES,
 )
-from quant_engine.data.loader import load_universe, load_survivorship_universe
+from quant_engine.data.loader import load_universe, load_survivorship_universe, warn_if_survivorship_biased
 from quant_engine.data.survivorship import filter_panel_by_point_in_time_universe
 from quant_engine.features.pipeline import FeaturePipeline
 from quant_engine.regime.detector import RegimeDetector
@@ -133,6 +134,8 @@ def main():
     if not data:
         print("ERROR: No data loaded.")
         sys.exit(1)
+
+    warn_if_survivorship_biased(data, context="backtest")
 
     # ── Load model ──
     if verbose:
@@ -335,7 +338,12 @@ def main():
 
             # CPCV robustness
             effective_entry = float(args.min_predicted if args.min_predicted is not None else ENTRY_THRESHOLD)
-            effective_conf = float(args.min_confidence if args.min_confidence is not None else 0.0)
+            effective_conf = float(args.min_confidence if args.min_confidence is not None else CONFIDENCE_THRESHOLD)
+            if args.min_confidence is None:
+                logger.info(
+                    "SPA: Using backtester confidence threshold %.2f (from config CONFIDENCE_THRESHOLD)",
+                    effective_conf,
+                )
             cpcv = combinatorial_purged_cv(
                 predictions=pred_series,
                 actuals=actual_series,
@@ -436,6 +444,12 @@ def main():
             "annualized_return": result.annualized_return,
             "trades_per_year": result.trades_per_year,
             "regime_breakdown": result.regime_breakdown,
+            "winning_trades": getattr(result, "winning_trades", 0),
+            "losing_trades": getattr(result, "losing_trades", 0),
+            "avg_win": getattr(result, "avg_win", 0.0),
+            "avg_loss": getattr(result, "avg_loss", 0.0),
+            "total_return": getattr(result, "total_return", 0.0),
+            "avg_holding_days": getattr(result, "avg_holding_days", 0.0),
         }
         summary_path = RESULTS_DIR / f"backtest_{args.horizon}d_summary.json"
         with open(summary_path, "w") as f:
@@ -444,6 +458,37 @@ def main():
         if verbose:
             print(f"\n  Trade log: {out_path}")
             print(f"  Summary: {summary_path}")
+    else:
+        # Write zero-trade summary to prevent stale artifacts
+        summary = {
+            "horizon": args.horizon,
+            "total_trades": 0,
+            "win_rate": 0.0,
+            "avg_return": 0.0,
+            "sharpe": 0.0,
+            "sortino": 0.0,
+            "max_drawdown": 0.0,
+            "profit_factor": 0.0,
+            "annualized_return": 0.0,
+            "trades_per_year": 0.0,
+            "regime_breakdown": {},
+            "winning_trades": 0,
+            "losing_trades": 0,
+            "avg_win": 0.0,
+            "avg_loss": 0.0,
+            "total_return": 0.0,
+            "avg_holding_days": 0.0,
+        }
+        summary_path = RESULTS_DIR / f"backtest_{args.horizon}d_summary.json"
+        with open(summary_path, "w") as f:
+            json.dump(summary, f, indent=2, default=str)
+
+        # Write empty trade CSV to prevent stale trade data
+        trades_path = RESULTS_DIR / f"backtest_{args.horizon}d_trades.csv"
+        pd.DataFrame().to_csv(trades_path, index=False)
+
+        if verbose:
+            logger.info("Zero trades — wrote empty summary and cleared trade file.")
 
     # ── Write reproducibility manifest ──
     manifest["extra"] = {

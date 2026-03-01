@@ -3,6 +3,7 @@ Contract -> probability distribution builder for Kalshi markets.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -17,6 +18,14 @@ from .quality import (
 )
 
 _EPS = 1e-12
+
+# T1: Word-boundary regex for threshold direction inference (replaces substring matching)
+_ABOVE_PATTERN = re.compile(
+    r'\b(>=|above|over|greater\s+than|at\s+least|or\s+higher)\b', re.IGNORECASE
+)
+_BELOW_PATTERN = re.compile(
+    r'\b(<=|below|under|less\s+than|at\s+most|or\s+lower)\b', re.IGNORECASE
+)
 
 
 def _is_tz_aware_datetime(series: pd.Series) -> bool:
@@ -159,26 +168,24 @@ def _resolve_threshold_direction_with_confidence(row: Mapping[str, object]) -> D
     if payout in ("le", "lte", "<=", "below", "under"):
         return DirectionResult(direction="le", source="explicit_metadata", confidence="high")
 
-    # Check rules text (medium confidence)
-    rules = str(row.get("rules_text", "")).lower()
-    ge_tokens = (">=", "ge", "above", "over", "greater", "at least", "or higher")
-    le_tokens = ("<=", "le", "below", "under", "less", "at most", "or lower")
+    # Check rules text (medium confidence) — word-boundary regex (T1)
+    rules = str(row.get("rules_text", ""))
 
-    if any(tok in rules for tok in ge_tokens):
+    if _ABOVE_PATTERN.search(rules):
         return DirectionResult(direction="ge", source="rules_text", confidence="medium")
-    if any(tok in rules for tok in le_tokens):
+    if _BELOW_PATTERN.search(rules):
         return DirectionResult(direction="le", source="rules_text", confidence="medium")
 
-    # Guess from title/subtitle (low confidence)
+    # Guess from title/subtitle (low confidence) — word-boundary regex (T1)
     title_fields = [
-        str(row.get("title", "")).lower(),
-        str(row.get("subtitle", "")).lower(),
+        str(row.get("title", "")),
+        str(row.get("subtitle", "")),
     ]
     text = " ".join(title_fields)
 
-    if any(tok in text for tok in ge_tokens):
+    if _ABOVE_PATTERN.search(text):
         return DirectionResult(direction="ge", source="guess", confidence="low")
-    if any(tok in text for tok in le_tokens):
+    if _BELOW_PATTERN.search(text):
         return DirectionResult(direction="le", source="guess", confidence="low")
 
     return DirectionResult(direction=None, source="guess", confidence="low")
@@ -718,8 +725,13 @@ def build_distribution_snapshot(
             tail_right_missing = int(right_id not in observed_ids)
         moment_truncated = int(tail_left_missing or tail_right_missing)
 
-    mean, var, skew = _moments(support, mass)
-    entropy = _entropy(mass)
+    # T6: Skip moment computation when threshold direction is unresolved
+    if not direction_known and not has_bins:
+        mean, var, skew = np.nan, np.nan, np.nan
+        entropy = np.nan
+    else:
+        mean, var, skew = _moments(support, mass)
+        entropy = _entropy(mass)
 
     thresholds = _tail_thresholds(event_type=event_type, config=cfg, support=support)
     if has_bins:
@@ -753,14 +765,23 @@ def build_distribution_snapshot(
     )
 
     quality_low = 0
+    quality_flags: List[str] = []
     if quality_dims.coverage_ratio < 0.5:
         quality_low = 1
+        quality_flags.append("low_coverage")
     if np.isfinite(quality_dims.median_quote_age_seconds) and quality_dims.median_quote_age_seconds > stale_minutes * 60.0:
         quality_low = 1
+        quality_flags.append("stale_quotes")
     if n_live < int(cfg.min_contracts):
         quality_low = 1
+        quality_flags.append("insufficient_contracts")
     if not direction_known and not has_bins:
         quality_low = 1
+        quality_flags.append("unresolved_direction")
+    # T8: Enforce bin validation in quality gating
+    if not bin_validation.valid:
+        quality_low = 1
+        quality_flags.append("invalid_bin_structure")
 
     # Resolve direction confidence (B1)
     if not has_bins and len(m) > 0:
@@ -791,6 +812,7 @@ def build_distribution_snapshot(
         "mass_missing_estimate": mass_missing_estimate,
         "moment_truncated": int(moment_truncated),
         # B1: Direction confidence metadata
+        "direction_resolved": direction_known or has_bins,  # T6
         "direction_source": dir_result.source,
         "direction_confidence": dir_result.confidence,
         # B2: Bin validity metadata
@@ -811,6 +833,7 @@ def build_distribution_snapshot(
         "isotonic_l1": float(isotonic_l1),
         "isotonic_l2": float(isotonic_l2),
         "quality_low": int(quality_low),
+        "quality_flags": quality_flags,  # T8
         "_support": support.tolist(),
         "_mass": mass.tolist(),
     }

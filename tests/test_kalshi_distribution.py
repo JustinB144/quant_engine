@@ -54,6 +54,7 @@ class KalshiDistributionTests(unittest.TestCase):
                 "contract_id": ["T1", "T2", "T3"],
                 "market_id": ["M2", "M2", "M2"],
                 "threshold_value": [2.0, 3.0, 4.0],
+                "direction": ["ge", "ge", "ge"],  # T6: direction must be resolved for moments
             },
         )
         quotes = pd.DataFrame(

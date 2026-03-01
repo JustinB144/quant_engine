@@ -205,12 +205,14 @@ def evaluate_event_contract_metrics(
     pos = pos[np.isfinite(pos)]
     turnover_proxy = float(np.nanmean(np.abs(np.diff(pos)))) if pos.size > 1 else 0.0
 
+    # T4: Deduplicate by timestamp to count unique events, not multi-horizon traces
     rel_ts = pd.to_datetime(pd.Series(result.release_timestamps), utc=True, errors="coerce").dropna()
-    if len(rel_ts) > 1:
-        span_days = max(1.0, float((rel_ts.max() - rel_ts.min()).total_seconds() / 86400.0))
-        events_per_day = float(len(rel_ts) / span_days)
+    unique_rel_ts = rel_ts.drop_duplicates()
+    if len(unique_rel_ts) > 1:
+        span_days = max(1.0, float((unique_rel_ts.max() - unique_rel_ts.min()).total_seconds() / 86400.0))
+        events_per_day = float(len(unique_rel_ts) / span_days)
     else:
-        events_per_day = float(len(ret))
+        events_per_day = float(len(unique_rel_ts)) if len(unique_rel_ts) > 0 else 1.0
 
     cap_util = float(events_per_day / max(float(max_events_per_day), 1e-6))
     capacity_constrained = bool(cap_util > 1.0 or turnover_proxy > 1.5)
