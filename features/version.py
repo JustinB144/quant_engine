@@ -14,23 +14,23 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(frozen=True)
 class FeatureVersion:
     """Immutable snapshot of a feature pipeline configuration."""
 
-    feature_names: List[str]
+    feature_names: Tuple[str, ...]
     parameters: Dict[str, Any] = field(default_factory=dict)
     created_at: str = ""
 
-    def __post_init__(self):
-        self.feature_names = sorted(self.feature_names)
+    def __post_init__(self) -> None:
+        object.__setattr__(self, 'feature_names', tuple(sorted(self.feature_names)))
         if not self.created_at:
-            self.created_at = datetime.now(timezone.utc).isoformat()
+            object.__setattr__(self, 'created_at', datetime.now(timezone.utc).isoformat())
 
     @property
     def n_features(self) -> int:
@@ -39,7 +39,7 @@ class FeatureVersion:
     def compute_hash(self) -> str:
         """Compute a deterministic hash of the feature definition."""
         data = {
-            "features": self.feature_names,
+            "features": list(self.feature_names),
             "params": self.parameters,
         }
         json_str = json.dumps(data, sort_keys=True)
@@ -47,7 +47,7 @@ class FeatureVersion:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "feature_names": self.feature_names,
+            "feature_names": list(self.feature_names),
             "n_features": self.n_features,
             "version_hash": self.compute_hash(),
             "parameters": self.parameters,
@@ -72,6 +72,35 @@ class FeatureVersion:
     def is_compatible(self, other: FeatureVersion) -> bool:
         """Check if two versions have identical feature sets (ignoring params)."""
         return set(self.feature_names) == set(other.feature_names)
+
+    def check_compatibility(self, other: FeatureVersion) -> Dict[str, Any]:
+        """Check compatibility, reporting missing and extra features.
+
+        Parameters
+        ----------
+        other : FeatureVersion
+            The reference version (e.g. what the model expects).
+
+        Returns
+        -------
+        dict with keys: compatible, missing_features, extra_features, drift_warning
+        """
+        missing = sorted(set(other.feature_names) - set(self.feature_names))
+        extra = sorted(set(self.feature_names) - set(other.feature_names))
+        compatible = len(missing) == 0
+        drift_warning = len(extra) > 0
+        if drift_warning and compatible:
+            logger.warning(
+                "Feature drift detected: %d extra features not expected by model: %s",
+                len(extra),
+                extra[:10],
+            )
+        return {
+            "compatible": compatible,
+            "missing_features": missing,
+            "extra_features": extra,
+            "drift_warning": drift_warning,
+        }
 
 
 class FeatureRegistry:
@@ -140,12 +169,22 @@ class FeatureRegistry:
 
         missing = sorted(model_feats - current_feats)  # model expects but not available
         extra = sorted(current_feats - model_feats)  # available but model doesn't use
+        compatible = len(missing) == 0
+        drift_warning = len(extra) > 0
+
+        if drift_warning and compatible:
+            logger.warning(
+                "Feature drift detected: %d extra features not expected by model: %s",
+                len(extra),
+                extra[:10],
+            )
 
         return {
-            "compatible": len(missing) == 0,
+            "compatible": compatible,
             "reason": "" if not missing else f"Missing {len(missing)} features model expects",
             "missing": missing,
             "extra": extra,
+            "drift_warning": drift_warning,
             "model_n_features": len(model_feats),
             "current_n_features": len(current_feats),
         }

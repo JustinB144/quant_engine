@@ -629,7 +629,7 @@ def compute_cross_asset_research_factors(
                 "NetMom_GraphDensity": graph_density[:, i],
                 "VolSpillover_In": vol_in[:, i],
                 "VolSpillover_Out": vol_out[:, i],
-                "VolSpillover_Net": vol_out[:, i] - recv_cent[:, i],
+                "VolSpillover_Net": vol_out[:, i] - vol_in[:, i],
             },
             index=dates,
         )
@@ -670,11 +670,12 @@ def _dtw_distance_numpy(x: np.ndarray, y: np.ndarray) -> tuple:
     path: list = []
     i, j = n, m
     while i > 0 or j > 0:
-        path.append((i - 1, j - 1))
         if i == 0:
             j -= 1
+            path.append((i, j))
         elif j == 0:
             i -= 1
+            path.append((i, j))
         else:
             candidates = [D[i - 1, j - 1], D[i - 1, j], D[i, j - 1]]
             argmin = int(np.argmin(candidates))
@@ -685,6 +686,8 @@ def _dtw_distance_numpy(x: np.ndarray, y: np.ndarray) -> tuple:
                 i -= 1
             else:
                 j -= 1
+            path.append((i, j))
+    assert all(pi >= 0 and pj >= 0 for pi, pj in path), "Negative indices in DTW path"
     path.reverse()
     return float(np.sqrt(D[n, m])), path
 

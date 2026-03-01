@@ -232,8 +232,28 @@ class MacroFeatureProvider:
             raw = pd.to_numeric(raw, errors="coerce")
             raw.index = pd.to_datetime(raw.index)
 
-            # Reindex to business days and forward-fill (weekly/monthly data)
-            aligned = raw.reindex(date_range).ffill(limit=5)
+            # Reindex to business days and forward-fill with frequency-aware limits
+            if freq_hint == "monthly":
+                ffill_limit = 25  # ~one month of business days + buffer
+            elif freq_hint == "weekly":
+                ffill_limit = 7
+            else:
+                ffill_limit = 5
+            aligned = raw.reindex(date_range).ffill(limit=ffill_limit)
+
+            # Staleness warning: flag if data hasn't updated in >1.5x expected freq
+            if not raw.empty:
+                expected_gap_days = {"monthly": 25, "weekly": 7, "daily": 2}.get(freq_hint, 5)
+                last_obs = raw.index.max()
+                last_date = date_range.max()
+                gap_days = (last_date - last_obs).days if last_obs < last_date else 0
+                if gap_days > expected_gap_days * 1.5:
+                    logger.warning(
+                        "Stale macro data for %s (%s): last observation %s, "
+                        "expected update within %d days but gap is %d days",
+                        series_id, col_name, last_obs.date(),
+                        expected_gap_days, gap_days,
+                    )
 
             # Level
             result[col_name] = aligned
