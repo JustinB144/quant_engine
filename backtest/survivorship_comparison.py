@@ -123,22 +123,27 @@ def compare_survivorship_impact(
 
 
 def quick_survivorship_check(
-    predictions: pd.DataFrame,
+    predictions: Optional[pd.DataFrame],
     price_data_full: Dict[str, pd.DataFrame],
     price_data_survivors: Dict[str, pd.DataFrame],
 ) -> Dict:
     """Quick survivorship bias check without running a full backtest.
 
     Compares prediction coverage and data completeness between the two
-    universes as a proxy for survivorship bias magnitude.
+    universes as a proxy for survivorship bias magnitude.  When
+    ``predictions`` is provided, also checks that the prediction universe
+    covers the same tickers as the price data and flags any gaps.
 
     Args:
-        predictions: Prediction DataFrame with ticker/permno column.
+        predictions: Prediction DataFrame with ticker/permno columns or
+            index.  May be ``None`` to skip prediction coverage analysis.
         price_data_full: {ticker: OHLCV} including delisted securities.
         price_data_survivors: {ticker: OHLCV} only surviving securities.
 
     Returns:
-        Dict with universe coverage comparison.
+        Dict with universe coverage comparison and, when predictions are
+        provided, a ``prediction_coverage_gap`` field listing tickers
+        present in the full price universe but missing from predictions.
     """
     full_tickers = set(price_data_full.keys())
     surv_tickers = set(price_data_survivors.keys())
@@ -148,7 +153,7 @@ def quick_survivorship_check(
     full_bars = sum(len(df) for df in price_data_full.values())
     surv_bars = sum(len(df) for df in price_data_survivors.values())
 
-    return {
+    result: Dict = {
         "full_universe_tickers": len(full_tickers),
         "survivors_only_tickers": len(surv_tickers),
         "dropped_tickers": len(dropped),
@@ -162,3 +167,20 @@ def quick_survivorship_check(
             else "LOW"
         ),
     }
+
+    # Prediction coverage check: flag tickers in prices but missing from
+    # predictions (potential survivorship bias in prediction model).
+    if predictions is not None:
+        pred_tickers: set = set()
+        if hasattr(predictions, 'columns'):
+            pred_tickers = set(predictions.columns)
+        if hasattr(predictions, 'index'):
+            if isinstance(predictions.index, pd.MultiIndex):
+                pred_tickers |= set(predictions.index.get_level_values(0).unique())
+            else:
+                pred_tickers |= set(predictions.index)
+        price_tickers = set(price_data_full.keys())
+        missing_in_pred = price_tickers - pred_tickers
+        result["prediction_coverage_gap"] = sorted(missing_in_pred)
+
+    return result

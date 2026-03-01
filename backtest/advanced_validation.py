@@ -47,6 +47,7 @@ class DeflatedSharpeResult:
     n_trials: int               # Number of strategy variants tested
     p_value: float              # Probability of observing this Sharpe by chance
     is_significant: bool        # p < 0.05
+    deflated_sharpe_valid: bool = True  # False when deflated_sharpe is NaN
 
 
 @dataclass
@@ -57,6 +58,7 @@ class PBOResult:
     degradation_rate: float     # Fraction of OOS results worse than median
     logits: List[float]         # Per-combination logit values
     is_overfit: bool            # PBO > 0.5
+    pbo_valid: bool = True      # False when pbo is NaN (insufficient data)
 
 
 @dataclass
@@ -144,11 +146,12 @@ def deflated_sharpe_ratio(
     if observed_sharpe <= 0:
         return DeflatedSharpeResult(
             observed_sharpe=observed_sharpe,
-            deflated_sharpe=-999.0,
+            deflated_sharpe=float('nan'),
             expected_max_sharpe=0.0,
             n_trials=n_trials,
             p_value=1.0,
             is_significant=False,
+            deflated_sharpe_valid=False,
         )
 
     # Expected maximum Sharpe under null (Euler-Mascheroni approximation)
@@ -212,16 +215,16 @@ def probability_of_backtest_overfitting(
     n_obs = returns_matrix.shape[0]
 
     if n_strategies < 2:
-        return PBOResult(pbo=0, n_combinations=0, degradation_rate=0,
-                        logits=[], is_overfit=False)
+        return PBOResult(pbo=float('nan'), n_combinations=0, degradation_rate=0,
+                        logits=[], is_overfit=False, pbo_valid=False)
 
     # Ensure even number of partitions
     n_partitions = n_partitions if n_partitions % 2 == 0 else n_partitions + 1
     partition_size = n_obs // n_partitions
 
     if partition_size < 10:
-        return PBOResult(pbo=0.5, n_combinations=0, degradation_rate=0.5,
-                        logits=[], is_overfit=True)
+        return PBOResult(pbo=float('nan'), n_combinations=0, degradation_rate=0.5,
+                        logits=[], is_overfit=True, pbo_valid=False)
 
     # Partition data
     partitions = []
@@ -430,8 +433,12 @@ def _compute_capacity_metrics(
     n_trades = len(trades)
     trades_per_day = n_trades / max(1, n_trading_days)
 
-    # Average position size in dollars
-    avg_size = trades[0].position_size if hasattr(trades[0], 'position_size') else 0.05
+    # Median position size in dollars (robust to outliers and varying sizes)
+    sizes = [
+        t.position_size for t in trades
+        if hasattr(t, 'position_size') and t.position_size > 0
+    ]
+    avg_size = float(np.median(sizes)) if sizes else 0.05
     position_usd = capital_usd * avg_size
 
     # Participation rate: our daily order flow / market volume
@@ -456,6 +463,9 @@ def _compute_capacity_metrics(
         "market_impact_bps": float(market_impact),
         "trades_per_day": float(trades_per_day),
         "capacity_constrained": participation_rate > max_participation_rate,
+        "median_position_size": float(avg_size),
+        "p75_position_size": float(np.percentile(sizes, 75)) if sizes else 0.05,
+        "max_position_size": float(np.max(sizes)) if sizes else 0.05,
     }
 
 
@@ -604,7 +614,10 @@ def run_advanced_validation(
     parts.append(f"DSR p={dsr.p_value:.3f} ({'PASS' if dsr.is_significant else 'FAIL'})")
     parts.append(f"MC p={mc.p_value:.3f} ({'PASS' if mc.is_significant else 'FAIL'})")
     if pbo_result:
-        parts.append(f"PBO={pbo_result.pbo:.1%} ({'PASS' if not pbo_result.is_overfit else 'FAIL'})")
+        if pbo_result.pbo_valid:
+            parts.append(f"PBO={pbo_result.pbo:.1%} ({'PASS' if not pbo_result.is_overfit else 'FAIL'})")
+        else:
+            parts.append("PBO=N/A (insufficient data)")
     if cap:
         parts.append(f"Capacity=${cap.estimated_capacity_usd:,.0f}")
     summary = " | ".join(parts)
@@ -633,7 +646,10 @@ def _print_report(report: AdvancedValidationReport):
     dsr = report.deflated_sharpe
     print(f"\n  Deflated Sharpe Ratio (Bailey & Lopez de Prado 2014):")
     print(f"    Observed Sharpe: {dsr.observed_sharpe:.2f}")
-    print(f"    Deflated Sharpe: {dsr.deflated_sharpe:.2f}")
+    if dsr.deflated_sharpe_valid:
+        print(f"    Deflated Sharpe: {dsr.deflated_sharpe:.2f}")
+    else:
+        print(f"    Deflated Sharpe: N/A (negative observed Sharpe)")
     print(f"    Expected max (null): {dsr.expected_max_sharpe:.2f} (from {dsr.n_trials} trials)")
     print(f"    p-value: {dsr.p_value:.4f}")
     print(f"    Significant: {dsr.is_significant}")
@@ -649,7 +665,10 @@ def _print_report(report: AdvancedValidationReport):
     if report.pbo is not None:
         pbo = report.pbo
         print(f"\n  Probability of Backtest Overfitting:")
-        print(f"    PBO: {pbo.pbo:.1%}")
+        if pbo.pbo_valid:
+            print(f"    PBO: {pbo.pbo:.1%}")
+        else:
+            print(f"    PBO: N/A (insufficient data)")
         print(f"    Combinations tested: {pbo.n_combinations}")
         print(f"    Degradation rate: {pbo.degradation_rate:.1%}")
         print(f"    Overfit: {pbo.is_overfit}")

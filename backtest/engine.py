@@ -144,6 +144,8 @@ class BacktestResult:
     # Truth Layer: null model baselines and cost stress results
     null_baselines: Optional[object] = field(repr=False, default=None)
     cost_stress_result: Optional[object] = field(repr=False, default=None)
+    # Backtest configuration metadata (e.g. stop-loss bar model assumption)
+    backtest_metadata: Dict = field(default_factory=dict)
 
     def summarize_vs_null(self) -> Dict[str, float]:
         """Compare strategy Sharpe/return vs null baselines.
@@ -196,8 +198,19 @@ class Backtester:
         max_participation_rate: float = EXEC_MAX_PARTICIPATION,
         impact_coefficient_bps: float = EXEC_IMPACT_COEFF_BPS,
         min_fill_ratio: float = EXEC_MIN_FILL_RATIO,
+        stop_loss_bar_model: str = "conservative",
     ):
-        """Initialize Backtester."""
+        """Initialize Backtester.
+
+        Parameters
+        ----------
+        stop_loss_bar_model : str
+            How intrabar OHLC is used for stop-loss evaluation.
+            ``"conservative"`` (default): worst-case ordering — use Low for
+            long stop checks (assumes Low may occur before Close).
+            ``"close_only"``: evaluate stop only against the bar Close.
+            ``"ohlc_sequential"``: assume Open→High→Low→Close ordering.
+        """
         # Truth Layer: validate execution contract preconditions
         from ..validation.preconditions import enforce_preconditions
         enforce_preconditions()
@@ -211,6 +224,12 @@ class Backtester:
         self.slippage_pct = slippage_pct
         self.use_risk = use_risk_management
         self.assumed_capital_usd = float(assumed_capital_usd)
+        if stop_loss_bar_model not in ("conservative", "close_only", "ohlc_sequential"):
+            raise ValueError(
+                f"Invalid stop_loss_bar_model: {stop_loss_bar_model!r}. "
+                "Must be 'conservative', 'close_only', or 'ohlc_sequential'."
+            )
+        self.stop_loss_bar_model = stop_loss_bar_model
         self.execution_model = ExecutionModel(
             spread_bps=spread_bps,
             max_participation_rate=max_participation_rate,
@@ -860,6 +879,7 @@ class Backtester:
         # once, so the execution simulator can condition costs on structural
         # state without per-bar regime re-detection overhead.
         self._shock_vectors = {}
+        self._shock_failures: List[str] = []
         tickers = predictions.index.get_level_values(0).unique()
 
         if EXEC_STRUCTURAL_STRESS_ENABLED:
@@ -890,10 +910,11 @@ class Backtester:
                     )
                     for dt, sv in shock_vecs.items():
                         self._shock_vectors[(str(ticker), dt)] = sv
-                except Exception as e:
+                except (ValueError, RuntimeError, KeyError) as exc:
                     logger.warning(
-                        "Shock vector computation failed for %s: %s", ticker, e,
+                        "Shock vector computation failed for %s: %s", ticker, exc,
                     )
+                    self._shock_failures.append(str(ticker))
 
         # Collect all candidate signals across tickers
         all_signals = []
@@ -1314,10 +1335,24 @@ class Backtester:
                     continue
 
                 dt_idx = ohlcv.index.get_loc(dt)
-                current_price = float(ohlcv["Close"].iloc[dt_idx])
+                bar_close = float(ohlcv["Close"].iloc[dt_idx])
                 current_high = float(ohlcv["High"].iloc[dt_idx])
+                current_low = float(ohlcv["Low"].iloc[dt_idx])
                 pos["highest_price"] = max(pos["highest_price"], current_high)
                 pos["bars_held"] += 1
+
+                # Select stop-evaluation price based on bar model.
+                # "conservative": worst-case — Low triggers long stops.
+                # "close_only": only Close is used for evaluation.
+                # "ohlc_sequential": Open→High→Low→Close approximation
+                #   (Low triggers stops; if not triggered, Close is used
+                #   for unrealized PnL).
+                if self.stop_loss_bar_model == "conservative":
+                    current_price = current_low
+                elif self.stop_loss_bar_model == "ohlc_sequential":
+                    current_price = current_low
+                else:  # close_only
+                    current_price = bar_close
 
                 # Compute current ATR
                 lookback_start = max(0, dt_idx - 14)
@@ -2060,7 +2095,35 @@ class Backtester:
             annualized_turnover=float(ann_turnover),
             avg_daily_turnover=float(avg_daily_turnover),
             turnover_history=turnover_history,
+            backtest_metadata={
+                "stop_loss_bar_model": self.stop_loss_bar_model,
+                "shock_failures": getattr(self, '_shock_failures', []),
+            },
         )
+
+        # ── Truth Layer: null model baselines ──
+        try:
+            from .null_models import compute_null_baselines
+            result.null_baselines = compute_null_baselines(price_data)
+        except Exception as exc:
+            logger.warning("Null baseline computation failed: %s", exc)
+
+        # ── Truth Layer: cost stress test ──
+        try:
+            from .cost_stress import CostStressTester
+            gross_returns = np.array([t.actual_return for t in trades], dtype=float)
+            base_cost_bps = self.tx_cost * 10_000 if self.tx_cost > 0 else TRANSACTION_COST_BPS
+            tester = CostStressTester(
+                base_cost_bps=float(base_cost_bps),
+                multipliers=[1.0, 1.5, 2.0],
+            )
+            result.cost_stress_result = tester.run_sweep(
+                gross_returns=gross_returns,
+                cost_per_trade_bps=float(base_cost_bps),
+                n_trades=len(trades),
+            )
+        except Exception as exc:
+            logger.warning("Cost stress computation failed: %s", exc)
 
         if verbose:
             self._print_result(result)

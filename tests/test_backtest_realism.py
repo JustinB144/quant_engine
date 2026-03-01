@@ -313,7 +313,8 @@ class TestNegativeSharpeFailsDSR(unittest.TestCase):
     """T5: Negative Sharpe strategies always fail DSR."""
 
     def test_negative_sharpe_rejected(self):
-        """Negative Sharpe -> DSR p=1.0, is_significant=False."""
+        """Negative Sharpe -> DSR p=1.0, is_significant=False, deflated_sharpe=NaN."""
+        import math
         result = deflated_sharpe_ratio(
             observed_sharpe=-0.5,
             n_trials=10,
@@ -321,7 +322,8 @@ class TestNegativeSharpeFailsDSR(unittest.TestCase):
         )
         self.assertFalse(result.is_significant)
         self.assertEqual(result.p_value, 1.0)
-        self.assertEqual(result.deflated_sharpe, -999.0)
+        self.assertTrue(math.isnan(result.deflated_sharpe))
+        self.assertFalse(result.deflated_sharpe_valid)
 
     def test_zero_sharpe_rejected(self):
         """Zero Sharpe -> DSR p=1.0, is_significant=False."""

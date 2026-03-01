@@ -422,6 +422,18 @@ class CostCalibrator:
                 "pct_overestimated": float(np.mean(arr > 0)),
             }
 
+        # Aggregate across all segments
+        all_surprises = [s for bucket in segment_buckets.values() for s in bucket]
+        if all_surprises:
+            all_arr = np.array(all_surprises, dtype=float)
+            results["_all"] = {
+                "count": len(all_surprises),
+                "mean_surprise_bps": float(np.mean(all_arr)),
+                "median_surprise_bps": float(np.median(all_arr)),
+                "std_surprise_bps": float(np.std(all_arr)) if len(all_arr) > 1 else 0.0,
+                "pct_overestimated": float(np.mean(all_arr > 0)),
+            }
+
         return results
 
     def run_feedback_recalibration(
