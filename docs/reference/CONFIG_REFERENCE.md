@@ -133,8 +133,9 @@ Notes:
 
 | Constant | Value (source) | Status | Notes | Line |
 |---|---|---|---|---|
-| `INTRADAY_TIMEFRAMES` | `["4h", "1h", "30m", "15m", "5m", "1m"]` | `PLACEHOLDER` | defined but never imported | 163 |
-| `INTRADAY_CACHE_SOURCE` | `"ibkr"` | `PLACEHOLDER` | defined but never imported | 164 |
+| `INTRADAY_TIMEFRAMES` | `["4h", "1h", "30m", "15m", "5m", "1m"]` | `ACTIVE` | run_wrds_taq_intraday_download.py; all supported intraday bar sizes | 177 |
+| `INTRADAY_CACHE_SOURCE` | `"wrds_taq"` | `ACTIVE` | run_wrds_taq_intraday_download.py; NYSE TAQ Daily Product source | 178 |
+| `TAQ_START_DATE` | `"2003-09-10"` | `ACTIVE` | run_wrds_taq_intraday_download.py; earliest NYSE TAQ Daily Product date | 179 |
 | `INTRADAY_MIN_BARS` | `100` | `ACTIVE` | features/pipeline.py; minimum intraday bars for feature computation | 165 |
 | `MARKET_OPEN` | `"09:30"` | `ACTIVE` | features/intraday.py; US equity regular-session open (ET) | 166 |
 | `MARKET_CLOSE` | `"16:00"` | `ACTIVE` | features/intraday.py; US equity regular-session close (ET) | 167 |

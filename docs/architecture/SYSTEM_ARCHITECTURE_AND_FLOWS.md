@@ -25,7 +25,7 @@ flowchart TD
 
 ## Core Layers (Source-Verified)
 
-- `data/`: provider abstraction, cache IO, WRDS/IBKR/Alpaca-adjacent ingestion helpers, quality checks, survivorship controls, intraday quality/quarantine, cross-source validation.
+- `data/`: provider abstraction, cache IO, WRDS/IBKR/Alpaca-adjacent ingestion helpers, quality checks, survivorship controls, intraday quality/quarantine, cross-source validation. NYSE TAQ Daily Product intraday OHLCV download via `run_wrds_taq_intraday_download.py` (2003-present, all 128 UNIVERSE_INTRADAY tickers, 6 timeframes).
 - `features/`: feature/target computation pipeline plus macro/options/intraday/research factors.
 - `regime/`: rule/HMM/jump/correlation regime detection and regime feature outputs.
 - `models/`: training, prediction, versioning, governance, IV models, retrain triggers.

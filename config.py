@@ -65,6 +65,7 @@ TRUTH_LAYER_ENFORCE_CAUSALITY = True              # STATUS: ACTIVE — enforce f
 PREDICTION_MODE = "daily"                         # STATUS: ACTIVE — "daily" or "intraday"; controls END_OF_DAY feature gating
 TRUTH_LAYER_COMPUTE_NULL_BASELINES = False        # STATUS: ACTIVE — compute null baselines per backtest (adds ~4x time)
 TRUTH_LAYER_COST_STRESS_ENABLED = _cfg.cost_stress.enabled  # STATUS: ACTIVE — run cost stress sweep per backtest (adds ~4x time)
+VALIDATION_FDR_FLOOR_ENABLED = False              # STATUS: DEPRECATED — old behavior applied 0.001 floor when BH rejected everything
 
 # ── Cost Stress Testing ──────────────────────────────────────────────
 COST_STRESS_MULTIPLIERS = list(_cfg.cost_stress.multipliers)  # STATUS: ACTIVE — cost sweep factors
@@ -174,8 +175,9 @@ LOOKBACK_YEARS = _cfg.data.lookback_years         # STATUS: ACTIVE — data/load
 MIN_BARS = _cfg.data.min_bars                     # STATUS: ACTIVE — data/loader.py; minimum bars needed for feature warm-up
 
 # ── Intraday Data ─────────────────────────────────────────────────
-INTRADAY_TIMEFRAMES = ["4h", "1h", "30m", "15m", "5m", "1m"]  # STATUS: PLACEHOLDER — defined but never imported
-INTRADAY_CACHE_SOURCE = "ibkr"                    # STATUS: PLACEHOLDER — defined but never imported
+INTRADAY_TIMEFRAMES = ["4h", "1h", "30m", "15m", "5m", "1m"]  # STATUS: ACTIVE — run_wrds_taq_intraday_download.py; all supported intraday bar sizes
+INTRADAY_CACHE_SOURCE = "wrds_taq"                # STATUS: ACTIVE — run_wrds_taq_intraday_download.py; NYSE TAQ Daily Product source
+TAQ_START_DATE = "2003-09-10"                     # STATUS: ACTIVE — run_wrds_taq_intraday_download.py; earliest NYSE TAQ Daily Product date
 INTRADAY_MIN_BARS = 100                           # STATUS: ACTIVE — features/pipeline.py; minimum intraday bars for feature computation
 MARKET_OPEN = "09:30"                             # STATUS: ACTIVE — features/intraday.py; US equity regular-session open (ET)
 MARKET_CLOSE = "16:00"                            # STATUS: ACTIVE — features/intraday.py; US equity regular-session close (ET)
@@ -255,7 +257,7 @@ REGIME_JUMP_LAMBDA_STEPS = 20                     # STATUS: ACTIVE — regime/ju
 REGIME_JUMP_MAX_ITER = 50                         # STATUS: ACTIVE — regime/jump_model_pypi.py; coordinate descent iterations
 REGIME_JUMP_TOL = 1e-6                            # STATUS: ACTIVE — regime/jump_model_pypi.py; convergence tolerance
 REGIME_JUMP_USE_CONTINUOUS = True                  # STATUS: ACTIVE — regime/jump_model_pypi.py; continuous JM for soft probabilities
-REGIME_JUMP_MODE_LOSS_WEIGHT = 0.1                # STATUS: ACTIVE — regime/jump_model_pypi.py; mode loss penalty (continuous JM)
+REGIME_JUMP_MODE_LOSS_WEIGHT = 0.1                # STATUS: DEPRECATED — PyPI JumpModel only supports bool toggle, not float weight
 
 # ── Regime Detection Upgrade (SPEC_10) ────────────────────────────────
 # Confidence-weighted ensemble voting

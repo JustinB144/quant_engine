@@ -731,6 +731,9 @@ key_files:
   - path: run_wrds_daily_refresh.py
     role: Daily WRDS data refresh and cache update
     lines: 915
+  - path: run_wrds_taq_intraday_download.py
+    role: NYSE TAQ Daily Product intraday OHLCV download (2003-present, 128 tickers, 6 timeframes)
+    lines: 680
   - path: run_rehydrate_cache_metadata.py
     role: Cache metadata repair utility
     lines: 102

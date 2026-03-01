@@ -1064,6 +1064,71 @@ class WRDSProvider:
         return df.set_index(['fdate', 'ticker']).sort_index()
 
     # ─────────────────────────────────────────────────────────────────────────
+    # TAQ Daily Product — historical tick data (2003-09-10 to present)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # Earliest date NYSE TAQ Daily Product tables are available.
+    TAQ_FLOOR_DATE = '2003-09-10'
+
+    def get_taq_daily_ticks_batch(
+        self,
+        trade_date: str,
+        tickers: List[str],
+        schema: str,
+        prefix: str,
+        col_map: Dict[str, str],
+    ) -> pd.DataFrame:
+        """Fetch raw ticks for ALL tickers from one TAQ Daily Product date table.
+
+        Issues a single SQL query to the date-partitioned TAQ table for all
+        tickers at once, returning raw trade prints (symbol, time, price, size).
+
+        Parameters
+        ----------
+        trade_date : str
+            Date in YYYYMMDD format (e.g. '20100104').
+        tickers : list of str
+            Ticker symbols to fetch.
+        schema : str
+            TAQ schema name (e.g. 'taqm_ct').
+        prefix : str
+            Table prefix (e.g. 'ct').
+        col_map : dict
+            Column name mapping with keys: 'sym', 'time', 'price', 'size', 'corr'.
+
+        Returns
+        -------
+        pd.DataFrame
+            Raw tick data with columns matching col_map values, or empty DataFrame.
+        """
+        if self._db is None:
+            return pd.DataFrame()
+
+        ticker_list = _sanitize_ticker_list(tickers)
+        table = f"{schema}.{prefix}_{trade_date}"
+
+        sym_col = col_map['sym']
+        time_col = col_map['time']
+        price_col = col_map['price']
+        size_col = col_map['size']
+        corr_col = col_map['corr']
+
+        sql = (
+            f"SELECT {sym_col}, {time_col}, {price_col}, {size_col} "
+            f"FROM {table} "
+            f"WHERE {sym_col} IN ({ticker_list}) "
+            f"  AND {corr_col} = '00' "
+            f"  AND {price_col} > 0 "
+            f"  AND {size_col} > 0"
+        )
+
+        try:
+            df = self._query(sql)
+            return df
+        except (OSError, ValueError, RuntimeError):
+            return pd.DataFrame()
+
+    # ─────────────────────────────────────────────────────────────────────────
     # TAQmsec Intraday OHLCV — tick data aggregated to minute bars
     # ─────────────────────────────────────────────────────────────────────────
 

@@ -97,7 +97,7 @@ class DataConfig:
     min_bars: int = 500
     cache_max_staleness_days: int = 21
     cache_trusted_sources: List[str] = field(
-        default_factory=lambda: ["wrds", "wrds_delisting", "ibkr"]
+        default_factory=lambda: ["wrds", "wrds_delisting", "ibkr", "wrds_taq"]
     )
     max_missing_bar_fraction: float = 0.05
     max_zero_volume_fraction: float = 0.25
