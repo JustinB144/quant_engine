@@ -5,7 +5,7 @@
 
 **Estimated effort**: 1 LLM session, ~30 minutes
 **Input required**: SUBSYSTEM_MAP.json (Job 5) + DEPENDENCY_EDGES.json (Job 2) + INTERFACE_CONTRACTS.yaml (Job 4)
-**Output**: `SUBSYSTEM_AUDIT_MANIFEST.md` saved to `docs/audit/`
+**Output**: `SUBSYSTEM_AUDIT_MANIFEST.md` saved to `docs/audit/data/`
 **Depends on**: Jobs 2, 4, 5
 **Feeds into**: Job 7 (Verification), and the actual audit work
 

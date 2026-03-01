@@ -14,7 +14,7 @@ This module is part of the Structural State Layer (SPEC_03).
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields as dataclass_fields
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -144,6 +144,15 @@ class ShockVector:
         if isinstance(ts, str):
             d["timestamp"] = datetime.fromisoformat(ts)
         d.pop("transition_matrix", None)
+        # Filter to known fields for forward compatibility (V1 ignores V2+ fields)
+        known = {f.name for f in dataclass_fields(cls)}
+        unknown = set(d.keys()) - known
+        if unknown:
+            logger.debug(
+                "ShockVector.from_dict ignoring unknown keys (possible newer schema): %s",
+                unknown,
+            )
+        d = {k: v for k, v in d.items() if k in known}
         return cls(**d)
 
     def is_shock_event(self, changepoint_threshold: float = 0.50) -> bool:
@@ -300,6 +309,26 @@ class ShockVectorValidator:
                 f"got {sv.ensemble_model_type!r}"
             )
 
+        # Timestamp type check (SPEC_AUDIT_FIX_27 T4)
+        if not isinstance(sv.timestamp, datetime):
+            errors.append(
+                f"timestamp must be datetime, got {type(sv.timestamp).__name__}"
+            )
+
+        # Jump detected type check (SPEC_AUDIT_FIX_27 T4)
+        if not isinstance(sv.jump_detected, bool):
+            errors.append(
+                f"jump_detected must be bool, got {type(sv.jump_detected).__name__}: {sv.jump_detected}"
+            )
+
+        # Jump magnitude type and range check (SPEC_AUDIT_FIX_27 T4)
+        if not isinstance(sv.jump_magnitude, (int, float)):
+            errors.append(
+                f"jump_magnitude must be numeric, got {type(sv.jump_magnitude).__name__}"
+            )
+        elif not np.isfinite(sv.jump_magnitude):
+            errors.append(f"jump_magnitude must be finite, got {sv.jump_magnitude}")
+
         return len(errors) == 0, errors
 
     @staticmethod
@@ -327,6 +356,62 @@ class ShockVectorValidator:
         return errors_by_idx
 
 
+# ── Structural Feature Builder (SPEC_AUDIT_FIX_27 T2) ───────────────────
+
+
+# Feature column mapping for structural features extracted from a feature DataFrame.
+_STRUCTURAL_FEATURE_COLS = {
+    "spectral_entropy": "SpectralEntropy_252",
+    "ssa_trend_strength": "SSATrendStr_60",
+    "jump_intensity": "JumpIntensity_20",
+    "eigenvalue_concentration": "EigenConcentration_60",
+}
+
+
+def _build_structural_features(
+    drift_score: float = 0.0,
+    systemic_stress: float = 0.0,
+    features: Optional["pd.DataFrame"] = None,
+    bar_idx: int = -1,
+) -> Dict[str, float]:
+    """Build a unified structural feature dict for a single bar.
+
+    Computes drift_score and systemic_stress from caller-provided values.
+    If a feature DataFrame is provided, also extracts spectral_entropy,
+    ssa_trend_strength, jump_intensity, and eigenvalue_concentration.
+
+    Parameters
+    ----------
+    drift_score : float
+        Trend conviction score in [0, 1].
+    systemic_stress : float
+        Realized vol percentile in [0, 1].
+    features : pd.DataFrame, optional
+        Feature DataFrame for extracting structural feature columns.
+    bar_idx : int
+        Row index into ``features`` for single-bar extraction (default -1 = last bar).
+
+    Returns
+    -------
+    dict[str, float]
+        Structural features with consistent keys across construction paths.
+    """
+    result: Dict[str, float] = {
+        "drift_score": float(drift_score),
+        "systemic_stress": float(systemic_stress),
+    }
+
+    # Feature-derived features (available when feature DataFrame is provided)
+    if features is not None:
+        for key, col in _STRUCTURAL_FEATURE_COLS.items():
+            if col in features.columns:
+                val = features[col].iloc[bar_idx]
+                if np.isfinite(val):
+                    result[key] = float(val)
+
+    return result
+
+
 # ── Batch ShockVector Computation (SPEC-W01) ────────────────────────────
 
 
@@ -341,6 +426,8 @@ def compute_shock_vectors(
     jump_sigma_threshold: float = 2.5,
     vol_lookback: int = 20,
     changepoint_threshold: Optional[float] = None,
+    ensemble_model_type: str = "hmm",
+    features: Optional["pd.DataFrame"] = None,
 ) -> Dict:
     """Compute ShockVectors for every bar in a price series.
 
@@ -375,6 +462,12 @@ def compute_shock_vectors(
     changepoint_threshold : float, optional
         BOCPD changepoint probability threshold for shock event detection.
         If ``None``, defaults to ``BOCPD_CHANGEPOINT_THRESHOLD`` from config.
+    ensemble_model_type : str
+        Model type that produced the regime labels (``"hmm"``, ``"jump"``,
+        ``"ensemble"``, ``"rule"``).  Default ``"hmm"``.
+    features : pd.DataFrame, optional
+        Feature DataFrame aligned to ``ohlcv`` for extracting structural
+        feature columns (spectral_entropy, ssa_trend_strength, etc.).
 
     Returns
     -------
@@ -501,10 +594,12 @@ def compute_shock_vectors(
         idx = ohlcv.index[i]
         ts = idx if hasattr(idx, 'isoformat') else datetime.now()
 
-        structural_features: Dict[str, float] = {
-            "drift_score": float(drift_scores[i]),
-            "systemic_stress": float(systemic_stress[i]),
-        }
+        structural_features = _build_structural_features(
+            drift_score=float(drift_scores[i]),
+            systemic_stress=float(systemic_stress[i]),
+            features=features,
+            bar_idx=i,
+        )
 
         sv = ShockVector(
             schema_version=SHOCK_VECTOR_SCHEMA_VERSION,
@@ -519,7 +614,7 @@ def compute_shock_vectors(
             jump_magnitude=float(jump_magnitudes[i]),
             structural_features=structural_features,
             transition_matrix=None,
-            ensemble_model_type="hmm",
+            ensemble_model_type=ensemble_model_type,
         )
         shock_vectors[idx] = sv
 

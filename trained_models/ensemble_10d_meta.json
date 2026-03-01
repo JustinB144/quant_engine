@@ -78,7 +78,20 @@
       }
     }
   },
-  "train_time_seconds": 2.2936460971832275,
+  "train_time_seconds": 7.09381103515625,
   "total_samples": 1700,
-  "structural_weights_applied": false
+  "structural_weights_applied": false,
+  "artifact_checksums": {
+    "ensemble_10d_regime0_model.pkl": "8b8b41bb9e996d2291fdb2b2162d42af834308da4f72393a2d8675aabcd66e9c",
+    "ensemble_10d_regime0_scaler.pkl": "ad2305136f6ac8eecef8d34bb5a7272ce32e0d65de00ca4724069eb868e34b67",
+    "ensemble_10d_global_scaler.pkl": "ad2305136f6ac8eecef8d34bb5a7272ce32e0d65de00ca4724069eb868e34b67",
+    "ensemble_10d_regime1_model.pkl": "2396e4cb54a1d02b99cc12bb9b7487792fdbc529138f1ba63f15684ebad170f8",
+    "ensemble_10d_regime2_scaler.pkl": "6a922268c66d0fc8a9cbc34d715eafba525770bdb787e3641987feb73a9846c8",
+    "ensemble_10d_regime1_scaler.pkl": "6a922268c66d0fc8a9cbc34d715eafba525770bdb787e3641987feb73a9846c8",
+    "ensemble_10d_regime2_model.pkl": "8bd17d640d697bfd7f875cc2eb10ca9bbd656925be817e0670b8ca93dee84f2f",
+    "ensemble_10d_global_model.pkl": "8b8b41bb9e996d2291fdb2b2162d42af834308da4f72393a2d8675aabcd66e9c",
+    "ensemble_10d_regime3_scaler.pkl": "6a922268c66d0fc8a9cbc34d715eafba525770bdb787e3641987feb73a9846c8",
+    "ensemble_10d_calibrator.pkl": "a6fdb59d5fab03d3dc4ea203ac44bb210f7f3a692d2783006153d76246feaa38",
+    "ensemble_10d_regime3_model.pkl": "b1baa49998993699df49f14659ac0b0220332a9e997c01e0d03cc6f8bc077e67"
+  }
 }

@@ -64,6 +64,13 @@ class OnlineRegimeUpdater:
                 "HMM model must be fitted before creating OnlineRegimeUpdater"
             )
 
+        if hmm_model.n_states != 4:
+            raise ValueError(
+                f"OnlineRegimeUpdater requires exactly 4 HMM states (canonical regime mapping), "
+                f"got {hmm_model.n_states}. Use map_raw_states_to_regimes to convert "
+                f"auto-selected state counts to canonical [0,3] before online updating."
+            )
+
         self.n_states = hmm_model.n_states
         self.transition_matrix = hmm_model.trans_.copy()
         self.log_transition = np.log(np.maximum(self.transition_matrix, 1e-12))

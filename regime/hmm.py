@@ -254,11 +254,26 @@ class GaussianHMM:
 
         return path
 
-    def _smooth_duration(self, states: np.ndarray, probs: np.ndarray) -> np.ndarray:
-        """Merge very short runs into neighboring states (HSMM-like smoothing)."""
+    def _smooth_duration(
+        self,
+        states: np.ndarray,
+        probs: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Merge very short runs into neighboring states (HSMM-like smoothing).
+
+        Updates both states and probabilities to maintain consistency:
+        for bars where smoothing changes the regime label, the probability
+        of the replacement state is boosted and the row is renormalized.
+
+        Returns
+        -------
+        Tuple[np.ndarray, np.ndarray]
+            Smoothed states and updated probabilities.
+        """
         if len(states) == 0 or self.min_duration <= 1:
-            return states
+            return states, probs
         s = states.copy()
+        p = probs.copy()
         n = len(s)
 
         i = 0
@@ -280,13 +295,21 @@ class GaussianHMM:
                     repl = left_state
                 else:
                     # choose side with higher posterior support on this run
-                    left_score = probs[i:j, left_state].mean()
-                    right_score = probs[i:j, right_state].mean()
+                    left_score = p[i:j, left_state].mean()
+                    right_score = p[i:j, right_state].mean()
                     repl = left_state if left_score >= right_score else right_state
 
                 s[i:j] = repl
+                # Update probabilities for smoothed bars to be consistent
+                for row_idx in range(i, j):
+                    original_max = p[row_idx].max()
+                    p[row_idx, :] *= 0.5
+                    p[row_idx, repl] = max(original_max, 0.6)
+                    row_sum = p[row_idx].sum()
+                    if row_sum > 0:
+                        p[row_idx] /= row_sum
             i = j
-        return s
+        return s, p
 
     def fit(self, X: np.ndarray) -> HMMFitResult:
         """Fit the transformer to the provided data."""
@@ -339,7 +362,7 @@ class GaussianHMM:
         self.log_likelihood_ = prev_ll
         probs = self.predict_proba(X)
         raw_states = self.viterbi(X)
-        raw_states = self._smooth_duration(raw_states, probs)
+        raw_states, probs = self._smooth_duration(raw_states, probs)
         return HMMFitResult(
             raw_states=raw_states,
             state_probs=probs,

@@ -36,7 +36,8 @@ async def detailed_health(cache: CacheManager = Depends(get_cache)) -> ApiRespon
     if cached is not None:
         return ApiResponse.from_cached(cached)
     t0 = time.monotonic()
-    svc = HealthService()
+    from ..main import get_health_service_instance
+    svc = get_health_service_instance()
     data = await asyncio.to_thread(svc.get_detailed_health)
     elapsed = (time.monotonic() - t0) * 1000
     cache.set("health:detailed", data)

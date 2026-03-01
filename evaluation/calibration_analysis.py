@@ -71,11 +71,15 @@ def analyze_calibration(
 
     # Determine confidence and outcomes
     if confidence_scores is not None:
-        conf_arr = np.asarray(confidence_scores, dtype=float).ravel()[:min_len]
-        conf_arr = conf_arr[valid]
-
-        if len(conf_arr) != n:
+        conf_arr = np.asarray(confidence_scores, dtype=float).ravel()
+        if len(conf_arr) != min_len:
+            logger.warning(
+                "confidence_scores length %d != predictions %d, using prediction magnitude",
+                len(conf_arr), min_len,
+            )
             conf_arr = np.abs(pred_arr) / (np.abs(pred_arr).max() + 1e-12)
+        else:
+            conf_arr = conf_arr[valid]  # Apply valid mask AFTER length check
 
         # Binary outcome: did the prediction get the direction right?
         outcomes = ((pred_arr > 0) & (ret_arr > 0)) | ((pred_arr <= 0) & (ret_arr <= 0))

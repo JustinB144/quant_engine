@@ -5,7 +5,7 @@
 
 **Estimated effort**: 1 LLM session, ~45 minutes
 **Input required**: All outputs from Jobs 1-6 + full repo access
-**Output**: `VERIFICATION_REPORT.md` saved to `docs/audit/`
+**Output**: `VERIFICATION_REPORT.md` saved to `docs/audit/data/`
 **Depends on**: Jobs 1-6 (all must be complete)
 **Feeds into**: Corrections to any Job output, then the actual subsystem audits
 

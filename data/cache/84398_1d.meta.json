@@ -1,11 +1,11 @@
 {
   "end_date": "2024-12-31",
   "format": "parquet",
-  "n_bars": 3484,
+  "n_bars": 3482,
   "permno": "84398",
-  "saved_at_utc": "2026-02-27T19:30:25.349556+00:00",
+  "saved_at_utc": "2026-03-01T11:32:26.494411+00:00",
   "source": "wrds",
-  "start_date": "2011-02-28",
-  "ticker": "SPY",
+  "start_date": "2011-03-02",
+  "ticker": "84398",
   "years_requested": 15
 }

@@ -5,7 +5,7 @@
 
 **Estimated effort**: 1 LLM session, ~45 minutes
 **Input required**: Full repo access + MODULE_INVENTORY.yaml from Job 1
-**Output**: `DEPENDENCY_EDGES.json` + `DEPENDENCY_MATRIX.md` saved to `docs/audit/`
+**Output**: `DEPENDENCY_EDGES.json` + `DEPENDENCY_MATRIX.md` saved to `docs/audit/data/`
 **Depends on**: Job 1 (Module Inventory)
 **Feeds into**: Job 3 (Hotspot Scoring), Job 4 (Interface Boundaries), Job 5 (Subsystem Clustering)
 

@@ -36,9 +36,8 @@ These may intentionally refer to removed stacks, migration states, or superseded
 
 Examples:
 - `../reports/*`
-- `../specs/*`
+- `../completed/*`
 - `../plans/*`
-- root-level audit/report markdown files
 
 Do not treat them as current runtime truth when they conflict with source.
 

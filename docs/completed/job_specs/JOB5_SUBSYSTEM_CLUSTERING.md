@@ -5,7 +5,7 @@
 
 **Estimated effort**: 1 LLM session, ~45 minutes
 **Input required**: DEPENDENCY_EDGES.json (Job 2) + INTERFACE_CONTRACTS.yaml (Job 4) + HOTSPOT_LIST.md (Job 3)
-**Output**: `SUBSYSTEM_MAP.json` saved to `docs/audit/`
+**Output**: `SUBSYSTEM_MAP.json` saved to `docs/audit/data/`
 **Depends on**: Jobs 2, 3, 4
 **Feeds into**: Job 6 (Audit Ordering), Job 7 (Verification)
 

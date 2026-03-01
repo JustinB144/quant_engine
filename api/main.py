@@ -17,6 +17,46 @@ logger = logging.getLogger(__name__)
 # Background retrain monitor interval (seconds)
 _RETRAIN_CHECK_INTERVAL = 300  # 5 minutes
 
+# Background health scan interval (seconds) — T2 of SPEC_AUDIT_FIX_04
+_HEALTH_SCAN_INTERVAL = 900  # 15 minutes
+
+# Shared HealthService instance for background scans
+_health_service_instance = None
+
+
+async def _health_scan_loop() -> None:
+    """Background task that periodically runs heavy cache scans.
+
+    Runs _check_data_anomalies and _check_market_microstructure every
+    15 minutes so the health endpoint can serve cached results instantly.
+    """
+    global _health_service_instance
+    from .services.health_service import HealthService
+
+    _health_service_instance = HealthService()
+
+    # Run initial scan immediately
+    try:
+        await asyncio.to_thread(_health_service_instance.run_background_scans)
+    except Exception:
+        logger.debug("Initial health scan failed", exc_info=True)
+
+    while True:
+        await asyncio.sleep(_HEALTH_SCAN_INTERVAL)
+        try:
+            await asyncio.to_thread(_health_service_instance.run_background_scans)
+        except Exception:  # noqa: BLE001
+            logger.debug("Background health scan failed", exc_info=True)
+
+
+def get_health_service_instance():
+    """Return the shared HealthService with cached background scan results."""
+    global _health_service_instance
+    if _health_service_instance is None:
+        from .services.health_service import HealthService
+        _health_service_instance = HealthService()
+    return _health_service_instance
+
 
 async def _retrain_monitor_loop() -> None:
     """Background task that periodically checks retrain triggers.
@@ -95,10 +135,14 @@ async def _lifespan(app: FastAPI):
     # Start background retrain monitor
     monitor_task = asyncio.create_task(_retrain_monitor_loop())
 
+    # Start background health scan (SPEC_AUDIT_FIX_04 T2)
+    health_scan_task = asyncio.create_task(_health_scan_loop())
+
     yield
 
     # Cleanup
     monitor_task.cancel()
+    health_scan_task.cancel()
     teardown_log_buffer()
     logger.info("Shutting down quant_engine API")
 

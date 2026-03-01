@@ -5,7 +5,7 @@
 
 **Estimated effort**: 1 LLM session, ~60 minutes (requires reading actual function signatures)
 **Input required**: Full repo access + DEPENDENCY_EDGES.json (Job 2)
-**Output**: `INTERFACE_CONTRACTS.yaml` saved to `docs/audit/`
+**Output**: `INTERFACE_CONTRACTS.yaml` saved to `docs/audit/data/`
 **Depends on**: Job 2 (Dependency Extraction)
 **Feeds into**: Job 5 (Subsystem Clustering), Job 7 (Verification)
 
@@ -195,7 +195,7 @@ For each shared artifact, you MUST read the writer file to determine the actual 
 
 ## OUTPUT FORMAT
 
-Save as `docs/audit/INTERFACE_CONTRACTS.yaml`
+Save as `docs/audit/data/INTERFACE_CONTRACTS.yaml`
 
 The YAML file should contain:
 ```yaml

@@ -370,3 +370,211 @@ class TestRegimeName:
         for regime, name in expected.items():
             sv = ShockVector(hmm_regime=regime)
             assert sv.regime_name() == name
+
+
+# ── SPEC_AUDIT_FIX_27: Forward Compatibility Tests ──────────────────────
+
+
+class TestFromDictForwardCompatibility:
+    """T1: from_dict with unknown keys should succeed (forward compat)."""
+
+    def test_from_dict_ignores_unknown_keys(self):
+        from quant_engine.regime.shock_vector import ShockVector
+
+        d = {
+            "schema_version": "1.0",
+            "timestamp": "2026-02-25T12:00:00",
+            "ticker": "AAPL",
+            "hmm_regime": 2,
+            "hmm_confidence": 0.8,
+            "hmm_uncertainty": 0.2,
+            "bocpd_changepoint_prob": 0.3,
+            "bocpd_runlength": 10,
+            "jump_detected": False,
+            "jump_magnitude": 0.0,
+            "structural_features": {},
+            "ensemble_model_type": "hmm",
+            # V2+ fields that should be ignored
+            "future_field": 99,
+            "new_v2_field": "extra_data",
+        }
+        sv = ShockVector.from_dict(d)
+        assert sv.ticker == "AAPL"
+        assert sv.hmm_regime == 2
+        assert not hasattr(sv, "future_field")
+        assert not hasattr(sv, "new_v2_field")
+
+    def test_from_dict_round_trip_still_works(self):
+        from quant_engine.regime.shock_vector import ShockVector
+
+        original = ShockVector(ticker="TSLA", hmm_regime=1)
+        d = original.to_dict()
+        reconstructed = ShockVector.from_dict(d)
+        assert reconstructed.ticker == original.ticker
+        assert reconstructed.hmm_regime == original.hmm_regime
+
+
+# ── SPEC_AUDIT_FIX_27: Unified Structural Features Tests ────────────────
+
+
+class TestUnifiedStructuralFeatures:
+    """T2: Both construction paths should produce same structural feature keys."""
+
+    def test_batch_path_includes_drift_and_stress(self):
+        import pandas as pd
+        from quant_engine.regime.shock_vector import compute_shock_vectors
+
+        n = 50
+        idx = pd.date_range("2025-01-01", periods=n, freq="D")
+        ohlcv = pd.DataFrame(
+            {
+                "Open": np.random.uniform(100, 110, n),
+                "High": np.random.uniform(110, 115, n),
+                "Low": np.random.uniform(95, 100, n),
+                "Close": np.linspace(100, 110, n),
+                "Volume": np.random.randint(1000, 10000, n),
+            },
+            index=idx,
+        )
+        svs = compute_shock_vectors(ohlcv=ohlcv, ticker="TEST")
+        assert len(svs) == n
+        sv = list(svs.values())[-1]
+        assert "drift_score" in sv.structural_features
+        assert "systemic_stress" in sv.structural_features
+
+    def test_batch_path_with_features_includes_all_keys(self):
+        import pandas as pd
+        from quant_engine.regime.shock_vector import compute_shock_vectors
+
+        n = 50
+        idx = pd.date_range("2025-01-01", periods=n, freq="D")
+        ohlcv = pd.DataFrame(
+            {
+                "Open": np.random.uniform(100, 110, n),
+                "High": np.random.uniform(110, 115, n),
+                "Low": np.random.uniform(95, 100, n),
+                "Close": np.linspace(100, 110, n),
+                "Volume": np.random.randint(1000, 10000, n),
+            },
+            index=idx,
+        )
+        features = pd.DataFrame(
+            {
+                "SpectralEntropy_252": np.random.uniform(0, 1, n),
+                "SSATrendStr_60": np.random.uniform(0, 1, n),
+                "JumpIntensity_20": np.random.uniform(0, 1, n),
+                "EigenConcentration_60": np.random.uniform(0, 1, n),
+            },
+            index=idx,
+        )
+        svs = compute_shock_vectors(ohlcv=ohlcv, ticker="TEST", features=features)
+        sv = list(svs.values())[-1]
+        expected_keys = {
+            "drift_score", "systemic_stress",
+            "spectral_entropy", "ssa_trend_strength",
+            "jump_intensity", "eigenvalue_concentration",
+        }
+        assert expected_keys == set(sv.structural_features.keys())
+
+
+# ── SPEC_AUDIT_FIX_27: Model Type Passthrough Tests ─────────────────────
+
+
+class TestModelTypePassthrough:
+    """T3: ensemble_model_type should reflect actual model type."""
+
+    def test_compute_shock_vectors_uses_provided_model_type(self):
+        import pandas as pd
+        from quant_engine.regime.shock_vector import compute_shock_vectors
+
+        n = 30
+        idx = pd.date_range("2025-01-01", periods=n, freq="D")
+        ohlcv = pd.DataFrame(
+            {
+                "Open": np.full(n, 100.0),
+                "High": np.full(n, 105.0),
+                "Low": np.full(n, 95.0),
+                "Close": np.linspace(100, 105, n),
+                "Volume": np.full(n, 5000),
+            },
+            index=idx,
+        )
+        svs = compute_shock_vectors(
+            ohlcv=ohlcv, ticker="TEST", ensemble_model_type="ensemble",
+        )
+        for sv in svs.values():
+            assert sv.ensemble_model_type == "ensemble"
+
+    def test_compute_shock_vectors_default_model_type(self):
+        import pandas as pd
+        from quant_engine.regime.shock_vector import compute_shock_vectors
+
+        n = 30
+        idx = pd.date_range("2025-01-01", periods=n, freq="D")
+        ohlcv = pd.DataFrame(
+            {
+                "Open": np.full(n, 100.0),
+                "High": np.full(n, 105.0),
+                "Low": np.full(n, 95.0),
+                "Close": np.linspace(100, 105, n),
+                "Volume": np.full(n, 5000),
+            },
+            index=idx,
+        )
+        svs = compute_shock_vectors(ohlcv=ohlcv, ticker="TEST")
+        for sv in svs.values():
+            assert sv.ensemble_model_type == "hmm"
+
+
+# ── SPEC_AUDIT_FIX_27: Validator Coverage Tests ─────────────────────────
+
+
+class TestValidatorFieldCoverage:
+    """T4: Validator should catch invalid timestamp, jump_detected, jump_magnitude."""
+
+    def test_invalid_timestamp_type(self):
+        from quant_engine.regime.shock_vector import ShockVector, ShockVectorValidator
+
+        sv = ShockVector()
+        sv.timestamp = "not_a_datetime"
+        is_valid, errors = ShockVectorValidator.validate(sv)
+        assert not is_valid
+        assert any("timestamp" in e for e in errors)
+
+    def test_invalid_jump_detected_type(self):
+        from quant_engine.regime.shock_vector import ShockVector, ShockVectorValidator
+
+        sv = ShockVector()
+        sv.jump_detected = 42
+        is_valid, errors = ShockVectorValidator.validate(sv)
+        assert not is_valid
+        assert any("jump_detected" in e for e in errors)
+
+    def test_invalid_jump_magnitude_non_numeric(self):
+        from quant_engine.regime.shock_vector import ShockVector, ShockVectorValidator
+
+        sv = ShockVector()
+        sv.jump_magnitude = "big"
+        is_valid, errors = ShockVectorValidator.validate(sv)
+        assert not is_valid
+        assert any("jump_magnitude" in e for e in errors)
+
+    def test_invalid_jump_magnitude_infinite(self):
+        from quant_engine.regime.shock_vector import ShockVector, ShockVectorValidator
+
+        sv = ShockVector()
+        sv.jump_magnitude = np.inf
+        is_valid, errors = ShockVectorValidator.validate(sv)
+        assert not is_valid
+        assert any("jump_magnitude" in e for e in errors)
+
+    def test_valid_vectors_still_pass(self):
+        from quant_engine.regime.shock_vector import ShockVector, ShockVectorValidator
+
+        sv = ShockVector(
+            timestamp=datetime(2026, 1, 1),
+            jump_detected=True,
+            jump_magnitude=-0.03,
+        )
+        is_valid, errors = ShockVectorValidator.validate(sv)
+        assert is_valid, f"Expected valid, got errors: {errors}"

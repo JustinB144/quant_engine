@@ -21,7 +21,13 @@ _ADJUSTABLE_KEYS: Set[str] = {
     "DRAWDOWN_DAILY_LOSS_LIMIT",
     "DRAWDOWN_WEEKLY_LOSS_LIMIT",
     "MAX_HOLDING_DAYS",
+    "HEALTH_TREND_IMPROVING_THRESHOLD",
+    "HEALTH_TREND_DEGRADING_THRESHOLD",
 }
+
+# Health trend detection thresholds (SPEC_AUDIT_FIX_04 T3)
+HEALTH_TREND_IMPROVING_THRESHOLD: float = 0.5
+HEALTH_TREND_DEGRADING_THRESHOLD: float = -0.5
 
 # Semantic validators: key -> (validator_fn, human-readable description).
 # Validator returns True if the value is acceptable.
@@ -65,6 +71,14 @@ CONFIG_VALIDATORS: Dict[str, tuple[Callable[[Any], bool], str]] = {
     "MAX_HOLDING_DAYS": (
         lambda v: 1 <= v <= 365,
         "Must be between 1 and 365",
+    ),
+    "HEALTH_TREND_IMPROVING_THRESHOLD": (
+        lambda v: 0.0 <= v <= 10.0,
+        "Must be between 0.0 and 10.0",
+    ),
+    "HEALTH_TREND_DEGRADING_THRESHOLD": (
+        lambda v: -10.0 <= v <= 0.0,
+        "Must be between -10.0 and 0.0",
     ),
 }
 

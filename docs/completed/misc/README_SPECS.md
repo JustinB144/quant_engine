@@ -187,13 +187,12 @@ All three specs adhere to these principles:
 ## File Structure
 
 ```
-docs/specs/
+docs/completed/feature_specs/
 ├── SPEC_01_FOUNDATIONAL_HARDENING.md       (39 KB, 952 lines)
 ├── SPEC_02_STRUCTURAL_FEATURES.md          (52 KB, 1390 lines)
 ├── SPEC_03_STRUCTURAL_STATE_LAYER.md       (43 KB, 1085 lines)
-├── README_SPECS.md                         (this file)
-└── reference/
-    └── hmm_observation_matrix.md           (new, from SPEC 3)
+├── ...
+└── SPEC_12_AUTODOC_SYSTEM.md
 ```
 
 ---

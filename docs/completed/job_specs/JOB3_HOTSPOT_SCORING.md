@@ -5,7 +5,7 @@
 
 **Estimated effort**: 1 LLM session, ~30 minutes
 **Input required**: MODULE_INVENTORY.yaml (Job 1) + DEPENDENCY_EDGES.json (Job 2) + git log access
-**Output**: `HOTSPOT_LIST.md` saved to `docs/audit/`
+**Output**: `HOTSPOT_LIST.md` saved to `docs/audit/data/`
 **Depends on**: Job 1, Job 2
 **Feeds into**: Job 5 (Subsystem Clustering), Job 7 (Verification)
 

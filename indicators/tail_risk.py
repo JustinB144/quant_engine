@@ -12,6 +12,9 @@ import numpy as np
 import pandas as pd
 
 
+_SRM_CAP = 10.0  # Maximum semi-relative modulus value
+
+
 class TailRiskAnalyzer:
     """Detect jumps, extreme value statistics, and tail risk.
 
@@ -179,10 +182,11 @@ class TailRiskAnalyzer:
             up_var = np.var(upside, ddof=1) if len(upside) > 1 else 0.0
 
             if up_var > 1e-15:
-                srm[i] = np.sqrt(down_var / up_var)
+                srm[i] = min(np.sqrt(down_var / up_var), _SRM_CAP)
             else:
-                # No upside variance — extreme downside dominance
-                srm[i] = np.sqrt(down_var) / 1e-10 if down_var > 0 else 0.0
+                # No upside variance — extreme downside dominance.
+                # Cap to _SRM_CAP to prevent magnitude explosion.
+                srm[i] = _SRM_CAP if down_var > 0 else 0.0
 
         return srm
 

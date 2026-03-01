@@ -109,7 +109,7 @@ class TestSliceRegistry:
 
     def test_create_individual_regime_slices(self, sample_returns, sample_regimes):
         slices = SliceRegistry.create_individual_regime_slices()
-        assert len(slices) == 4  # One per regime code
+        assert len(slices) == 5  # One per regime code (0-3) plus unknown (-1)
 
         meta = SliceRegistry.build_metadata(sample_returns, sample_regimes)
         total = 0

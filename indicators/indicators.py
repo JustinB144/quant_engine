@@ -93,7 +93,8 @@ class NATR(Indicator):
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Compute indicator values from the provided OHLCV dataframe."""
         atr = self._atr.calculate(df)
-        natr = (atr / df['Close']) * 100
+        close = df['Close'].replace(0, np.nan)  # Guard zero price
+        natr = (atr / close) * 100
         return natr
 
 
@@ -119,6 +120,7 @@ class BollingerBandWidth(Indicator):
         upper = sma + (self.std_dev * std)
         lower = sma - (self.std_dev * std)
 
+        sma = sma.replace(0, np.nan)  # Guard zero price
         width = ((upper - lower) / sma) * 100
         return width
 
@@ -167,6 +169,7 @@ class RSI(Indicator):
 
         avg_gain = gain.rolling(window=self.period).mean()
         avg_loss = loss.rolling(window=self.period).mean()
+        avg_loss = avg_loss.replace(0, np.nan)  # Guard all-up periods
 
         rs = avg_gain / avg_loss
         rsi = 100 - (100 / (1 + rs))
@@ -254,7 +257,9 @@ class ROC(Indicator):
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Compute indicator values from the provided OHLCV dataframe."""
         close = df['Close']
-        roc = ((close - close.shift(self.period)) / close.shift(self.period)) * 100
+        close_prev = close.shift(self.period)
+        close_prev = close_prev.replace(0, np.nan)  # Guard zero price
+        roc = ((close - close_prev) / close_prev) * 100
         return roc
 
 
@@ -275,7 +280,9 @@ class Stochastic(Indicator):
         low_min = df['Low'].rolling(window=self.period).min()
         high_max = df['High'].rolling(window=self.period).max()
 
-        stoch = ((df['Close'] - low_min) / (high_max - low_min)) * 100
+        range_ = high_max - low_min
+        range_ = range_.replace(0, np.nan)  # Guard flat bars
+        stoch = ((df['Close'] - low_min) / range_) * 100
         return stoch
 
 
@@ -317,7 +324,9 @@ class WilliamsR(Indicator):
         high_max = df['High'].rolling(window=self.period).max()
         low_min = df['Low'].rolling(window=self.period).min()
 
-        willr = ((high_max - df['Close']) / (high_max - low_min)) * -100
+        range_ = high_max - low_min
+        range_ = range_.replace(0, np.nan)  # Guard flat bars
+        willr = ((high_max - df['Close']) / range_) * -100
         return willr
 
 
@@ -340,6 +349,7 @@ class CCI(Indicator):
         mad = tp.rolling(window=self.period).apply(
             lambda x: np.abs(x - x.mean()).mean(), raw=True)
 
+        mad = mad.replace(0, np.nan)  # Guard constant price periods
         cci = (tp - sma) / (0.015 * mad)
         return cci
 
@@ -398,6 +408,7 @@ class PriceVsSMA(Indicator):
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Compute indicator values from the provided OHLCV dataframe."""
         sma = self._sma.calculate(df)
+        sma = sma.replace(0, np.nan)  # Guard zero price
         return ((df['Close'] - sma) / sma) * 100
 
 
@@ -418,7 +429,9 @@ class SMASlope(Indicator):
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Compute indicator values from the provided OHLCV dataframe."""
         sma = self._sma.calculate(df)
-        slope = ((sma - sma.shift(self.slope_period)) / sma.shift(self.slope_period)) * 100
+        sma_prev = sma.shift(self.slope_period)
+        sma_prev = sma_prev.replace(0, np.nan)  # Guard zero price
+        slope = ((sma - sma_prev) / sma_prev) * 100
         return slope
 
 
@@ -452,10 +465,13 @@ class ADX(Indicator):
         tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 
         atr = tr.rolling(window=self.period).mean()
+        atr = atr.replace(0, np.nan)  # Guard zero ATR
         plus_di = 100 * (plus_dm.rolling(window=self.period).mean() / atr)
         minus_di = 100 * (minus_dm.rolling(window=self.period).mean() / atr)
 
-        dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+        di_sum = plus_di + minus_di
+        di_sum = di_sum.replace(0, np.nan)  # Guard DX computation
+        dx = 100 * abs(plus_di - minus_di) / di_sum
         adx = dx.rolling(window=self.period).mean()
         return adx
 
@@ -510,6 +526,7 @@ class VolumeRatio(Indicator):
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Compute indicator values from the provided OHLCV dataframe."""
         avg_vol = df['Volume'].rolling(window=self.period).mean()
+        avg_vol = avg_vol.replace(0, np.nan)  # Guard zero-volume periods
         return df['Volume'] / avg_vol
 
 
@@ -574,8 +591,10 @@ class MFI(Indicator):
         positive_mf = mf.where(tp > tp.shift(1), 0)
         negative_mf = mf.where(tp < tp.shift(1), 0)
 
+        negative_mf_sum = negative_mf.rolling(window=self.period).sum()
+        negative_mf_sum = negative_mf_sum.replace(0, np.nan)  # Guard zero denominator
         mf_ratio = (positive_mf.rolling(window=self.period).sum() /
-                   negative_mf.rolling(window=self.period).sum())
+                   negative_mf_sum)
 
         mfi = 100 - (100 / (1 + mf_ratio))
         return mfi
@@ -635,6 +654,7 @@ class CandleBody(Indicator):
         """Compute indicator values from the provided OHLCV dataframe."""
         body = abs(df['Close'] - df['Open'])
         range_ = df['High'] - df['Low']
+        range_ = range_.replace(0, np.nan)  # Guard flat bars
         return (body / range_) * 100
 
 
@@ -666,7 +686,9 @@ class GapPercent(Indicator):
 
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Compute indicator values from the provided OHLCV dataframe."""
-        return ((df['Open'] - df['Close'].shift(1)) / df['Close'].shift(1)) * 100
+        prev_close = df['Close'].shift(1)
+        prev_close = prev_close.replace(0, np.nan)  # Guard zero price
+        return ((df['Open'] - prev_close) / prev_close) * 100
 
 
 # =============================================================================
@@ -688,6 +710,7 @@ class DistanceFromHigh(Indicator):
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Compute indicator values from the provided OHLCV dataframe."""
         high_max = df['High'].rolling(window=self.period).max()
+        high_max = high_max.replace(0, np.nan)  # Guard zero price
         return ((df['Close'] - high_max) / high_max) * 100
 
 
@@ -706,6 +729,7 @@ class DistanceFromLow(Indicator):
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Compute indicator values from the provided OHLCV dataframe."""
         low_min = df['Low'].rolling(window=self.period).min()
+        low_min = low_min.replace(0, np.nan)  # Guard zero price
         return ((df['Close'] - low_min) / low_min) * 100
 
 
@@ -846,6 +870,7 @@ class RVOL(Indicator):
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Compute indicator values from the provided OHLCV dataframe."""
         avg_vol = df['Volume'].rolling(window=self.period).mean()
+        avg_vol = avg_vol.replace(0, np.nan)  # Guard zero-volume periods
         rvol = df['Volume'] / avg_vol
         return rvol
 
@@ -876,6 +901,7 @@ class NetVolumeTrend(Indicator):
 
         # Normalize by average volume
         avg_vol = df['Volume'].rolling(window=self.period).mean()
+        avg_vol = avg_vol.replace(0, np.nan)  # Guard zero-volume periods
         normalized = net_vol_ma / avg_vol
 
         return normalized
@@ -920,7 +946,9 @@ class AccumulationDistribution(Indicator):
 
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Compute indicator values from the provided OHLCV dataframe."""
-        clv = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low'])
+        range_ = df['High'] - df['Low']
+        range_ = range_.replace(0, np.nan)  # Guard flat bars
+        clv = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / range_
         clv = clv.fillna(0)
         ad = (clv * df['Volume']).cumsum()
         ad_slope = ad.diff(self.period) / self.period
@@ -985,7 +1013,8 @@ class TrendStrength(Indicator):
 
         # Price above/below MA
         ma = close.rolling(window=self.period).mean()
-        price_vs_ma = (close - ma) / ma
+        ma_safe = ma.replace(0, np.nan)  # Guard zero price
+        price_vs_ma = (close - ma) / ma_safe
 
         # MA slope
         ma_slope = ma.pct_change(5)
@@ -1208,7 +1237,8 @@ class ATRTrailingStop(Indicator):
         stop_level = highest - (self.multiplier * atr)
 
         # Distance from stop as percentage
-        distance = ((close - stop_level) / close) * 100
+        close_safe = close.replace(0, np.nan)  # Guard zero price
+        distance = ((close - stop_level) / close_safe) * 100
         return distance
 
 
@@ -1238,7 +1268,9 @@ class ATRChannel(Indicator):
         upper = sma + (self.multiplier * atr)
         lower = sma - (self.multiplier * atr)
 
-        position = ((close - lower) / (upper - lower)) * 100
+        channel_width = upper - lower
+        channel_width = channel_width.replace(0, np.nan)  # Guard zero ATR
+        position = ((close - lower) / channel_width) * 100
         return position
 
 
@@ -1267,6 +1299,7 @@ class RiskPerATR(Indicator):
         range_low = df['Low'].rolling(window=self.range_period).min()
         price_range = range_high - range_low
 
+        atr = atr.replace(0, np.nan)  # Guard zero ATR
         return price_range / atr
 
 
@@ -1327,6 +1360,7 @@ class VolatilityRegime(Indicator):
         current_vol = returns.rolling(window=self.period).std()
         vol_mean = current_vol.rolling(window=self.lookback).mean()
         vol_std = current_vol.rolling(window=self.lookback).std()
+        vol_std = vol_std.replace(0, np.nan)  # Guard constant volatility
 
         z_score = (current_vol - vol_mean) / vol_std
 
@@ -1358,8 +1392,9 @@ class VWAP(Indicator):
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Compute indicator values from the provided OHLCV dataframe."""
         typical_price = (df['High'] + df['Low'] + df['Close']) / 3
-        vwap = (typical_price * df['Volume']).rolling(window=self.period).sum() / \
-               df['Volume'].rolling(window=self.period).sum()
+        cum_vol = df['Volume'].rolling(window=self.period).sum()
+        cum_vol = cum_vol.replace(0, np.nan)  # Guard zero-volume periods
+        vwap = (typical_price * df['Volume']).rolling(window=self.period).sum() / cum_vol
         return vwap
 
 
@@ -1382,6 +1417,7 @@ class PriceVsVWAP(Indicator):
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Compute indicator values from the provided OHLCV dataframe."""
         vwap = self._vwap.calculate(df)
+        vwap = vwap.replace(0, np.nan)  # Guard zero VWAP
         return ((df['Close'] - vwap) / vwap) * 100
 
 
@@ -1416,7 +1452,9 @@ class VWAPBands(Indicator):
         lower = vwap - (self.num_std * std)
 
         # Position within bands (0-100)
-        position = ((df['Close'] - lower) / (upper - lower)) * 100
+        band_width = upper - lower
+        band_width = band_width.replace(0, np.nan)  # Guard zero bandwidth
+        position = ((df['Close'] - lower) / band_width) * 100
         return position.clip(0, 100)
 
 
@@ -1444,6 +1482,7 @@ class AnchoredVWAP(Indicator):
         tp_vol = typical_price * df['Volume']
         cum_tp_vol = tp_vol.rolling(window=self.anchor_days, min_periods=1).sum()
         cum_vol = df['Volume'].rolling(window=self.anchor_days, min_periods=1).sum()
+        cum_vol = cum_vol.replace(0, np.nan)  # Guard zero-volume periods
 
         avwap = cum_tp_vol / cum_vol
         return avwap
@@ -1468,6 +1507,7 @@ class PriceVsAnchoredVWAP(Indicator):
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Compute indicator values from the provided OHLCV dataframe."""
         avwap = self._avwap.calculate(df)
+        avwap = avwap.replace(0, np.nan)  # Guard zero AVWAP
         return ((df['Close'] - avwap) / avwap) * 100
 
 
@@ -1658,6 +1698,7 @@ class PriceVsPOC(Indicator):
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Compute indicator values from the provided OHLCV dataframe."""
         poc = self._poc.calculate(df)
+        poc = poc.replace(0, np.nan)  # Guard zero POC
         return ((df['Close'] - poc) / poc) * 100
 
 
@@ -1687,6 +1728,7 @@ class ValueAreaPosition(Indicator):
 
         # Position as percentage of value area range
         va_range = vah - val
+        va_range = va_range.replace(0, np.nan)  # Guard identical VAH/VAL
         position = ((close - val) / va_range) * 100
 
         return position
@@ -1904,7 +1946,8 @@ class ParkinsonVolatility(Indicator):
 
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Compute indicator values from the provided OHLCV dataframe."""
-        log_hl_sq = (np.log(df['High'] / df['Low'])) ** 2
+        ratio_hl = (df['High'] / df['Low']).clip(lower=1e-10)  # Guard against zero/negative ratios
+        log_hl_sq = (np.log(ratio_hl)) ** 2
         factor = 1.0 / (4.0 * np.log(2))
         parkinson_var = log_hl_sq.rolling(window=self.period).mean() * factor
         return np.sqrt(parkinson_var * 252) * 100
@@ -1924,8 +1967,8 @@ class GarmanKlassVolatility(Indicator):
 
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Compute indicator values from the provided OHLCV dataframe."""
-        log_hl = np.log(df['High'] / df['Low'])
-        log_co = np.log(df['Close'] / df['Open'])
+        log_hl = np.log((df['High'] / df['Low']).clip(lower=1e-10))
+        log_co = np.log((df['Close'] / df['Open']).clip(lower=1e-10))
         gk_var = 0.5 * log_hl**2 - (2 * np.log(2) - 1) * log_co**2
         avg_var = gk_var.rolling(window=self.period).mean()
         return np.sqrt(avg_var.clip(lower=0) * 252) * 100
@@ -1945,14 +1988,14 @@ class YangZhangVolatility(Indicator):
 
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Compute indicator values from the provided OHLCV dataframe."""
-        log_oc = np.log(df['Open'] / df['Close'].shift(1))
-        log_co = np.log(df['Close'] / df['Open'])
-        log_ho = np.log(df['High'] / df['Open'])
-        log_lo = np.log(df['Low'] / df['Open'])
+        log_oc = np.log((df['Open'] / df['Close'].shift(1)).clip(lower=1e-10))
+        log_co = np.log((df['Close'] / df['Open']).clip(lower=1e-10))
+        log_ho = np.log((df['High'] / df['Open']).clip(lower=1e-10))
+        log_lo = np.log((df['Low'] / df['Open']).clip(lower=1e-10))
 
         sigma_o_sq = log_oc.rolling(window=self.period).var()
 
-        log_cc = np.log(df['Close'] / df['Close'].shift(1))
+        log_cc = np.log((df['Close'] / df['Close'].shift(1)).clip(lower=1e-10))
         sigma_c_sq = log_cc.rolling(window=self.period).var()
 
         rs_var = log_ho * (log_ho - log_co) + log_lo * (log_lo - log_co)
@@ -2086,7 +2129,7 @@ class HurstExponent(Indicator):
 
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Compute indicator values from the provided OHLCV dataframe."""
-        prices = np.log(df['Close'].values.astype(float))
+        prices = np.log(np.clip(df['Close'].values.astype(float), 1e-10, None))  # Guard against zero/negative prices
         n = len(prices)
         result = np.full(n, np.nan)
 
@@ -2498,8 +2541,10 @@ class FractalDimension(Indicator):
                     ks.append(k)
 
             if len(lengths) >= 2:
+                lengths_arr = np.array(lengths)
+                lengths_arr = np.where(lengths_arr > 0, lengths_arr, np.nan)  # Guard zero lengths
                 log_k = np.log(1.0 / np.array(ks))
-                log_L = np.log(np.array(lengths))
+                log_L = np.log(lengths_arr)
                 valid = np.isfinite(log_k) & np.isfinite(log_L)
                 if valid.sum() >= 2:
                     A = np.column_stack([log_k[valid], np.ones(valid.sum())])
@@ -2532,7 +2577,7 @@ class DFA(Indicator):
 
         for i in range(self.period, n):
             window = prices[i - self.period + 1:i + 1]
-            log_window = np.log(window)
+            log_window = np.log(np.clip(window, 1e-10, None))  # Guard against zero/negative prices
             log_window = log_window[np.isfinite(log_window)]
             if len(log_window) < 16:
                 continue

@@ -23,7 +23,7 @@ Four comprehensive implementation specifications for advanced features in the qu
 
 ## SPEC 7: Portfolio Layer + Regime-Conditioned Constraints
 
-**File:** `/mnt/quant_engine/docs/specs/SPEC_07_PORTFOLIO_LAYER.md`
+**File:** `/mnt/quant_engine/docs/completed/feature_specs/SPEC_07_PORTFOLIO_LAYER.md`
 
 ### Problem Statement
 Portfolio risk constraints (sector caps 40%, correlation 0.85, gross 100%) are **static** — they don't adapt to market regime. Under adverse conditions (flash crash, COVID), static constraints are inadequate.
@@ -55,7 +55,7 @@ Portfolio risk constraints (sector caps 40%, correlation 0.85, gross 100%) are *
 
 ## SPEC 8: Evaluation Layer (Truth Engine)
 
-**File:** `/mnt/quant_engine/docs/specs/SPEC_08_EVALUATION_LAYER.md`
+**File:** `/mnt/quant_engine/docs/completed/feature_specs/SPEC_08_EVALUATION_LAYER.md`
 
 ### Problem Statement
 Performance evaluation computes aggregate metrics but **ignores regime structure and shock periods**. All metrics pooled; no decomposition by market regime or stress scenario. Overfitting hidden by aggregate Sharpe. ML decay not surfaced. Fragility metrics missing.
@@ -93,7 +93,7 @@ Performance evaluation computes aggregate metrics but **ignores regime structure
 
 ## SPEC 9: Health System Renaissance Overhaul
 
-**File:** `/mnt/quant_engine/docs/specs/SPEC_09_HEALTH_SYSTEM.md`
+**File:** `/mnt/quant_engine/docs/completed/feature_specs/SPEC_09_HEALTH_SYSTEM.md`
 
 ### Problem Statement
 Health monitoring in `/mnt/quant_engine/engine/health_service.py` is comprehensive (15 checks, 5 domains) but has 4 gaps:
@@ -131,7 +131,7 @@ Health monitoring in `/mnt/quant_engine/engine/health_service.py` is comprehensi
 
 ## SPEC 10: Regime Detection Upgrade
 
-**File:** `/mnt/quant_engine/docs/specs/SPEC_10_REGIME_DETECTION.md`
+**File:** `/mnt/quant_engine/docs/completed/feature_specs/SPEC_10_REGIME_DETECTION.md`
 
 ### Problem Statement
 Regime detection in `/mnt/quant_engine/engine/regime/detector.py` is **more advanced than docs suggest**, but has gaps:

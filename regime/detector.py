@@ -304,7 +304,14 @@ class RegimeDetector:
             )
             return self._rule_detect(features)
 
-        mapping = map_raw_states_to_regimes(raw_states, features)
+        try:
+            mapping = self.map_raw_states_to_regimes_stable(
+                raw_states=raw_states,
+                features=features,
+            )
+        except (ValueError, AttributeError):
+            logger.warning("Stable mapping unavailable (first fit?), using heuristic fallback")
+            mapping = map_raw_states_to_regimes(raw_states, features)
         regime_vals = np.array([mapping.get(int(s), 2) for s in raw_states], dtype=int)
         regime = pd.Series(regime_vals, index=features.index, dtype=int)
 
@@ -368,8 +375,15 @@ class RegimeDetector:
                 logger.warning("Legacy jump model failed (%s), falling back to rules", e)
                 return self._rule_detect(features)
 
-        # Map raw states to semantic regimes using the same approach as HMM
-        mapping = map_raw_states_to_regimes(result.regime_sequence, features)
+        # Map raw states to semantic regimes using Wasserstein-based stable mapping
+        try:
+            mapping = self.map_raw_states_to_regimes_stable(
+                raw_states=result.regime_sequence,
+                features=features,
+            )
+        except (ValueError, AttributeError):
+            logger.warning("Stable mapping unavailable for jump model, using heuristic fallback")
+            mapping = map_raw_states_to_regimes(result.regime_sequence, features)
         regime_vals = np.array(
             [mapping.get(int(s), 2) for s in result.regime_sequence], dtype=int
         )
@@ -831,20 +845,62 @@ class RegimeDetector:
         if uncertainty_series is not None and len(uncertainty_series) > 0:
             hmm_uncertainty = float(uncertainty_series.iloc[-1])
 
-        # Structural features (include if available).
+        # Structural features: unified builder (SPEC_AUDIT_FIX_27 T2).
+        # Compute drift_score and systemic_stress from price data when available,
+        # plus feature-derived structural features.
+        from .shock_vector import _build_structural_features
+
+        drift_score_val = 0.0
+        systemic_stress_val = 0.0
+        _vol_lookback = 20
+
+        if "Close" in features.columns and len(features) >= _vol_lookback:
+            close = features["Close"].astype(float)
+            n_bars = len(close)
+            # drift_score = |price - SMA| / (ATR * sqrt(lookback)), clipped to [0, 1]
+            sma = close.rolling(_vol_lookback, min_periods=1).mean()
+            high_vals = (
+                features["High"].astype(float).values
+                if "High" in features.columns else close.values
+            )
+            low_vals = (
+                features["Low"].astype(float).values
+                if "Low" in features.columns else close.values
+            )
+            tr = np.maximum(
+                high_vals - low_vals,
+                np.maximum(
+                    np.abs(high_vals - np.roll(close.values, 1)),
+                    np.abs(low_vals - np.roll(close.values, 1)),
+                ),
+            )
+            tr[0] = high_vals[0] - low_vals[0]
+            atr = pd.Series(tr).rolling(_vol_lookback, min_periods=1).mean().values
+            atr_last = max(float(atr[-1]), 1e-10)
+            drift_raw = abs(float(close.iloc[-1]) - float(sma.iloc[-1])) / (
+                atr_last * np.sqrt(_vol_lookback)
+            )
+            drift_score_val = float(np.clip(drift_raw, 0.0, 1.0))
+
+            # systemic_stress = expanding percentile of rolling vol
+            returns = close.pct_change().fillna(0.0).values
+            rolling_vol = pd.Series(returns).rolling(
+                _vol_lookback, min_periods=1
+            ).std().values
+            rolling_vol = np.nan_to_num(rolling_vol, nan=0.0)
+            if n_bars >= _vol_lookback and np.max(rolling_vol) > 1e-10:
+                hist = rolling_vol[: n_bars]
+                percentile = float(np.sum(hist <= rolling_vol[-1])) / len(hist)
+                systemic_stress_val = float(np.clip(percentile, 0.0, 1.0))
+
         structural = {}
         if SHOCK_VECTOR_INCLUDE_STRUCTURAL:
-            _structural_cols = {
-                "spectral_entropy": "SpectralEntropy_252",
-                "ssa_trend_strength": "SSATrendStr_60",
-                "jump_intensity": "JumpIntensity_20",
-                "eigenvalue_concentration": "EigenConcentration_60",
-            }
-            for key, col in _structural_cols.items():
-                if col in features.columns:
-                    val = features[col].iloc[-1]
-                    if np.isfinite(val):
-                        structural[key] = float(val)
+            structural = _build_structural_features(
+                drift_score=drift_score_val,
+                systemic_stress=systemic_stress_val,
+                features=features,
+                bar_idx=-1,
+            )
 
         # Determine actual number of HMM states from transition matrix
         n_hmm_states = 4
