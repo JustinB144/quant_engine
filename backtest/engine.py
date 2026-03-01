@@ -166,6 +166,37 @@ class BacktestResult:
         }
 
 
+def backtest_result_to_summary_dict(result: BacktestResult, horizon: int = 10) -> dict:
+    """Build the canonical summary.json dict from a BacktestResult.
+
+    Schema contract: docs/audit/data/INTERFACE_CONTRACTS.yaml boundary
+    evaluation_to_models_backtest_11, fields 1072-1089.
+    """
+    trades = result.trades or []
+    winning = [t for t in trades if t.net_return > 0]
+    losing = [t for t in trades if t.net_return <= 0]
+
+    return {
+        "horizon": horizon,
+        "total_trades": result.total_trades,
+        "winning_trades": len(winning),
+        "losing_trades": len(losing),
+        "win_rate": result.win_rate,
+        "avg_return": result.avg_return,
+        "avg_win": float(np.mean([t.net_return for t in winning])) if winning else 0.0,
+        "avg_loss": float(np.mean([t.net_return for t in losing])) if losing else 0.0,
+        "total_return": result.total_return,
+        "annualized_return": result.annualized_return,
+        "sharpe": result.sharpe_ratio,
+        "sortino": result.sortino_ratio,
+        "max_drawdown": result.max_drawdown,
+        "profit_factor": result.profit_factor,
+        "avg_holding_days": float(np.mean([t.holding_days for t in trades])) if trades else 0.0,
+        "trades_per_year": result.trades_per_year,
+        "regime_breakdown": result.regime_breakdown,
+    }
+
+
 class Backtester:
     """
     Simulates trading from model predictions.
@@ -901,12 +932,24 @@ class Backtester:
                     regime_s = None
                     conf_s = None
 
+                # SPEC_AUDIT_FIX_27 T3: extract actual model type from predictions
+                _model_type = "hmm"
+                try:
+                    if (
+                        "regime_model_type" in ticker_preds.columns
+                        and len(ticker_preds) > 0
+                    ):
+                        _model_type = str(ticker_preds["regime_model_type"].iloc[-1])
+                except (KeyError, NameError, IndexError):
+                    pass
+
                 try:
                     shock_vecs = compute_shock_vectors(
                         ohlcv=ohlcv,
                         regime_series=regime_s,
                         confidence_series=conf_s,
                         ticker=str(ticker),
+                        ensemble_model_type=_model_type,
                     )
                     for dt, sv in shock_vecs.items():
                         self._shock_vectors[(str(ticker), dt)] = sv

@@ -311,7 +311,7 @@ class PipelineOrchestrator:
         """Run backtest on historical data."""
         import json as _json
 
-        from quant_engine.backtest.engine import Backtester
+        from quant_engine.backtest.engine import Backtester, backtest_result_to_summary_dict
         from quant_engine.config import ENTRY_THRESHOLD, REGIME_NAMES, RESULTS_DIR
         from quant_engine.models.predictor import EnsemblePredictor
         from quant_engine.regime.detector import RegimeDetector
@@ -378,28 +378,11 @@ class PipelineOrchestrator:
                     "confidence": t.confidence,
                     "holding_days": t.holding_days,
                     "exit_reason": t.exit_reason,
+                    "position_size": t.position_size,
                 })
             pd.DataFrame(trade_data).to_csv(RESULTS_DIR / f"backtest_{horizon}d_trades.csv", index=False)
 
-            summary = {
-                "horizon": horizon,
-                "total_trades": result.total_trades,
-                "win_rate": result.win_rate,
-                "avg_return": result.avg_return,
-                "sharpe": result.sharpe_ratio,
-                "sortino": result.sortino_ratio,
-                "max_drawdown": result.max_drawdown,
-                "profit_factor": result.profit_factor,
-                "annualized_return": result.annualized_return,
-                "trades_per_year": result.trades_per_year,
-                "regime_breakdown": result.regime_breakdown,
-                "winning_trades": getattr(result, "winning_trades", 0),
-                "losing_trades": getattr(result, "losing_trades", 0),
-                "avg_win": getattr(result, "avg_win", 0.0),
-                "avg_loss": getattr(result, "avg_loss", 0.0),
-                "total_return": getattr(result, "total_return", 0.0),
-                "avg_holding_days": getattr(result, "avg_holding_days", 0.0),
-            }
+            summary = backtest_result_to_summary_dict(result, horizon=horizon)
             with open(RESULTS_DIR / f"backtest_{horizon}d_summary.json", "w") as f:
                 _json.dump(summary, f, indent=2, default=str)
         else:

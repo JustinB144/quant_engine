@@ -38,7 +38,7 @@ from quant_engine.data.survivorship import filter_panel_by_point_in_time_univers
 from quant_engine.features.pipeline import FeaturePipeline
 from quant_engine.regime.detector import RegimeDetector
 from quant_engine.models.predictor import EnsemblePredictor
-from quant_engine.backtest.engine import Backtester
+from quant_engine.backtest.engine import Backtester, backtest_result_to_summary_dict
 from quant_engine.backtest.validation import (
     walk_forward_validate,
     run_statistical_tests,
@@ -434,25 +434,7 @@ def main():
         trade_df.to_csv(out_path, index=False)
 
         # Save summary
-        summary = {
-            "horizon": args.horizon,
-            "total_trades": result.total_trades,
-            "win_rate": result.win_rate,
-            "avg_return": result.avg_return,
-            "sharpe": result.sharpe_ratio,
-            "sortino": result.sortino_ratio,
-            "max_drawdown": result.max_drawdown,
-            "profit_factor": result.profit_factor,
-            "annualized_return": result.annualized_return,
-            "trades_per_year": result.trades_per_year,
-            "regime_breakdown": result.regime_breakdown,
-            "winning_trades": getattr(result, "winning_trades", 0),
-            "losing_trades": getattr(result, "losing_trades", 0),
-            "avg_win": getattr(result, "avg_win", 0.0),
-            "avg_loss": getattr(result, "avg_loss", 0.0),
-            "total_return": getattr(result, "total_return", 0.0),
-            "avg_holding_days": getattr(result, "avg_holding_days", 0.0),
-        }
+        summary = backtest_result_to_summary_dict(result, horizon=args.horizon)
         summary_path = RESULTS_DIR / f"backtest_{args.horizon}d_summary.json"
         with open(summary_path, "w") as f:
             json.dump(summary, f, indent=2, default=str)

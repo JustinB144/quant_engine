@@ -218,15 +218,17 @@ class TestTurnoverBudget:
         assert result == 0.10
 
     def test_turnover_tracking_accumulates(self):
-        """Turnover should accumulate across calls."""
+        """Turnover should accumulate across calls when within budget."""
         ps = PositionSizer()
-        ps._turnover_history = []
-        # First trade: new position
-        ps._apply_turnover_budget(0.05, "A", 1_000_000.0, {}, 252)
-        assert len(ps._turnover_history) == 1
-        # Second trade
-        ps._apply_turnover_budget(0.03, "B", 1_000_000.0, {}, 252)
-        assert len(ps._turnover_history) == 2
+        # Seed history with many small-turnover days so annualized stays low
+        ps._turnover_history = [0.001] * 252  # annualized ≈ 0.001*252/252*252 = 0.252
+        history_len = len(ps._turnover_history)
+        # First trade: small position change within budget
+        ps._apply_turnover_budget(0.01, "A", 1_000_000.0, {}, 252)
+        assert len(ps._turnover_history) == history_len + 1
+        # Second trade: also within budget
+        ps._apply_turnover_budget(0.01, "B", 1_000_000.0, {}, 252)
+        assert len(ps._turnover_history) == history_len + 2
 
     def test_reset_turnover_tracking(self):
         """reset_turnover_tracking should clear history."""
@@ -425,6 +427,8 @@ class TestPaperTraderUnifiedInterface:
             realized_vol=0.25,
             price=100.0,
         )
+        # Reset turnover tracking between independent sizing tests
+        ps.reset_turnover_tracking()
         size_many = ps.size_position_paper_trader(
             ticker="TEST",
             kelly_history=[0.02, -0.01, 0.03, 0.01] * 25,  # 100 trades
@@ -445,6 +449,8 @@ class TestPaperTraderUnifiedInterface:
             ticker="TEST", kelly_history=trades,
             atr=2.0, realized_vol=0.25, price=100.0,
         )
+        # Reset turnover tracking between independent sizing comparisons
+        ps.reset_turnover_tracking()
         size_high_unc = ps.size_position_paper_trader(
             ticker="TEST", kelly_history=trades,
             atr=2.0, realized_vol=0.25, price=100.0,

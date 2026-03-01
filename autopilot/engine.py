@@ -912,9 +912,11 @@ class AutopilotEngine:
                     stat_tests_result = run_statistical_tests(
                         predictions=pred_series,
                         actuals=actual_series,
+                        trade_returns=trade_returns,
                         entry_threshold=c.entry_threshold,
+                        holding_days=c.horizon,
                     )
-                    stat_tests_pass = bool(stat_tests_result.overall_pass)
+                    stat_tests_pass = bool(stat_tests_result.passes)
                 except (ValueError, RuntimeError):
                     pass
 
@@ -930,7 +932,7 @@ class AutopilotEngine:
                         n_test_partitions=CPCV_TEST_PARTITIONS,
                         purge_gap=c.horizon,
                     )
-                    cpcv_passes = bool(cpcv_result.is_significant)
+                    cpcv_passes = bool(cpcv_result.passes)
                 except (ValueError, RuntimeError):
                     pass
 
@@ -943,7 +945,7 @@ class AutopilotEngine:
                         [np.inf, -np.inf], np.nan
                     ).fillna(0.0)
                     spa_result = superior_predictive_ability(strat_returns)
-                    spa_passes = bool(spa_result.rejects_null)
+                    spa_passes = bool(spa_result.passes)
                     spa_pvalue = float(spa_result.p_value)
                 except (ValueError, RuntimeError):
                     pass
@@ -975,7 +977,7 @@ class AutopilotEngine:
                 contract_metrics["ic_mean"] = float(stat_tests_result.ic_mean)
                 contract_metrics["ic_ir"] = float(stat_tests_result.ic_ir)
             if cpcv_result is not None:
-                contract_metrics["cpcv_mean_corr"] = float(cpcv_result.mean_test_corr)
+                contract_metrics["cpcv_mean_corr"] = float(cpcv_result.mean_oos_corr)
             decisions.append(self.gate.evaluate(c, result, contract_metrics=contract_metrics))
 
         # Store meta-labeling stats for cycle report (Spec 04 T7)

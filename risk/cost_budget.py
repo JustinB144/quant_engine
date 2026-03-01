@@ -46,6 +46,7 @@ def estimate_trade_cost_bps(
     daily_volume: float,
     spread_bps: float = 3.0,
     impact_coeff_bps: float = 25.0,
+    portfolio_value_usd: float = 1_000_000.0,
 ) -> float:
     """Estimate the implementation cost of a single trade in basis points.
 
@@ -57,6 +58,7 @@ def estimate_trade_cost_bps(
         daily_volume: Average daily dollar volume of the security.
         spread_bps: Bid-ask spread in basis points.
         impact_coeff_bps: Market impact coefficient.
+        portfolio_value_usd: Portfolio value in USD for correct participation rate.
 
     Returns:
         Estimated cost in basis points of portfolio value.
@@ -64,8 +66,9 @@ def estimate_trade_cost_bps(
     if daily_volume <= 0:
         return 100.0  # Penalize illiquid trades heavily
 
-    # Participation rate (simplified — assumes portfolio value normalizes)
-    participation = abs(trade_size_weight) / max(daily_volume, 1e-12)
+    # Participation rate: trade_dollar_value / daily_dollar_volume
+    trade_dollar_value = abs(trade_size_weight) * portfolio_value_usd
+    participation = trade_dollar_value / max(daily_volume, 1e-12)
     participation = min(participation, 1.0)  # Cap at 100%
 
     half_spread = 0.5 * spread_bps
@@ -83,6 +86,7 @@ def optimize_rebalance_cost(
     spread_bps: float = 3.0,
     impact_coeff_bps: float = 25.0,
     min_trade_weight: float = 1e-4,
+    portfolio_value_usd: float = 1_000_000.0,
 ) -> RebalanceResult:
     """Optimize portfolio rebalance within a transaction cost budget.
 
@@ -104,6 +108,7 @@ def optimize_rebalance_cost(
         spread_bps: Bid-ask spread assumption.
         impact_coeff_bps: Market impact coefficient.
         min_trade_weight: Minimum trade size to execute (filter noise).
+        portfolio_value_usd: Portfolio value in USD for correct participation rate.
 
     Returns:
         RebalanceResult with executed/deferred trades and cost analysis.
@@ -143,6 +148,7 @@ def optimize_rebalance_cost(
             daily_volume=vol,
             spread_bps=spread_bps,
             impact_coeff_bps=urgency_scaled_impact,
+            portfolio_value_usd=portfolio_value_usd,
         )
 
     total_cost = sum(costs.values())

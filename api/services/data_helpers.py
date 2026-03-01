@@ -47,8 +47,11 @@ def build_portfolio_returns(trades: pd.DataFrame) -> pd.Series:
     valid = trades.dropna(subset=["exit_dt", "net_return"]).copy()
     if valid.empty:
         return pd.Series(dtype=float)
-    weights = valid["position_size"] if "position_size" in valid.columns else 1.0
-    weights = pd.to_numeric(weights, errors="coerce").fillna(0.05).clip(lower=0.0, upper=1.0)
+    if "position_size" in valid.columns:
+        weights = pd.to_numeric(valid["position_size"], errors="coerce").fillna(0.05).clip(lower=0.0, upper=1.0)
+    else:
+        # Uniform weighting when position_size is absent
+        weights = pd.Series(0.05, index=valid.index)
     daily = (valid["net_return"].astype(float) * weights).groupby(valid["exit_dt"]).sum().sort_index()
     daily = daily.clip(-0.30, 0.30)
     if len(daily) > 1:

@@ -133,7 +133,7 @@ class RiskMetrics:
 
         # ── Calmar ratio ──
         ann_return = float(returns.mean() * (self.trading_days / holding_days))
-        calmar = abs(ann_return / dd_metrics["max_drawdown"]) if dd_metrics["max_drawdown"] != 0 else 0
+        calmar = ann_return / abs(dd_metrics["max_drawdown"]) if dd_metrics["max_drawdown"] != 0 else 0.0
 
         return RiskReport(
             var_95=var_95,

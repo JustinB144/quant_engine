@@ -156,7 +156,9 @@ class PositionSizer:
             self._concentration_limit_pct = CONCENTRATION_LIMIT_PCT
             self._turnover_budget_enforcement = TURNOVER_BUDGET_ENFORCEMENT
             self._turnover_budget_lookback_days = TURNOVER_BUDGET_LOOKBACK_DAYS
-            self._max_annualized_turnover = MAX_ANNUALIZED_TURNOVER
+            # MAX_ANNUALIZED_TURNOVER is configured in percent (e.g., 500 = 500%).
+            # Internal turnover tracking uses fractions (e.g., 5.0 = 500%).
+            self._max_annualized_turnover = MAX_ANNUALIZED_TURNOVER / 100.0
             self._blend_weights_static = BLEND_WEIGHTS_STATIC
             self._blend_weights_by_regime = BLEND_WEIGHTS_BY_REGIME
             self._uncertainty_scaling_enabled = UNCERTAINTY_SCALING_ENABLED

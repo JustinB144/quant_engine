@@ -870,9 +870,11 @@ class PortfolioRiskManager:
         """Generate a portfolio risk summary."""
         summary = {
             "n_positions": len(positions),
-            "gross_exposure": sum(positions.values()),
+            # Gross exposure = sum of absolute position weights (long + |short|).
+            # Net exposure = algebraic sum (long - |short|).
+            "gross_exposure": sum(abs(v) for v in positions.values()),
             "sector_breakdown": {},
-            "largest_position": max(positions.values()) if positions else 0,
+            "largest_position": max(abs(v) for v in positions.values()) if positions else 0,
         }
 
         # Sector breakdown
