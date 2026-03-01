@@ -51,6 +51,7 @@ from ..config import (
     EXEC_CALIBRATION_MIN_TRADES,
     EXEC_CALIBRATION_MIN_SEGMENT_TRADES,
     EXEC_CALIBRATION_SMOOTHING,
+    OPTIMIZER_BLEND_WEIGHT,
 )
 from ..backtest.execution import ExecutionModel
 from ..backtest.adv_tracker import ADVTracker
@@ -662,6 +663,8 @@ class PaperTrader:
         signal_uncertainty: Optional[float] = None,
         regime_entropy: Optional[float] = None,
         drift_score: Optional[float] = None,
+        kelly_fraction: Optional[float] = None,
+        optimizer_weight: Optional[float] = None,
     ) -> float:
         """
         Compute entry size percentage using the unified PositionSizer.
@@ -704,15 +707,13 @@ class PaperTrader:
         # Configure persistent sizer bounds for this call
         self._persistent_sizer.max_position = max_size
         self._persistent_sizer.min_position = min_size
-        self._persistent_sizer.kelly_frac = self.kelly_fraction
+        # Use caller-supplied kelly_fraction (e.g. A/B variant) or instance default (Spec 05 T3)
+        kf = kelly_fraction if kelly_fraction is not None else self.kelly_fraction
+        self._persistent_sizer.kelly_frac = kf
 
-        dd_ratio = float(self._dd_controller.update(0.0).current_drawdown) if hasattr(self, '_dd_controller') else 0.0
-        # Use the last actual dd status rather than re-updating
-        if hasattr(self._dd_controller, 'current_equity') and hasattr(self._dd_controller, 'peak_equity'):
-            peak = self._dd_controller.peak_equity
-            curr = self._dd_controller.current_equity
-            if peak > 1e-12:
-                dd_ratio = (curr - peak) / peak
+        # Read drawdown ratio without mutating state (Spec 05 T1).
+        # update() is called once per cycle in run_cycle(), not per candidate.
+        dd_ratio = self._dd_controller.current_drawdown_ratio if hasattr(self, '_dd_controller') else 0.0
 
         sized = self._persistent_sizer.size_position_paper_trader(
             ticker=ticker,
@@ -733,10 +734,20 @@ class PaperTrader:
             drift_score=drift_score,
         )
 
+        # Blend with optimizer weight when available (Spec 05 T2)
+        if optimizer_weight is not None and np.isfinite(optimizer_weight) and optimizer_weight > 0:
+            blend = OPTIMIZER_BLEND_WEIGHT
+            pre_blend = float(sized)
+            sized = (1 - blend) * float(sized) + blend * float(optimizer_weight)
+            logger.debug(
+                "Optimizer blend: ticker=%s kelly_size=%.4f opt_weight=%.4f blend=%.2f -> %.4f",
+                ticker, pre_blend, optimizer_weight, blend, sized,
+            )
+
         # Apply regime risk multiplier
         regime_mult = float(REGIME_RISK_MULTIPLIER.get(int(regime), 1.0))
         sized = float(sized) * regime_mult
-        return float(np.clip(sized, 0.001, max_size))
+        return float(np.clip(sized, min_size, max_size))
 
     def run_cycle(
         self,
@@ -1065,6 +1076,10 @@ class PaperTrader:
                     reg_ent = float(row.get("regime_entropy", np.nan))
                     drft_sc = float(row.get("drift_score", np.nan))
 
+                    # Extract optimizer weight from prediction row (Spec 05 T2)
+                    opt_w_raw = float(row.get("optimizer_weight", np.nan))
+                    opt_w = opt_w_raw if np.isfinite(opt_w_raw) and opt_w_raw > 0 else None
+
                     position_size_pct = self._position_size_pct(
                         state=state,
                         strategy_id=sid,
@@ -1078,6 +1093,8 @@ class PaperTrader:
                         signal_uncertainty=sig_unc if np.isfinite(sig_unc) else None,
                         regime_entropy=reg_ent if np.isfinite(reg_ent) else None,
                         drift_score=drft_sc if np.isfinite(drft_sc) else None,
+                        kelly_fraction=eff_kelly_fraction,  # Spec 05 T3: A/B variant override
+                        optimizer_weight=opt_w,             # Spec 05 T2: optimizer blend
                     )
 
                     # ── Confidence-weighted position sizing ──

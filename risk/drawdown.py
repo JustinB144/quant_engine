@@ -89,6 +89,13 @@ class DrawdownController:
         self._recovery_start_day = 0
         self._total_days = 0
 
+    @property
+    def current_drawdown_ratio(self) -> float:
+        """Read current drawdown without mutating state."""
+        if self.peak_equity <= 0:
+            return 0.0
+        return (self.peak_equity - self.current_equity) / self.peak_equity
+
     def update(self, daily_pnl: float) -> DrawdownStatus:
         """
         Update equity and return current drawdown status.

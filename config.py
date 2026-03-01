@@ -401,6 +401,10 @@ PORTFOLIO_TURNOVER_PENALTY = 0.001                # STATUS: ACTIVE — autopilot
 PORTFOLIO_TURNOVER_DYNAMIC = True                 # STATUS: ACTIVE — autopilot/engine.py; enable cost-aware dynamic penalty
 PORTFOLIO_TURNOVER_COST_MULTIPLIER = 2.0          # STATUS: ACTIVE — autopilot/engine.py; multiplier on estimated cost for dynamic penalty floor
 
+# Blend weight between Kelly sizing (0.0) and mean-variance optimizer (1.0).
+# When optimizer weights are available, final size = (1-blend)*kelly + blend*optimizer.
+OPTIMIZER_BLEND_WEIGHT = 0.4                       # STATUS: ACTIVE — autopilot/paper_trader.py; blends Kelly and optimizer sizing
+
 # Maximum net weight in any single GICS sector (+/-10%).
 # Enforced by risk/portfolio_optimizer.py ONLY when GICS_SECTORS is populated.
 MAX_SECTOR_EXPOSURE = _cfg.backtest.max_sector_exposure  # STATUS: ACTIVE — risk/portfolio_optimizer.py; but INACTIVE when GICS_SECTORS is empty

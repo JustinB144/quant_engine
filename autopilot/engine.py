@@ -1108,10 +1108,11 @@ class AutopilotEngine:
         """
         self._log("  Retraining meta-labeling model...")
 
-        all_signals = []
-        all_returns = []
-        all_regimes = []
-        all_actuals = []
+        # Spec 05 T4: Build meta-features PER ASSET to prevent cross-asset
+        # leakage in rolling windows, then concatenate the resulting features.
+        all_meta_feats = []
+        all_labels = []
+        n_permnos_used = 0
 
         permnos = predictions.index.get_level_values(0).unique()
         for permno in permnos:
@@ -1149,52 +1150,53 @@ class AutopilotEngine:
             returns_aligned = returns.reindex(signals.index).fillna(0.0)
             fwd_aligned = fwd.reindex(signals.index)
 
-            # Prefix permno to avoid index collisions
-            prefix = f"{permno}_"
-            all_signals.append(signals.rename(lambda x: f"{prefix}{x}"))
-            all_returns.append(returns_aligned.rename(lambda x: f"{prefix}{x}"))
-            all_regimes.append(regimes.rename(lambda x: f"{prefix}{x}"))
-            all_actuals.append(fwd_aligned.rename(lambda x: f"{prefix}{x}"))
+            # Build meta-features WITHIN this asset only (no cross-asset leakage)
+            asset_feats = MetaLabelingModel.build_meta_features(
+                signals=signals,
+                returns=returns_aligned,
+                regime_states=regimes,
+            )
+            asset_labels = MetaLabelingModel.build_labels(
+                signals=signals,
+                actuals=fwd_aligned,
+            )
 
-        if not all_signals:
+            # Drop rows with NaN actuals before concatenation
+            valid = fwd_aligned.reindex(asset_feats.index).notna()
+            asset_feats = asset_feats[valid]
+            asset_labels = asset_labels.reindex(asset_feats.index).dropna()
+            common_idx = asset_feats.index.intersection(asset_labels.index)
+            asset_feats = asset_feats.loc[common_idx]
+            asset_labels = asset_labels.loc[common_idx]
+
+            if len(asset_feats) > 0:
+                # Prefix permno to avoid index collisions
+                prefix = f"{permno}_"
+                asset_feats = asset_feats.rename(index=lambda x: f"{prefix}{x}")
+                asset_labels = asset_labels.rename(index=lambda x: f"{prefix}{x}")
+                all_meta_feats.append(asset_feats)
+                all_labels.append(asset_labels)
+                n_permnos_used += 1
+
+        if not all_meta_feats:
             self._log("  Meta-labeler retrain: no data available.")
             return False
 
-        combined_signals = pd.concat(all_signals)
-        combined_returns = pd.concat(all_returns)
-        combined_regimes = pd.concat(all_regimes)
-        combined_actuals = pd.concat(all_actuals)
+        meta_feats = pd.concat(all_meta_feats)
+        labels = pd.concat(all_labels)
 
-        # Drop NaN actuals
-        valid = combined_actuals.notna()
-        combined_signals = combined_signals[valid]
-        combined_returns = combined_returns[valid]
-        combined_regimes = combined_regimes[valid]
-        combined_actuals = combined_actuals[valid]
-
-        if len(combined_signals) < META_LABELING_MIN_SAMPLES:
+        if len(meta_feats) < META_LABELING_MIN_SAMPLES:
             self._log(
                 f"  Meta-labeler retrain: insufficient samples "
-                f"({len(combined_signals)} < {META_LABELING_MIN_SAMPLES})."
+                f"({len(meta_feats)} < {META_LABELING_MIN_SAMPLES})."
             )
             return False
 
         try:
             logger.debug(
-                "Meta-labeler retrain: %d samples, %d permnos",
-                len(combined_signals),
-                combined_signals.index.get_level_values(0).nunique()
-                if hasattr(combined_signals.index, "get_level_values")
-                else 1,
-            )
-            meta_feats = MetaLabelingModel.build_meta_features(
-                signals=combined_signals,
-                returns=combined_returns,
-                regime_states=combined_regimes,
-            )
-            labels = MetaLabelingModel.build_labels(
-                signals=combined_signals,
-                actuals=combined_actuals,
+                "Meta-labeler retrain: %d samples, %d permnos (per-asset features)",
+                len(meta_feats),
+                n_permnos_used,
             )
 
             # Capture old model accuracy before retraining (Spec 04 T6)
