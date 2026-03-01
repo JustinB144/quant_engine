@@ -28,6 +28,10 @@ class BacktestRequest(BaseModel):
     risk_management: bool = False
     version: str = "latest"
     full_universe: bool = False
+    holding_period: Optional[int] = None
+    max_positions: Optional[int] = None
+    entry_threshold: Optional[float] = None
+    position_size: Optional[float] = None
 
 
 class PredictRequest(BaseModel):

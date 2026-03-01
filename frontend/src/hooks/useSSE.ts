@@ -7,6 +7,8 @@ interface UseSSEOptions {
   onError?: (event: Event) => void
 }
 
+const EVENT_TYPES = ['status', 'started', 'progress', 'completed', 'failed', 'cancelled', 'done', 'message'] as const
+
 export function useSSE({ url, enabled = true, onMessage, onError }: UseSSEOptions) {
   const sourceRef = useRef<EventSource | null>(null)
   const onMessageRef = useRef(onMessage)
@@ -31,13 +33,25 @@ export function useSSE({ url, enabled = true, onMessage, onError }: UseSSEOption
     const es = new EventSource(fullUrl)
     sourceRef.current = es
 
-    es.onmessage = (e) => onMessageRef.current(e)
+    const handler = (e: MessageEvent) => {
+      onMessageRef.current(e)
+    }
+
+    // Listen for all named events AND the default message event
+    EVENT_TYPES.forEach(type => {
+      es.addEventListener(type, handler)
+    })
+    es.onmessage = handler  // Catch any unnamed events as fallback
+
     es.onerror = (e) => {
       onErrorRef.current?.(e)
       // Auto-reconnect is handled by EventSource spec
     }
 
     return () => {
+      EVENT_TYPES.forEach(type => {
+        es.removeEventListener(type, handler)
+      })
       es.close()
       sourceRef.current = null
     }

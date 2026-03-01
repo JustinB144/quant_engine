@@ -9,7 +9,7 @@ interface JobMonitorProps {
 }
 
 export default function JobMonitor({ jobId, onComplete }: JobMonitorProps) {
-  const { progress, message, status, result, error, isActive } = useJobProgress(jobId)
+  const { progress, progress_message, status, result, error, isActive } = useJobProgress(jobId)
   const completedRef = useRef(false)
 
   // Reset when a new job starts
@@ -18,7 +18,7 @@ export default function JobMonitor({ jobId, onComplete }: JobMonitorProps) {
   }, [jobId])
 
   React.useEffect(() => {
-    if (status === 'completed' && result && onComplete && !completedRef.current) {
+    if (status === 'succeeded' && result && onComplete && !completedRef.current) {
       completedRef.current = true
       onComplete(result)
     }
@@ -41,7 +41,7 @@ export default function JobMonitor({ jobId, onComplete }: JobMonitorProps) {
         <JobStatusBadge status={status} />
       </div>
 
-      {isActive && <JobProgressBar progress={progress} message={message} />}
+      {isActive && <JobProgressBar progress={progress} message={progress_message} />}
 
       {error && (
         <div className="mt-2 font-mono" style={{ fontSize: 11, color: 'var(--accent-red)' }}>
@@ -49,7 +49,7 @@ export default function JobMonitor({ jobId, onComplete }: JobMonitorProps) {
         </div>
       )}
 
-      {status === 'completed' && (
+      {status === 'succeeded' && (
         <div className="mt-2 font-mono" style={{ fontSize: 11, color: 'var(--accent-green)' }}>
           Completed successfully
         </div>

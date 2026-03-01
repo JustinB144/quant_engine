@@ -644,7 +644,9 @@ class TestAutopilotDisagreementSaving:
         member_names = ["global", "regime_0", "regime_1"]
 
         with patch.object(HealthService, "_get_disagreement_db_path",
-                          return_value=disagreement_db):
+                          return_value=disagreement_db), \
+             patch("quant_engine.tracking.disagreement_tracker._get_disagreement_db_path",
+                   return_value=disagreement_db):
             engine._save_disagreement_to_health_tracking(
                 disagreement_values, n_members, member_names,
             )
@@ -701,7 +703,9 @@ class TestAutopilotDisagreementSaving:
         disagreement_values = [0.005, 0.010, 0.020, 0.025, 0.030]
 
         with patch.object(HealthService, "_get_disagreement_db_path",
-                          return_value=disagreement_db):
+                          return_value=disagreement_db), \
+             patch("quant_engine.tracking.disagreement_tracker._get_disagreement_db_path",
+                   return_value=disagreement_db):
             engine._save_disagreement_to_health_tracking(
                 disagreement_values, 3, ["global", "regime_0", "regime_1"],
             )

@@ -36,6 +36,10 @@ def execute_backtest_job(
         horizon=params.get("horizon", 10),
         version=params.get("version", "latest"),
         risk_management=params.get("risk_management", False),
+        holding_period=params.get("holding_period"),
+        max_positions=params.get("max_positions"),
+        entry_threshold=params.get("entry_threshold"),
+        position_size=params.get("position_size"),
         progress_callback=progress_callback,
     )
     return result

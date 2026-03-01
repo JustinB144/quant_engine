@@ -1,4 +1,4 @@
-export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
 
 export interface JobRecord {
   job_id: string
@@ -8,7 +8,7 @@ export interface JobRecord {
   started_at?: string
   completed_at?: string
   progress: number
-  message?: string
+  progress_message?: string
   result?: unknown
   error?: string
 }
@@ -18,7 +18,7 @@ export interface JobEvent {
   data: {
     job_id: string
     progress: number
-    message?: string
+    progress_message?: string
     status?: JobStatus
     result?: unknown
     error?: string

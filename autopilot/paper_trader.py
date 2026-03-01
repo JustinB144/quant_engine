@@ -54,8 +54,17 @@ from ..config import (
     OPTIMIZER_BLEND_WEIGHT,
     REGIME_TRADE_POLICY,
     HEALTH_GATE_MAX_STALENESS_HOURS,
+    SHOCK_MODE_ENABLED,
+    SHOCK_MODE_SHOCK_MAX_PARTICIPATION,
+    SHOCK_MODE_SHOCK_SPREAD_MULT,
+    SHOCK_MODE_SHOCK_MIN_CONFIDENCE,
+    SHOCK_MODE_ELEVATED_MAX_PARTICIPATION,
+    SHOCK_MODE_ELEVATED_SPREAD_MULT,
+    SHOCK_MODE_ELEVATED_MIN_CONFIDENCE,
+    SHOCK_MODE_UNCERTAINTY_THRESHOLD,
 )
-from ..backtest.execution import ExecutionModel
+from ..backtest.execution import ExecutionModel, ShockModePolicy
+from ..regime.shock_vector import ShockVector
 from ..backtest.adv_tracker import ADVTracker
 from ..backtest.cost_calibrator import CostCalibrator
 from ..risk.position_sizer import PositionSizer
@@ -488,6 +497,81 @@ class PaperTrader:
             ),
         }
 
+    @staticmethod
+    def _get_current_shock_vector(
+        ticker: str,
+        pred_row: Optional[Dict],
+        as_of: Optional[datetime] = None,
+    ) -> Optional[ShockVector]:
+        """Construct a ShockVector from prediction-row structural state.
+
+        The paper trader does not run full BOCPD/jump detection; instead it
+        approximates the shock vector from the fields already present in
+        each prediction row (break_probability, regime_entropy, etc.).
+        Returns ``None`` when no structural state is available.
+        """
+        if pred_row is None:
+            return None
+
+        def _sf(key: str) -> Optional[float]:
+            v = pred_row.get(key)
+            if v is None:
+                return None
+            try:
+                f = float(v)
+                return f if np.isfinite(f) else None
+            except (TypeError, ValueError):
+                return None
+
+        break_prob = _sf("break_probability")
+        uncertainty = _sf("regime_entropy") or _sf("structure_uncertainty")
+        # If we have no structural data at all, return None
+        if break_prob is None and uncertainty is None:
+            return None
+
+        regime = int(pred_row.get("regime", 0)) if pred_row.get("regime") is not None else 0
+        hmm_conf = _sf("confidence") or 0.5
+
+        return ShockVector(
+            ticker=ticker,
+            timestamp=as_of or datetime.now(tz=timezone.utc),
+            hmm_regime=max(0, min(3, regime)),
+            hmm_confidence=float(np.clip(hmm_conf, 0.0, 1.0)),
+            hmm_uncertainty=float(np.clip(uncertainty or 0.5, 0.0, 1.0)),
+            bocpd_changepoint_prob=float(np.clip(break_prob or 0.0, 0.0, 1.0)),
+            structural_features={
+                k: v for k, v in {
+                    "drift_score": _sf("drift_score"),
+                    "systemic_stress": _sf("systemic_stress") or _sf("vix_percentile"),
+                }.items() if v is not None
+            },
+        )
+
+    def _compute_shock_policy(
+        self,
+        shock: Optional[ShockVector],
+    ) -> ShockModePolicy:
+        """Derive shock-mode execution policy from a ShockVector.
+
+        Mirrors ``Backtester._compute_shock_policy`` to ensure parity.
+        """
+        if not SHOCK_MODE_ENABLED or shock is None:
+            return ShockModePolicy.normal_default()
+
+        return ShockModePolicy.from_shock_vector(
+            shock,
+            shock_max_participation=SHOCK_MODE_SHOCK_MAX_PARTICIPATION,
+            shock_spread_mult=SHOCK_MODE_SHOCK_SPREAD_MULT,
+            shock_min_confidence=SHOCK_MODE_SHOCK_MIN_CONFIDENCE,
+            elevated_max_participation=SHOCK_MODE_ELEVATED_MAX_PARTICIPATION,
+            elevated_spread_mult=SHOCK_MODE_ELEVATED_SPREAD_MULT,
+            elevated_min_confidence=SHOCK_MODE_ELEVATED_MIN_CONFIDENCE,
+            elevated_uncertainty_threshold=SHOCK_MODE_UNCERTAINTY_THRESHOLD,
+            normal_max_participation=EXEC_MAX_PARTICIPATION,
+            normal_spread_mult=1.0,
+            normal_min_confidence=0.50,
+        )
+
     def _record_fill_feedback(
         self,
         fill,
@@ -582,9 +666,8 @@ class PaperTrader:
         Non-blocking — silently drops records on failure.
         """
         try:
-            from ..api.services.health_service import HealthService
-            svc = HealthService()
-            svc.save_execution_quality_fill(
+            from ..tracking.execution_tracker import save_execution_quality_fill
+            save_execution_quality_fill(
                 symbol=symbol,
                 side=side,
                 predicted_cost_bps=predicted_cost_bps,

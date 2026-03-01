@@ -22,7 +22,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
   addJob: (jobId, jobType) =>
     set((state) => {
       const next = new Map(state.activeJobs)
-      next.set(jobId, { jobId, jobType, progress: 0, message: 'Queued', status: 'pending' })
+      next.set(jobId, { jobId, jobType, progress: 0, message: 'Queued', status: 'queued' })
       return { activeJobs: next }
     }),
 

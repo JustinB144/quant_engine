@@ -2,15 +2,15 @@ import React from 'react'
 import type { JobStatus } from '@/types/jobs'
 
 const STATUS_CONFIG: Record<JobStatus, { color: string; label: string }> = {
-  pending: { color: 'var(--text-tertiary)', label: 'Pending' },
+  queued: { color: 'var(--text-tertiary)', label: 'Queued' },
   running: { color: 'var(--accent-blue)', label: 'Running' },
-  completed: { color: 'var(--accent-green)', label: 'Completed' },
+  succeeded: { color: 'var(--accent-green)', label: 'Succeeded' },
   failed: { color: 'var(--accent-red)', label: 'Failed' },
   cancelled: { color: 'var(--accent-amber)', label: 'Cancelled' },
 }
 
 export default function JobStatusBadge({ status }: { status: JobStatus }) {
-  const config = STATUS_CONFIG[status] ?? STATUS_CONFIG.pending
+  const config = STATUS_CONFIG[status] ?? STATUS_CONFIG.queued
 
   return (
     <span

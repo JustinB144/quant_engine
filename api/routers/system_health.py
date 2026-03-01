@@ -86,7 +86,11 @@ async def model_age() -> ApiResponse:
                     "status": "stale" if age_days and age_days > 30 else "fresh",
                 }
     except (OSError, json.JSONDecodeError, ValueError, ImportError) as e:
-        data = {"age_days": None, "version_id": None, "status": "error", "detail": str(e)}
+        elapsed = (time.monotonic() - t0) * 1000
+        return ApiResponse.fail(
+            f"Could not determine model age: {e}",
+            elapsed_ms=elapsed,
+        )
     elapsed = (time.monotonic() - t0) * 1000
     return ApiResponse.success(data, elapsed_ms=elapsed)
 
@@ -119,6 +123,10 @@ async def data_mode() -> ApiResponse:
             "status": "degraded" if n_fallbacks > 0 else "clean",
         }
     except (OSError, ValueError, ImportError) as e:
-        data = {"mode": "unknown", "status": "error", "detail": str(e)}
+        elapsed = (time.monotonic() - t0) * 1000
+        return ApiResponse.fail(
+            f"Could not determine data mode: {e}",
+            elapsed_ms=elapsed,
+        )
     elapsed = (time.monotonic() - t0) * 1000
     return ApiResponse.success(data, elapsed_ms=elapsed)

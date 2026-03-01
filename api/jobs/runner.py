@@ -132,10 +132,12 @@ class JobRunner:
     # ── Cancel ───────────────────────────────────────────────────────
 
     async def cancel(self, job_id: str) -> bool:
-        """Cancel a running job.
+        """Cancel a running or queued job.
 
         Sets the cooperative cancellation event so the thread-side function
         can detect cancellation, and also cancels the asyncio wrapper task.
+        For queued (non-running) jobs, emits SSE events so subscribers
+        don't hang indefinitely.
         """
         cancel_event = self._cancel_events.get(job_id)
         if cancel_event is not None:
@@ -144,7 +146,20 @@ class JobRunner:
         if task and not task.done():
             task.cancel()
             return True
-        return await self._store.cancel_job(job_id)
+        cancelled = await self._store.cancel_job(job_id)
+        if cancelled:
+            # Notify SSE subscribers that the queued job was cancelled
+            await self._emit(job_id, {
+                "event": "cancelled",
+                "job_id": job_id,
+                "status": "cancelled",
+            })
+            # Also emit terminal "done" event so subscriber loop breaks
+            await self._emit(job_id, {
+                "event": "done",
+                "job_id": job_id,
+            })
+        return cancelled
 
     # ── SSE Event Streaming ──────────────────────────────────────────
 
@@ -157,9 +172,20 @@ class JobRunner:
             rec = await self._store.get_job(job_id)
             if rec:
                 yield {"event": "status", "data": rec.model_dump()}
+                # If already terminal, break immediately
+                if rec.status in (JobStatus.succeeded, JobStatus.failed, JobStatus.cancelled):
+                    return
 
             while True:
-                event = await queue.get()
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=300)  # 5min safety timeout
+                except asyncio.TimeoutError:
+                    # Check if job is in terminal state
+                    rec = await self._store.get_job(job_id)
+                    if rec and rec.status in (JobStatus.succeeded, JobStatus.failed, JobStatus.cancelled):
+                        yield {"event": "done", "job_id": job_id}
+                        break
+                    continue
                 yield event
                 if event.get("event") in ("done", "cancelled"):
                     break

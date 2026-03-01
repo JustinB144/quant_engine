@@ -13,7 +13,7 @@ import type { ModelVersionInfo } from '@/types/models'
 const FALLBACK_DEFAULTS: TrainRequest = {
   horizons: [5, 10, 20],
   feature_mode: 'full',
-  survivorship_filter: true,
+  survivorship: true,
   full_universe: false,
 }
 
@@ -49,7 +49,7 @@ export default function TrainingTab() {
     setConfig({
       horizons: Array.isArray(horizons) ? horizons : FALLBACK_DEFAULTS.horizons,
       feature_mode: typeof featureMode === 'string' ? featureMode : FALLBACK_DEFAULTS.feature_mode,
-      survivorship_filter: true,
+      survivorship: true,
       full_universe: false,
     })
     setUsingServerDefaults(true)
@@ -90,7 +90,7 @@ export default function TrainingTab() {
           </div>
           <div className="flex items-end">
             <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={config.survivorship_filter} onChange={(e) => setConfig({ ...config, survivorship_filter: e.target.checked })} />
+              <input type="checkbox" checked={config.survivorship} onChange={(e) => setConfig({ ...config, survivorship: e.target.checked })} />
               <span className="font-mono" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Survivorship Filter</span>
             </label>
           </div>

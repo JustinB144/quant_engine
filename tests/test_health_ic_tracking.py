@@ -464,7 +464,8 @@ class TestAutopilotICSaving:
             FakeDecision(metrics={"sharpe": 0.5}),  # no IC
         ]
 
-        with patch.object(HealthService, "_get_ic_db_path", return_value=ic_db):
+        with patch.object(HealthService, "_get_ic_db_path", return_value=ic_db), \
+             patch("quant_engine.tracking.ic_tracker._get_ic_db_path", return_value=ic_db):
             engine = AutopilotEngine.__new__(AutopilotEngine)
             engine.logger = MagicMock()
             engine._log = MagicMock()

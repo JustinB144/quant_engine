@@ -1,12 +1,18 @@
 export interface TrainRequest {
   horizons?: number[]
   feature_mode?: string
-  survivorship_filter?: boolean
+  survivorship?: boolean
   full_universe?: boolean
 }
 
 export interface BacktestRequest {
   horizon?: number
+  tickers?: string[]
+  years?: number
+  feature_mode?: string
+  risk_management?: boolean
+  version?: string
+  full_universe?: boolean
   holding_period?: number
   max_positions?: number
   entry_threshold?: number

@@ -43,9 +43,9 @@ class ApiResponse(BaseModel, Generic[T]):
         return cls(ok=True, data=data, meta=meta)
 
     @classmethod
-    def fail(cls, error: str, *, warnings: Optional[List[str]] = None) -> "ApiResponse":
+    def fail(cls, error: str, *, warnings: Optional[List[str]] = None, **meta_kwargs) -> "ApiResponse":
         """Build an error response."""
-        meta = ResponseMeta(warnings=warnings or [])
+        meta = ResponseMeta(warnings=warnings or [], **meta_kwargs)
         return cls(ok=False, error=error, meta=meta)
 
     @classmethod

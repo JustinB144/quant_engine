@@ -1944,9 +1944,8 @@ class AutopilotEngine:
             best_ir = max(ic_ir_values) if ic_ir_values else None
             n_passed = sum(1 for d in decisions if getattr(d, "passed", False))
 
-            from ..api.services.health_service import HealthService
-            svc = HealthService()
-            svc.save_ic_snapshot(
+            from ..tracking.ic_tracker import save_ic_snapshot
+            save_ic_snapshot(
                 ic_mean=best_ic,
                 ic_ir=best_ir,
                 n_candidates=len(candidates),
@@ -1983,9 +1982,8 @@ class AutopilotEngine:
             # Compute fraction of assets with high disagreement
             pct_high = float((d_arr > ENSEMBLE_DISAGREEMENT_WARN_THRESHOLD).mean())
 
-            from ..api.services.health_service import HealthService
-            svc = HealthService()
-            svc.save_disagreement_snapshot(
+            from ..tracking.disagreement_tracker import save_disagreement_snapshot
+            save_disagreement_snapshot(
                 mean_disagreement=mean_d,
                 max_disagreement=max_d,
                 n_members=n_members,

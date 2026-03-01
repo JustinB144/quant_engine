@@ -561,6 +561,9 @@ class TestPaperTraderExecQualityWiring:
 
             with patch.object(
                 HealthService, "_get_exec_quality_db_path", return_value=eq_db,
+            ), patch(
+                "quant_engine.tracking.execution_tracker._get_exec_quality_db_path",
+                return_value=eq_db,
             ):
                 trader._record_execution_quality(
                     symbol="MSFT",

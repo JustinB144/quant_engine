@@ -306,6 +306,10 @@ class PipelineOrchestrator:
         horizon: int = 10,
         version: str = "latest",
         risk_management: bool = False,
+        holding_period: Optional[int] = None,
+        max_positions: Optional[int] = None,
+        entry_threshold: Optional[float] = None,
+        position_size: Optional[float] = None,
         progress_callback=None,
     ) -> Dict[str, Any]:
         """Run backtest on historical data."""
@@ -359,7 +363,17 @@ class PipelineOrchestrator:
 
         if progress_callback:
             progress_callback(0.85, "Running backtest")
-        backtester = Backtester(holding_days=horizon, use_risk_management=risk_management)
+        bt_kwargs: Dict[str, Any] = {
+            "holding_days": holding_period if holding_period is not None else horizon,
+            "use_risk_management": risk_management,
+        }
+        if entry_threshold is not None:
+            bt_kwargs["entry_threshold"] = entry_threshold
+        if max_positions is not None:
+            bt_kwargs["max_positions"] = max_positions
+        if position_size is not None:
+            bt_kwargs["position_size_pct"] = position_size
+        backtester = Backtester(**bt_kwargs)
         result = backtester.run(predictions, state.data, verbose=False)
 
         # Save results
