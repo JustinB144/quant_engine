@@ -173,12 +173,15 @@ class CostCalibrator:
         participation_rate : float
             Fraction of daily volume executed.
         realized_cost_bps : float
-            Total realized slippage in basis points (spread + impact).
+            Total realized slippage in basis points (spread + market impact).
         """
         if participation_rate <= 0 or not np.isfinite(participation_rate):
             return
         if not np.isfinite(realized_cost_bps):
             return
+        assert realized_cost_bps >= 0, (
+            f"Expected non-negative total slippage, got {realized_cost_bps:.2f} bps"
+        )
 
         segment = self.get_marketcap_segment(market_cap)
         self._trade_history[segment].append({

@@ -44,6 +44,7 @@ class ExecutionFill:
     structural_mult: float = 1.0
     urgency_type: str = ""
     no_trade_blocked: bool = False
+    urgency_reduced: bool = False
     cost_details: Dict = field(default_factory=dict)
 
 
@@ -745,6 +746,7 @@ class ExecutionModel:
             raise ValueError("side must be 'buy' or 'sell'")
 
         # Spec 06: urgency-based cost acceptance check
+        _urgency_reduced = False
         if urgency_type in ("entry", "exit") and self.dynamic_costs:
             base_cost = self._base_transaction_cost_bps
             if urgency_type == "exit":
@@ -762,24 +764,35 @@ class ExecutionModel:
                 reduction_factor = max(reduction_factor, min_keep)
                 fill_ratio = float(fill_ratio * reduction_factor)
                 fill_notional = desired * fill_ratio
+                _urgency_reduced = True
                 if fill_ratio < self.min_fill_ratio:
                     return ExecutionFill(
                         fill_price=px, fill_ratio=0.0,
                         participation_rate=0.0,
                         impact_bps=0.0, spread_bps=float(spread_bps),
                         urgency_type=urgency_type,
+                        urgency_reduced=True,
                         cost_details=cost_details,
                     )
+                # Recompute participation and impact with reduced size
+                participation = float(fill_notional / daily_dollar_volume)
+                impact_bps = float(
+                    impact_coeff * np.sqrt(max(0.0, participation))
+                )
                 cost_details["urgency_cost_limit"] = float(cost_limit)
                 cost_details["urgency_reduction_factor"] = float(
                     reduction_factor
                 )
+                cost_details["impact_bps"] = float(impact_bps)
                 logger.debug(
                     "Urgency cost check: total_bps=%.2f > limit=%.2f; "
-                    "reduced fill_ratio to %.3f",
+                    "reduced fill_ratio to %.3f, recomputed "
+                    "participation=%.6f, impact=%.2f bps",
                     total_bps,
                     cost_limit,
                     fill_ratio,
+                    participation,
+                    impact_bps,
                 )
 
         return ExecutionFill(
@@ -791,6 +804,7 @@ class ExecutionModel:
             event_spread_multiplier_applied=evt_mult,
             structural_mult=structural_mult,
             urgency_type=urgency_type,
+            urgency_reduced=_urgency_reduced,
             cost_details=cost_details,
         )
 
@@ -898,7 +912,13 @@ def calibrate_cost_model(
         if participation is not None and float(participation) > 0:
             sqrt_part = np.sqrt(float(participation))
             # Attribute minimum of slippage or a reasonable cap to spread
-            est_spread = min(max(slippage_bps * 0.3, 0.0), slippage_bps)
+            est_spread_raw = min(max(slippage_bps * 0.3, 0.0), slippage_bps)
+            est_spread = max(0.0, est_spread_raw)
+            if est_spread_raw < 0.0:
+                logger.warning(
+                    "Negative spread estimate clipped to 0: original=%.2f bps",
+                    est_spread_raw,
+                )
             est_impact = max(slippage_bps - est_spread, 0.0)
             # impact_coeff = impact_bps / sqrt(participation)
             impact_coeff_obs = (
@@ -920,8 +940,14 @@ def calibrate_cost_model(
     if not spreads_bps:
         return dict(_DEFAULT_COST_PARAMS)
 
+    calibrated_spread = max(0.0, float(np.median(spreads_bps)))
+    if float(np.median(spreads_bps)) < 0.0:
+        logger.warning(
+            "Negative spread estimate clipped to 0: original=%.2f bps",
+            float(np.median(spreads_bps)),
+        )
     calibrated: Dict[str, float] = {
-        "spread_bps": float(np.median(spreads_bps)),
+        "spread_bps": calibrated_spread,
         "impact_coeff": (
             float(np.median(impacts_bps))
             if impacts_bps

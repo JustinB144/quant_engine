@@ -26,7 +26,10 @@ Search for ``# STATUS:`` to locate all annotations.
 from pathlib import Path
 from typing import Dict
 
-from config_structured import get_config as _get_config
+try:
+    from .config_structured import get_config as _get_config
+except ImportError:
+    from config_structured import get_config as _get_config
 
 _cfg = _get_config()
 
@@ -542,6 +545,9 @@ CORRELATION_STRESS_THRESHOLDS: Dict[float, float] = {  # STATUS: ACTIVE — risk
     0.7: 0.70,  # 30% tighter when avg pairwise |corr| > 0.7
     0.8: 0.50,  # 50% tighter when avg pairwise |corr| > 0.8
 }
+
+# ── Risk-Free Rate ──────────────────────────────────────────────────
+RISK_FREE_RATE = 0.04  # STATUS: ACTIVE — backtest/sharpe_utils.py; annualized risk-free rate for Sharpe/Sortino
 
 # ── Risk Governor — Spec 05 ─────────────────────────────────────────
 # Shock budget: reserve fraction of capital for tail events

@@ -73,6 +73,8 @@ from ..config import (
 
 logger = logging.getLogger(__name__)
 from .execution import ExecutionModel, ShockModePolicy
+from .sharpe_utils import compute_sharpe, compute_sortino
+from ..config import RISK_FREE_RATE
 from .cost_calibrator import CostCalibrator
 from ..regime.shock_vector import compute_shock_vectors, ShockVector
 from ..regime.uncertainty_gate import UncertaintyGate
@@ -99,6 +101,8 @@ class Trade:
     fill_ratio: float = 1.0
     entry_impact_bps: float = 0.0
     exit_impact_bps: float = 0.0
+    entry_spread_bps: float = 0.0
+    exit_spread_bps: float = 0.0
     entry_reference_price: float = 0.0   # pre-slippage Open on entry bar
     exit_reference_price: float = 0.0    # pre-slippage Close on exit bar
     market_cap_segment: str = ""         # SPEC-W02: micro/small/mid/large
@@ -482,13 +486,15 @@ class Backtester:
                     fill_price = ref_price * (1.0 + total_bps / 10_000.0)
                     shares = actual_notional / max(1e-9, fill_price)
 
-        # SPEC-W02: record realized cost for online recalibration
+        # SPEC-W02: record realized cost for online recalibration.
+        # realized_cost_bps includes both spread and market impact.
         if self._cost_calibrator is not None and fill.participation_rate > 0:
+            total_slippage = float(fill.spread_bps) + float(impact_bps)
             self._cost_calibrator.record_trade(
                 symbol=str(ticker_id),
                 market_cap=estimated_market_cap,
                 participation_rate=fill.participation_rate,
-                realized_cost_bps=float(impact_bps),
+                realized_cost_bps=float(total_slippage),
             )
 
         # SPEC-W02: include market cap segment in return dict for TCA
@@ -501,6 +507,7 @@ class Backtester:
         return {
             "entry_price": float(fill_price),
             "entry_impact_bps": float(impact_bps),
+            "entry_spread_bps": float(fill.spread_bps),
             "fill_ratio": float(fill.fill_ratio),
             "shares": float(shares),
             "position_size": float(position_size * fill.fill_ratio),
@@ -615,18 +622,21 @@ class Backtester:
                     total_bps = half_spread_bps + ac_cost_bps
                     fill_price = ref_price * (1.0 - total_bps / 10_000.0)
 
-        # SPEC-W02: record realized cost for online recalibration
+        # SPEC-W02: record realized cost for online recalibration.
+        # realized_cost_bps includes both spread and market impact.
         if self._cost_calibrator is not None and fill.participation_rate > 0:
+            total_slippage = float(fill.spread_bps) + float(impact_bps)
             self._cost_calibrator.record_trade(
                 symbol=str(ticker_id),
                 market_cap=estimated_market_cap,
                 participation_rate=fill.participation_rate,
-                realized_cost_bps=float(impact_bps),
+                realized_cost_bps=float(total_slippage),
             )
 
         return {
             "exit_price": float(fill_price),
             "exit_impact_bps": float(impact_bps),
+            "exit_spread_bps": float(fill.spread_bps),
             "exit_fill_ratio": float(fill.fill_ratio),
         }
 
@@ -1042,6 +1052,16 @@ class Backtester:
                         shock_policy.min_confidence_override,
                     )
 
+                # SPEC-W03: Apply uncertainty gate to position size.
+                # Compute adjusted size BEFORE the cost gate so the gate
+                # evaluates the actual trade that will be executed.
+                adjusted_size = self.position_size_pct
+                if shock is not None and shock.hmm_uncertainty is not None:
+                    size_mult = self._uncertainty_gate.compute_size_multiplier(
+                        shock.hmm_uncertainty,
+                    )
+                    adjusted_size *= size_mult
+
                 if EDGE_COST_GATE_ENABLED:
                     entry_vol = (
                         float(ohlcv["Volume"].iloc[entry_idx])
@@ -1049,7 +1069,7 @@ class Backtester:
                     )
                     entry_ref_price = float(ohlcv["Open"].iloc[entry_idx])
                     context = self._execution_context(ohlcv=ohlcv, bar_idx=entry_idx)
-                    desired_notional = self.assumed_capital_usd * self.position_size_pct
+                    desired_notional = self.assumed_capital_usd * adjusted_size
                     uncertainty = (
                         shock.hmm_uncertainty
                         if shock is not None and shock.hmm_uncertainty is not None
@@ -1100,16 +1120,6 @@ class Backtester:
                         )
                         continue
 
-                # SPEC-W03: Apply uncertainty gate to position size.
-                # When regime entropy is high, reduce position size to limit
-                # exposure during uncertain regime transitions.
-                adjusted_size = self.position_size_pct
-                if shock is not None and shock.hmm_uncertainty is not None:
-                    size_mult = self._uncertainty_gate.compute_size_multiplier(
-                        shock.hmm_uncertainty,
-                    )
-                    adjusted_size *= size_mult
-
                 entry_fill = self._simulate_entry(
                     ohlcv=ohlcv,
                     entry_idx=entry_idx,
@@ -1159,6 +1169,8 @@ class Backtester:
                     fill_ratio=float(entry_fill["fill_ratio"]),
                     entry_impact_bps=float(entry_fill["entry_impact_bps"]),
                     exit_impact_bps=float(exit_fill["exit_impact_bps"]),
+                    entry_spread_bps=float(entry_fill.get("entry_spread_bps", 0.0)),
+                    exit_spread_bps=float(exit_fill.get("exit_spread_bps", 0.0)),
                     entry_reference_price=entry_ref,
                     exit_reference_price=exit_ref,
                     market_cap_segment=entry_fill.get("market_cap_segment", ""),
@@ -1279,6 +1291,8 @@ class Backtester:
                         fill_ratio=total_fill_shares / max(1e-9, res["total_shares"]),
                         entry_impact_bps=res.get("entry_impact_bps", 0.0),
                         exit_impact_bps=float(exit_fill["exit_impact_bps"]),
+                        entry_spread_bps=res.get("entry_spread_bps", 0.0),
+                        exit_spread_bps=float(exit_fill.get("exit_spread_bps", 0.0)),
                         entry_reference_price=res.get("entry_reference_price", 0.0),
                         exit_reference_price=exit_ref,
                         market_cap_segment=res.get("market_cap_segment", ""),
@@ -1386,6 +1400,7 @@ class Backtester:
                             "size": pos["size"],
                             "fill_ratio": pos.get("fill_ratio", 1.0),
                             "entry_impact_bps": pos.get("entry_impact_bps", 0.0),
+                            "entry_spread_bps": pos.get("entry_spread_bps", 0.0),
                             "entry_reference_price": pos.get("entry_reference_price", 0.0),
                             "market_cap_segment": pos.get("market_cap_segment", ""),
                             "exit_reason": stop_result.reason.value,
@@ -1422,6 +1437,8 @@ class Backtester:
                             fill_ratio=pos.get("fill_ratio", 1.0),
                             entry_impact_bps=pos.get("entry_impact_bps", 0.0),
                             exit_impact_bps=float(exit_fill["exit_impact_bps"]),
+                            entry_spread_bps=pos.get("entry_spread_bps", 0.0),
+                            exit_spread_bps=float(exit_fill.get("exit_spread_bps", 0.0)),
                             entry_reference_price=pos.get("entry_reference_price", 0.0),
                             exit_reference_price=exit_ref,
                             market_cap_segment=pos.get("market_cap_segment", ""),
@@ -1551,6 +1568,8 @@ class Backtester:
                             fill_ratio=pos.get("fill_ratio", 1.0),
                             entry_impact_bps=pos.get("entry_impact_bps", 0.0),
                             exit_impact_bps=float(exit_fill["exit_impact_bps"]),
+                            entry_spread_bps=pos.get("entry_spread_bps", 0.0),
+                            exit_spread_bps=float(exit_fill.get("exit_spread_bps", 0.0)),
                             entry_reference_price=pos.get("entry_reference_price", 0.0),
                             exit_reference_price=exit_ref,
                             market_cap_segment=pos.get("market_cap_segment", ""),
@@ -1622,13 +1641,23 @@ class Backtester:
                         shock_policy.min_confidence_override,
                     )
 
+                # Compute preliminary adjusted size for cost gate evaluation.
+                # Use uncertainty gate so the gate evaluates the actual
+                # trade size rather than the unadjusted base size.
+                _gate_adjusted_size = self.position_size_pct
+                if shock is not None and shock.hmm_uncertainty is not None:
+                    _gate_size_mult = self._uncertainty_gate.compute_size_multiplier(
+                        shock.hmm_uncertainty,
+                    )
+                    _gate_adjusted_size *= _gate_size_mult
+
                 if EDGE_COST_GATE_ENABLED:
                     entry_vol = (
                         float(ohlcv["Volume"].iloc[entry_idx])
                         if "Volume" in ohlcv.columns else 0.0
                     )
                     context = self._execution_context(ohlcv=ohlcv, bar_idx=entry_idx)
-                    desired_notional = self.assumed_capital_usd * self.position_size_pct
+                    desired_notional = self.assumed_capital_usd * _gate_adjusted_size
                     uncertainty = (
                         shock.hmm_uncertainty
                         if shock is not None and shock.hmm_uncertainty is not None
@@ -1776,6 +1805,7 @@ class Backtester:
                     "shares": float(entry_fill["shares"]),
                     "fill_ratio": float(entry_fill["fill_ratio"]),
                     "entry_impact_bps": float(entry_fill["entry_impact_bps"]),
+                    "entry_spread_bps": float(entry_fill.get("entry_spread_bps", 0.0)),
                     "entry_reference_price": entry_ref,
                     "bars_held": 0,
                     "permno": ticker,
@@ -1822,6 +1852,8 @@ class Backtester:
                 fill_ratio=pos.get("fill_ratio", 1.0),
                 entry_impact_bps=pos.get("entry_impact_bps", 0.0),
                 exit_impact_bps=float(exit_fill["exit_impact_bps"]),
+                entry_spread_bps=pos.get("entry_spread_bps", 0.0),
+                exit_spread_bps=float(exit_fill.get("exit_spread_bps", 0.0)),
                 entry_reference_price=pos.get("entry_reference_price", 0.0),
                 exit_reference_price=exit_ref,
                 market_cap_segment=pos.get("market_cap_segment", ""),
@@ -1872,6 +1904,8 @@ class Backtester:
                 fill_ratio=total_fill_shares / max(1e-9, res["total_shares"]),
                 entry_impact_bps=res.get("entry_impact_bps", 0.0),
                 exit_impact_bps=float(exit_fill["exit_impact_bps"]),
+                entry_spread_bps=res.get("entry_spread_bps", 0.0),
+                exit_spread_bps=float(exit_fill.get("exit_spread_bps", 0.0)),
                 entry_reference_price=res.get("entry_reference_price", 0.0),
                 exit_reference_price=exit_ref,
                 market_cap_segment=res.get("market_cap_segment", ""),
@@ -1886,11 +1920,9 @@ class Backtester:
         verbose: bool = True,
     ) -> BacktestResult:
         """Compute performance metrics from trade list."""
-        # Use position-weighted returns if risk management is on
-        if self.use_risk:
-            returns = np.array([t.net_return * t.position_size / self.position_size_pct for t in trades])
-        else:
-            returns = np.array([t.net_return for t in trades])
+        # All returns are portfolio-weighted: trade_return × position_fraction.
+        # This ensures Sharpe, drawdown, and equity curve use the same basis.
+        returns = np.array([t.net_return * t.position_size for t in trades])
         n = len(returns)
 
         winners = returns > 0
@@ -1917,24 +1949,10 @@ class Backtester:
         # Annualization factor
         ann_factor = 252.0 / self.holding_days
 
-        # Sharpe ratio (excess return over risk-free)
-        rf_annual = 0.04
-        rf_per_trade = rf_annual * self.holding_days / 252.0
-        excess_returns = returns - rf_per_trade
-
-        if returns.std() > 0:
-            sharpe = (excess_returns.mean() / returns.std()) * np.sqrt(ann_factor)
-        else:
-            sharpe = 0
-
-        # Sortino ratio
-        target = 0.0
-        downside_diff = np.minimum(returns - target, 0)
-        downside_deviation = np.sqrt(np.mean(downside_diff**2))
-        if downside_deviation > 0:
-            sortino = (returns.mean() / downside_deviation) * np.sqrt(ann_factor)
-        else:
-            sortino = 0
+        # Sharpe and Sortino via canonical utility
+        rf_per_trade = RISK_FREE_RATE * self.holding_days / 252.0
+        sharpe = compute_sharpe(returns, frequency="per_trade")
+        sortino = compute_sortino(returns, frequency="per_trade")
 
         # Build proper daily equity curve for drawdown
         daily_equity = self._build_daily_equity(trades, price_data)
@@ -1968,15 +1986,11 @@ class Backtester:
         for regime in set(t.regime for t in trades):
             r_trades = [t for t in trades if t.regime == regime]
             r_returns = np.array([t.net_return for t in r_trades])
-            r_excess = r_returns - rf_per_trade
             regime_breakdown[regime] = {
                 "n_trades": len(r_trades),
                 "avg_return": float(r_returns.mean()),
                 "win_rate": float((r_returns > 0).sum() / len(r_returns)),
-                "sharpe": float(
-                    (r_excess.mean() / r_returns.std()) * np.sqrt(ann_factor)
-                    if r_returns.std() > 0 else 0
-                ),
+                "sharpe": compute_sharpe(r_returns, frequency="per_trade"),
             }
 
         # Exit reason breakdown
@@ -2197,8 +2211,6 @@ class Backtester:
             return {}
 
         ann_factor = 252.0 / max(1, self.holding_days)
-        rf_annual = 0.04
-        rf_per_trade = rf_annual * self.holding_days / 252.0
 
         regime_performance: Dict = {}
         regime_groups: Dict[int, List[Trade]] = {}
@@ -2218,19 +2230,10 @@ class Backtester:
             avg_loss = float(r_returns[losers].mean()) if losers.any() else 0.0
 
             # Sharpe ratio
-            excess = r_returns - rf_per_trade
-            if r_returns.std() > 0 and n >= 2:
-                sharpe = float((excess.mean() / r_returns.std()) * np.sqrt(ann_factor))
-            else:
-                sharpe = 0.0
+            sharpe = compute_sharpe(r_returns, frequency="per_trade")
 
             # Sortino ratio
-            downside = np.minimum(r_returns, 0.0)
-            downside_dev = float(np.sqrt(np.mean(downside ** 2)))
-            if downside_dev > 0:
-                sortino = float((r_returns.mean() / downside_dev) * np.sqrt(ann_factor))
-            else:
-                sortino = 0.0
+            sortino = compute_sortino(r_returns, frequency="per_trade")
 
             # Max drawdown within regime trades (sequential)
             cum = np.cumprod(1 + r_returns)
@@ -2298,7 +2301,10 @@ class Backtester:
                     * 10_000
                 )
                 entry_slippages_bps.append(float(entry_slip))
-                entry_predicted_bps.append(float(t.entry_impact_bps))
+                # Total predicted cost (spread + impact) for like-with-like comparison
+                entry_predicted_bps.append(
+                    float(t.entry_spread_bps + t.entry_impact_bps)
+                )
 
                 # SPEC-W02: accumulate per-segment
                 seg = t.market_cap_segment or "unknown"
@@ -2312,7 +2318,10 @@ class Backtester:
                     * 10_000
                 )
                 exit_slippages_bps.append(float(exit_slip))
-                exit_predicted_bps.append(float(t.exit_impact_bps))
+                # Total predicted cost (spread + impact) for like-with-like comparison
+                exit_predicted_bps.append(
+                    float(t.exit_spread_bps + t.exit_impact_bps)
+                )
 
                 # SPEC-W02: accumulate per-segment (exit uses same segment)
                 seg = t.market_cap_segment or "unknown"
@@ -2346,9 +2355,9 @@ class Backtester:
             "slippage_median_bps": float(np.median(all_realized)),
             "slippage_buy_avg_bps": float(entry_arr.mean()),
             "slippage_sell_avg_bps": float(exit_arr.mean()),
-            "predicted_impact_avg_bps": float(all_predicted.mean()),
-            "predicted_vs_realized_corr": corr,
-            "predicted_vs_realized_rmse_bps": rmse_bps,
+            "predicted_total_cost_avg_bps": float(all_predicted.mean()),
+            "predicted_vs_realized_total_cost_corr": corr,
+            "predicted_vs_realized_total_cost_rmse_bps": rmse_bps,
             "total_cost_bps": float(all_realized.sum() / max(1, len(trades))),
         }
 
@@ -2435,9 +2444,9 @@ class Backtester:
                   f"median: {tca['slippage_median_bps']:.2f})")
             print(f"    Buy slippage:  {tca['slippage_buy_avg_bps']:.2f} bps  |  "
                   f"Sell slippage: {tca['slippage_sell_avg_bps']:.2f} bps")
-            print(f"    Predicted impact avg: {tca['predicted_impact_avg_bps']:.2f} bps")
-            print(f"    Predicted vs realized corr: {tca['predicted_vs_realized_corr']:.3f}")
-            print(f"    Predicted vs realized RMSE: {tca['predicted_vs_realized_rmse_bps']:.2f} bps")
+            print(f"    Predicted total cost avg: {tca['predicted_total_cost_avg_bps']:.2f} bps")
+            print(f"    Predicted vs realized total cost corr: {tca['predicted_vs_realized_total_cost_corr']:.3f}")
+            print(f"    Predicted vs realized total cost RMSE: {tca['predicted_vs_realized_total_cost_rmse_bps']:.2f} bps")
             print(f"    Round-trip cost per trade: {tca['total_cost_bps']:.2f} bps")
 
             # SPEC-W02: per-segment cost breakdown
