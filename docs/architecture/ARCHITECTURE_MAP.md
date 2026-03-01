@@ -71,8 +71,8 @@ key_files:
     role: Cross-source validation (IBKR vs Alpaca/AV)
     lines: 743
   - path: data/alternative.py
-    role: WRDS-backed alternative data (earnings, fundamentals, short interest)
-    lines: 902
+    role: WRDS-backed alternative data (earnings, fundamentals, short interest, options flow)
+    lines: 960
   - path: data/feature_store.py
     role: Point-in-time feature store
     lines: 342

@@ -90,14 +90,14 @@ class DataConfig:
     cache_dir: Path = Path("data/cache")
     cache_alpaca_dir: Path = Path("data/cache_alpaca")
     wrds_enabled: bool = True
-    optionmetrics_enabled: bool = False
+    optionmetrics_enabled: bool = True
     kalshi_enabled: bool = False
     default_universe_source: str = "wrds"
     lookback_years: int = 15
     min_bars: int = 500
     cache_max_staleness_days: int = 21
     cache_trusted_sources: List[str] = field(
-        default_factory=lambda: ["wrds", "wrds_delisting", "ibkr", "wrds_taq"]
+        default_factory=lambda: ["wrds", "wrds_delisting", "ibkr", "wrds_taq", "wrds_optionmetrics"]
     )
     max_missing_bar_fraction: float = 0.05
     max_zero_volume_fraction: float = 0.25

@@ -81,6 +81,7 @@ This file is a lookup reference, not a design spec. See architecture docs for ru
 | `run_train.py` | 196 | 0 | 1 | Train the regime-conditional ensemble model. |
 | `run_wrds_daily_refresh.py` | 349 | 0 | 5 | Re-download all daily OHLCV data from WRDS CRSP to replace old cache files |
 | `run_wrds_taq_intraday_download.py` | 680 | 0 | 12 | Download NYSE TAQ Daily Product intraday OHLCV for 128 tickers (2003-present) |
+| `run_wrds_options_download.py` | 420 | 0 | 10 | Download OptionMetrics IV surface and volume/OI data for full universe (2000-present) |
 
 ### `__init__.py`
 - Intent: Quant Engine - Continuous Feature ML Trading System
@@ -184,6 +185,13 @@ This file is a lookup reference, not a design spec. See architecture docs for ru
 - Classes: none
 - Top-level functions: `discover_taq_schema`, `resample_from_1m`, `aggregate_to_1m`, `flush_ticker_data`, `run_download`, `run_verify`, `main`
 - Dependencies: `quant_engine.config`, `quant_engine.data.local_cache`, `quant_engine.data.wrds_provider`, `quant_engine.data.intraday_quality`
+
+### `run_wrds_options_download.py`
+- Intent: Download OptionMetrics IV surface and volume/OI data for full universe from WRDS (2000-present)
+- LOC: 420
+- Classes: none
+- Top-level functions: `download_link_table`, `download_iv_surface`, `download_options_volume`, `_build_full_universe`, `_resolve_target_permnos`, `_build_meta`, `_write_pair`, `_atomic_write_parquet`, `_atomic_write_meta`, `main`
+- Dependencies: `quant_engine.config`, `quant_engine.data.wrds_provider`
 
 ## `api`
 

@@ -23,7 +23,7 @@ Notes:
 |---|---|---|---|---|
 | `DATA_CACHE_DIR` | `ROOT_DIR / "data" / "cache"` | `ACTIVE` | data/loader.py, data/local_cache.py | 32 |
 | `WRDS_ENABLED` | `True` | `ACTIVE` | data/loader.py; try WRDS first, fall back to local cache / IBKR | 33 |
-| `OPTIONMETRICS_ENABLED` | `False` | `PLACEHOLDER` | data/loader.py gates on this but pipeline incomplete | 41 |
+| `OPTIONMETRICS_ENABLED` | `True` | `ACTIVE` | data/loader.py, data/alternative.py, run_wrds_options_download.py; IV surface and volume/OI pipeline | 49 |
 
 ## Execution Contract (Truth Layer)
 

@@ -44,13 +44,10 @@ DATA_CACHE_DIR = ROOT_DIR / "data" / "cache"      # STATUS: ACTIVE — data/load
 DATA_CACHE_ALPACA_DIR = ROOT_DIR / "data" / "cache_alpaca"  # STATUS: ACTIVE — archived Alpaca intraday data; scripts/alpaca_intraday_download.py
 WRDS_ENABLED = _cfg.data.wrds_enabled             # STATUS: ACTIVE — data/loader.py; try WRDS first, fall back to local cache / IBKR
 
-# PLACEHOLDER — OptionMetrics IV surface data integration.
-# Set to True once api/routers/iv_surface.py has a working /iv-surface/heston endpoint
-# and data loader merges OptionMetrics surface into OHLCV panels.
-# Note: data/loader.py does gate on this flag (lines 296, 625), but the upstream
-# OptionMetrics data source is not configured in most environments, so the try/except
-# blocks silently fall through.  Disabled until the full pipeline is verified.
-OPTIONMETRICS_ENABLED = _cfg.data.optionmetrics_enabled  # STATUS: PLACEHOLDER — data/loader.py gates on this but pipeline incomplete
+# OptionMetrics IV surface data integration.
+# data/loader.py gates on this flag to merge IV surface into OHLCV panels.
+# run_wrds_options_download.py populates the cached IV surface and volume/OI data.
+OPTIONMETRICS_ENABLED = _cfg.data.optionmetrics_enabled  # STATUS: ACTIVE — data/loader.py, data/alternative.py, run_wrds_options_download.py
 
 # ── Execution Contract (Truth Layer) ─────────────────────────────────
 RET_TYPE = _cfg.preconditions.ret_type.value      # STATUS: ACTIVE — "log" (log returns) or "simple" (pct returns)

@@ -36,6 +36,7 @@ from ..config import (
     CACHE_MAX_STALENESS_DAYS,
     CACHE_TRUSTED_SOURCES,
     CACHE_WRDS_SPAN_ADVANTAGE_DAYS,
+    DATA_CACHE_DIR,
     DATA_QUALITY_ENABLED,
     LOOKBACK_YEARS,
     MIN_BARS,
@@ -80,6 +81,37 @@ def _ticker_from_meta(meta: Optional[Dict[str, object]]) -> Optional[str]:
         return None
     val = str(meta.get("ticker", "")).upper().strip()
     return val if val else None
+
+
+def _load_cached_iv_surface(permnos: List[str]) -> Optional[pd.DataFrame]:
+    """Load cached IV surface data from options cache files.
+
+    Returns a DataFrame with MultiIndex (permno, date) matching the output
+    format of ``WRDSProvider.get_option_surface_features()``, or ``None``
+    if no cached data is found.
+    """
+    options_dir = DATA_CACHE_DIR / "options"
+    if not options_dir.is_dir():
+        return None
+
+    frames = []
+    for permno in permnos:
+        p = str(permno).strip()
+        cache_path = options_dir / f"{p}_iv_surface.parquet"
+        if not cache_path.exists():
+            continue
+        try:
+            df = pd.read_parquet(cache_path)
+            if df.empty:
+                continue
+            frames.append(df)
+        except (OSError, ValueError) as e:
+            logger.debug("Could not read cached IV surface for PERMNO %s: %s", p, e)
+            continue
+
+    if not frames:
+        return None
+    return pd.concat(frames)
 
 
 def _attach_id_attrs(
@@ -408,11 +440,13 @@ def load_ohlcv(
                     wrds_df = wrds_map[permno_key]
                     if OPTIONMETRICS_ENABLED:
                         try:
-                            opt_surface = wrds_provider.get_option_surface_features(
-                                permnos=[str(permno_key)],
-                                start_date=str(start),
-                                end_date=str(end),
-                            )
+                            opt_surface = _load_cached_iv_surface([str(permno_key)])
+                            if opt_surface is None:
+                                opt_surface = wrds_provider.get_option_surface_features(
+                                    permnos=[str(permno_key)],
+                                    start_date=str(start),
+                                    end_date=str(end),
+                                )
                             merged = _merge_option_surface_from_prefetch(
                                 df=wrds_df,
                                 permno=str(permno_key),
@@ -837,11 +871,13 @@ def load_with_delistings(
                 option_surface = None
                 if OPTIONMETRICS_ENABLED and wrds_data:
                     try:
-                        option_surface = provider.get_option_surface_features(
-                            permnos=list(wrds_data.keys()),
-                            start_date=str(start),
-                            end_date=str(end),
-                        )
+                        option_surface = _load_cached_iv_surface(list(wrds_data.keys()))
+                        if option_surface is None:
+                            option_surface = provider.get_option_surface_features(
+                                permnos=list(wrds_data.keys()),
+                                start_date=str(start),
+                                end_date=str(end),
+                            )
                     except (OSError, ValueError, RuntimeError):
                         option_surface = None
                 for symbol in remaining:

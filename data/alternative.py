@@ -123,6 +123,52 @@ def get_wrds_unavailable_reason() -> Optional[str]:
     return _wrds_import_error
 
 
+def _load_cached_options_volume(
+    permno: str,
+    start_date: str,
+    end_date: str,
+) -> Optional[pd.DataFrame]:
+    """Load cached options volume/OI data from the options cache directory.
+
+    Parameters
+    ----------
+    permno : str
+        CRSP PERMNO to look up.
+    start_date : str
+        Start date (YYYY-MM-DD) for filtering.
+    end_date : str
+        End date (YYYY-MM-DD) for filtering.
+
+    Returns
+    -------
+    pd.DataFrame or None
+        Cached volume data with columns matching ``query_options_volume()``
+        output (date, put_volume, call_volume, put_oi, call_oi), or ``None``
+        if no cache file exists.
+    """
+    try:
+        from ..config import DATA_CACHE_DIR
+    except (ImportError, ValueError):
+        return None
+
+    cache_path = DATA_CACHE_DIR / "options" / f"{permno}_options_volume.parquet"
+    if not cache_path.exists():
+        return None
+    try:
+        df = pd.read_parquet(cache_path)
+        if df.empty:
+            return None
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        mask = (df["date"] >= pd.Timestamp(start_date)) & (df["date"] <= pd.Timestamp(end_date))
+        filtered = df.loc[mask].copy()
+        if filtered.empty:
+            return None
+        return filtered
+    except (OSError, ValueError, KeyError) as e:
+        logger.debug("Could not read cached volume/OI for PERMNO %s: %s", permno, e)
+        return None
+
+
 class AlternativeDataProvider:
     """WRDS-backed alternative data provider.
 
@@ -331,11 +377,14 @@ class AlternativeDataProvider:
             end_date = reference_dt.strftime('%Y-%m-%d')
             start_date = (reference_dt - timedelta(days=365 * 3)).strftime('%Y-%m-%d')
 
-            raw = self._wrds.query_options_volume(
-                permno=permno,
-                start_date=start_date,
-                end_date=end_date,
-            )
+            # Try cached volume/OI file first
+            raw = _load_cached_options_volume(permno, start_date, end_date)
+            if raw is None:
+                raw = self._wrds.query_options_volume(
+                    permno=permno,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
             if raw is None or raw.empty:
                 logger.debug("get_options_flow(%s): no OptionMetrics data", ticker)
                 return None
