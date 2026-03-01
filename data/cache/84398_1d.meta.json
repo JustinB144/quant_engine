@@ -3,7 +3,7 @@
   "format": "parquet",
   "n_bars": 3482,
   "permno": "84398",
-  "saved_at_utc": "2026-03-01T11:32:26.494411+00:00",
+  "saved_at_utc": "2026-03-01T21:12:36.073760+00:00",
   "source": "wrds",
   "start_date": "2011-03-02",
   "ticker": "84398",

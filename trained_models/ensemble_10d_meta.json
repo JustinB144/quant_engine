@@ -1,41 +1,32 @@
 {
   "horizon": 10,
   "train_data_start": "2020-01-02",
-  "train_data_end": "2021-04-21",
+  "train_data_end": "2021-07-14",
   "global_features": [
-    "feat_1",
     "feat_0",
-    "feat_3",
+    "feat_1",
     "feat_13",
-    "feat_5",
-    "feat_9",
-    "feat_4",
-    "feat_6"
+    "feat_12"
   ],
-  "global_cv_corr": 0.9114190933110479,
-  "global_holdout_r2": 0.8717019287768293,
-  "global_holdout_corr": 0.9432904411764707,
-  "global_target_std": 0.02992313787743786,
+  "global_cv_corr": 0.9158383792658946,
+  "global_holdout_r2": 0.8927552471392289,
+  "global_holdout_corr": 0.9402135579284214,
+  "global_target_std": 0.029666802617104675,
   "global_feature_medians": {
-    "feat_0": -0.030010816095710637,
-    "feat_1": -0.021830876582860256,
-    "feat_3": 0.0003173847090412842,
-    "feat_4": -0.0017679791004795566,
-    "feat_5": -0.00580539147698138,
-    "feat_6": -0.016108448265122057,
-    "feat_9": -0.006535976092445169,
-    "feat_13": 0.04521393261001728
+    "feat_0": 0.02127939809315887,
+    "feat_1": 0.05776684446921321,
+    "feat_12": -0.01676564948562213,
+    "feat_13": -0.027860207167108728
   },
-  "global_warnings": [],
+  "global_warnings": [
+    "Only 4 positive-importance features; skipping model",
+    "WARNING: Very few features \u2014 high overfitting risk"
+  ],
   "global_feature_importance": {
-    "feat_1": 483.55855289601504,
-    "feat_0": 520.8813215492705,
-    "feat_3": 228.2948070246466,
-    "feat_13": 192.70516751605695,
-    "feat_5": 284.7167792929464,
-    "feat_9": 241.31519170455846,
-    "feat_4": 218.74666865458906,
-    "feat_6": 151.90774390766745
+    "feat_0": 331.35146054625466,
+    "feat_1": 331.7619662137051,
+    "feat_13": 272.8850355599766,
+    "feat_12": 250.34916722183178
   },
   "regime_models": {
     "0": {
@@ -43,54 +34,141 @@
       "features": [
         "feat_1",
         "feat_0",
-        "feat_3",
-        "feat_13",
-        "feat_5",
-        "feat_9",
-        "feat_4",
-        "feat_6"
+        "feat_12",
+        "feat_7"
       ],
-      "cv_corr": 0.9114190933110479,
-      "holdout_r2": 0.874172638792527,
-      "holdout_corr": 0.9418141592920355,
-      "target_std": 0.029972326172705774,
+      "cv_corr": 0.8728743394804994,
+      "holdout_r2": 0.8482406167487041,
+      "holdout_corr": 0.9216447672221988,
+      "target_std": 0.029161208432500415,
       "feature_medians": {
-        "feat_0": -0.030010816095710637,
-        "feat_1": -0.021830876582860256,
-        "feat_3": 0.0003173847090412842,
-        "feat_4": -0.0017679791004795566,
-        "feat_5": -0.00580539147698138,
-        "feat_6": -0.016108448265122057,
-        "feat_9": -0.006535976092445169,
-        "feat_13": 0.04521393261001728
+        "feat_0": 0.009971866720778686,
+        "feat_1": 0.0436966060064159,
+        "feat_7": -0.03303735115599356,
+        "feat_12": 0.011988222646046112
       },
-      "n_samples": 1445,
+      "n_samples": 430,
+      "warnings": [
+        "Only 4 positive-importance features; skipping model",
+        "WARNING: Very few features \u2014 high overfitting risk"
+      ],
+      "feature_importance": {
+        "feat_1": 537.9889634686181,
+        "feat_0": 536.2604467272788,
+        "feat_12": 357.17665793912306,
+        "feat_7": 379.662256646539
+      }
+    },
+    "1": {
+      "name": "trending_bear",
+      "features": [
+        "feat_0",
+        "feat_1",
+        "feat_3",
+        "feat_2",
+        "feat_4",
+        "feat_7"
+      ],
+      "cv_corr": 0.8682105389384562,
+      "holdout_r2": 0.8686074698510836,
+      "holdout_corr": 0.9543057431346068,
+      "target_std": 0.030194219584993527,
+      "feature_medians": {
+        "feat_0": 0.08393006811762622,
+        "feat_1": 0.13626498501541628,
+        "feat_2": -0.05608346293547173,
+        "feat_3": -0.12721072313675322,
+        "feat_4": -0.14405486224807096,
+        "feat_7": 0.0023156209215635794
+      },
+      "n_samples": 445,
       "warnings": [],
       "feature_importance": {
-        "feat_1": 483.55855289601504,
-        "feat_0": 520.8813215492705,
-        "feat_3": 228.2948070246466,
-        "feat_13": 192.70516751605695,
-        "feat_5": 284.7167792929464,
-        "feat_9": 241.31519170455846,
-        "feat_4": 218.74666865458906,
-        "feat_6": 151.90774390766745
+        "feat_0": 475.99999999999994,
+        "feat_1": 586.9999999999999,
+        "feat_3": 295.99999999999994,
+        "feat_2": 332.99999999999994,
+        "feat_4": 242.99999999999997,
+        "feat_7": 303.99999999999994
+      }
+    },
+    "2": {
+      "name": "mean_reverting",
+      "features": [
+        "feat_0",
+        "feat_1",
+        "feat_2",
+        "feat_7",
+        "feat_5",
+        "feat_14"
+      ],
+      "cv_corr": 0.8549835628127196,
+      "holdout_r2": 0.8606445128210182,
+      "holdout_corr": 0.9293048822384241,
+      "target_std": 0.029333492986277084,
+      "feature_medians": {
+        "feat_0": 0.052428312085778715,
+        "feat_1": 0.0851747754820763,
+        "feat_2": -0.0362216132911474,
+        "feat_5": -0.1442228787416438,
+        "feat_7": 0.01178356982966574,
+        "feat_14": 0.0490841521975998
+      },
+      "n_samples": 411,
+      "warnings": [],
+      "feature_importance": {
+        "feat_0": 229.10396982142373,
+        "feat_1": 257.0629343271763,
+        "feat_2": 178.66683192066674,
+        "feat_7": 106.25141280406156,
+        "feat_5": 130.03917918254805,
+        "feat_14": 122.64183862098929
+      }
+    },
+    "3": {
+      "name": "high_volatility",
+      "features": [
+        "feat_1",
+        "feat_0",
+        "feat_10",
+        "feat_5",
+        "feat_3"
+      ],
+      "cv_corr": 0.8881821642429661,
+      "holdout_r2": 0.8815752780991725,
+      "holdout_corr": 0.9479543930248154,
+      "target_std": 0.029883924069312662,
+      "feature_medians": {
+        "feat_0": -0.018727142153385404,
+        "feat_1": -0.015956100542986205,
+        "feat_3": -0.06567747542322128,
+        "feat_5": -0.079372494527678,
+        "feat_10": 0.1003792436004643
+      },
+      "n_samples": 420,
+      "warnings": [],
+      "feature_importance": {
+        "feat_1": 378.72138482299255,
+        "feat_0": 349.548550727866,
+        "feat_10": 176.91463271479097,
+        "feat_5": 207.34845336982718,
+        "feat_3": 228.27309233224318
       }
     }
   },
-  "train_time_seconds": 7.09381103515625,
-  "total_samples": 1700,
+  "train_time_seconds": 5.578978061676025,
+  "total_samples": 2000,
   "structural_weights_applied": false,
   "artifact_checksums": {
-    "ensemble_10d_regime0_model.pkl": "8b8b41bb9e996d2291fdb2b2162d42af834308da4f72393a2d8675aabcd66e9c",
-    "ensemble_10d_regime0_scaler.pkl": "ad2305136f6ac8eecef8d34bb5a7272ce32e0d65de00ca4724069eb868e34b67",
-    "ensemble_10d_global_scaler.pkl": "ad2305136f6ac8eecef8d34bb5a7272ce32e0d65de00ca4724069eb868e34b67",
+    "ensemble_10d_regime0_model.pkl": "d3fa46e116ef3a86c804134f84be9fd33236366e90b6f3c385accd0f145f3710",
+    "ensemble_10d_regime0_scaler.pkl": "03ac2e0e5eee3d1f1ea58eec0763c302a892d26575c0bf864c00cbc2bfb0226b",
+    "ensemble_10d_global_scaler.pkl": "86128b374a9594c393aba0b86db5bbb0db7e81b7be1b28140996d2ad755d0493",
     "ensemble_10d_regime1_model.pkl": "2396e4cb54a1d02b99cc12bb9b7487792fdbc529138f1ba63f15684ebad170f8",
-    "ensemble_10d_regime2_scaler.pkl": "6a922268c66d0fc8a9cbc34d715eafba525770bdb787e3641987feb73a9846c8",
-    "ensemble_10d_regime1_scaler.pkl": "6a922268c66d0fc8a9cbc34d715eafba525770bdb787e3641987feb73a9846c8",
+    "ensemble_10d_regime2_scaler.pkl": "938030f6a380a5b9bd8757c8703d366a6e03a13d7276d3a2cf1afe19a00dda5f",
+    "ensemble_10d_regime1_scaler.pkl": "2b42fe540e10f38f538dbd2555062cf83ef03e115edb53bdac2dae003d05732d",
     "ensemble_10d_regime2_model.pkl": "8bd17d640d697bfd7f875cc2eb10ca9bbd656925be817e0670b8ca93dee84f2f",
-    "ensemble_10d_global_model.pkl": "8b8b41bb9e996d2291fdb2b2162d42af834308da4f72393a2d8675aabcd66e9c",
-    "ensemble_10d_regime3_scaler.pkl": "6a922268c66d0fc8a9cbc34d715eafba525770bdb787e3641987feb73a9846c8",
+    "ensemble_10d_global_model.pkl": "f9edaa181fdb11997fe2acfadd7a93d84c7408c39e4a6be08dff479a41c0b7f6",
+    "ensemble_10d_regime3_scaler.pkl": "9be552d4801b47099a8b6a99bc02323a4ece2b0dfd9daf8ff563e5ada8ae1bfe",
     "ensemble_10d_calibrator.pkl": "a6fdb59d5fab03d3dc4ea203ac44bb210f7f3a692d2783006153d76246feaa38",
     "ensemble_10d_regime3_model.pkl": "b1baa49998993699df49f14659ac0b0220332a9e997c01e0d03cc6f8bc077e67"
   }
