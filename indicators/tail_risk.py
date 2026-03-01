@@ -102,10 +102,11 @@ class TailRiskAnalyzer:
 
         for i in range(self.window, n):
             seg = returns[i - self.window: i]
-            k = max(1, int(np.ceil(alpha * len(seg))))
-            # np.partition is O(n) vs O(n log n) for full sort
-            sorted_seg = np.partition(seg, k)[:k]
-            es[i] = np.mean(sorted_seg)
+            k = max(1, int(np.floor(alpha * len(seg))))
+            if k >= len(seg):
+                k = len(seg) - 1
+            sorted_returns = np.sort(seg)  # ascending
+            es[i] = float(np.mean(sorted_returns[:k]))
 
         return es
 

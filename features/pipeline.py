@@ -13,7 +13,10 @@ Feature causality types:
     RESEARCH_ONLY — may contain cross-sectional or other non-causal info;
                     for offline analysis only
 """
+import logging
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 import numpy as np
 import pandas as pd
@@ -414,8 +417,8 @@ FEATURE_METADATA: Dict[str, Dict[str, str]] = {
 def get_feature_type(feature_name: str) -> str:
     """Return the causality type for a feature.
 
-    Returns ``'CAUSAL'`` for any feature not explicitly registered, since
-    indicator-based features are backward-looking by construction.
+    Returns ``'UNKNOWN'`` for any feature not explicitly registered
+    (fail-closed: unknown features are excluded from strict modes).
     """
     entry = FEATURE_METADATA.get(feature_name)
     if entry is not None:
@@ -423,14 +426,48 @@ def get_feature_type(feature_name: str) -> str:
     # Interaction features (prefixed X_) inherit CAUSAL from their inputs
     if feature_name.startswith("X_"):
         return "CAUSAL"
-    # Default: assume causal (indicators are backward-looking)
-    return "CAUSAL"
+    # Fail-closed: unknown features are not assumed causal
+    logger.warning("Feature '%s' has no causality metadata, treating as UNKNOWN", feature_name)
+    return "UNKNOWN"
 
 
-def _filter_causal_features(features: "pd.DataFrame") -> "pd.DataFrame":
-    """Keep only features with type CAUSAL or END_OF_DAY (drop RESEARCH_ONLY)."""
-    keep = [c for c in features.columns if get_feature_type(c) != "RESEARCH_ONLY"]
-    return features[keep]
+def _filter_causal_features(
+    features: "pd.DataFrame",
+    causality_filter: str = "CAUSAL",
+) -> "pd.DataFrame":
+    """Filter features based on causality mode.
+
+    Modes:
+        CAUSAL        — strictest: only causally safe features (excludes UNKNOWN)
+        RESEARCH_ONLY — includes CAUSAL + RESEARCH_ONLY, excludes END_OF_DAY (excludes UNKNOWN)
+        END_OF_DAY    — all features available after market close (includes UNKNOWN)
+    """
+    if causality_filter == "RESEARCH_ONLY":
+        allowed_types = {"CAUSAL", "RESEARCH_ONLY"}
+        return features[[c for c in features.columns if get_feature_type(c) in allowed_types]]
+    elif causality_filter == "CAUSAL":
+        return features[[c for c in features.columns if get_feature_type(c) == "CAUSAL"]]
+    elif causality_filter == "END_OF_DAY":
+        # All types allowed after market close (permissive, includes UNKNOWN)
+        return features
+    else:
+        raise ValueError(f"Unknown causality_filter: {causality_filter}")
+
+
+def _check_feature_metadata_coverage(feature_names: List[str]) -> None:
+    """Warn if >10% of computed features lack metadata entries."""
+    if not feature_names:
+        return
+    unknown = [f for f in feature_names if f not in FEATURE_METADATA and not f.startswith("X_")]
+    coverage_pct = 1.0 - len(unknown) / len(feature_names)
+    if len(unknown) > 0 and coverage_pct < 0.90:
+        logger.warning(
+            "Feature metadata coverage is %.1f%% (%d/%d features lack metadata): %s",
+            coverage_pct * 100,
+            len(unknown),
+            len(feature_names),
+            unknown[:20],
+        )
 
 
 def _build_indicator_set() -> list:
@@ -596,7 +633,7 @@ def compute_indicator_features(
 
     for ind in indicators:
         try:
-            result = ind.calculate(df)
+            result = ind.compute(df)
             features[ind.name] = result
         except (ValueError, RuntimeError) as e:
             if verbose:
@@ -1036,6 +1073,7 @@ class FeaturePipeline:
             self.include_options_factors = include_options_factors
         self.research_config = research_config or ResearchFactorConfig()
         self.verbose = verbose
+        self._metadata_coverage_checked = False
 
     def compute(
         self,
@@ -1145,6 +1183,17 @@ class FeaturePipeline:
         # Deduplicate columns (e.g. RSI_5 from both indicator set and
         # multiscale features) — keep the first occurrence.
         if features.columns.duplicated().any():
+            dupes = features.columns[features.columns.duplicated()].tolist()
+            if dupes:
+                logger.warning("Duplicate features detected and dropped (kept first): %s", dupes)
+                try:
+                    from ..config import STRICT_FEATURE_DEDUP
+                except ImportError:
+                    STRICT_FEATURE_DEDUP = False
+                if STRICT_FEATURE_DEDUP:
+                    raise ValueError(
+                        f"Strict dedup enabled: {len(dupes)} duplicate feature(s): {dupes}"
+                    )
             features = features.loc[:, ~features.columns.duplicated()]
 
         # Winsorize: clip each feature to [1st, 99th] percentile
@@ -1159,7 +1208,7 @@ class FeaturePipeline:
         # Production mode: filter out RESEARCH_ONLY features
         if self.production_mode:
             pre_count = features.shape[1]
-            features = _filter_causal_features(features)
+            features = _filter_causal_features(features, causality_filter="CAUSAL")
             if self.verbose:
                 dropped = pre_count - features.shape[1]
                 print(f"  Production mode: dropped {dropped} research-only features")
@@ -1189,6 +1238,11 @@ class FeaturePipeline:
                         f"  Causality filter ({causality_filter}): "
                         f"dropped {len(violated)} non-matching features"
                     )
+
+        # Feature metadata coverage check (runs once per pipeline instance)
+        if not self._metadata_coverage_checked:
+            self._metadata_coverage_checked = True
+            _check_feature_metadata_coverage(features.columns.tolist())
 
         if self.verbose:
             print(f"  Total features: {features.shape[1]}")

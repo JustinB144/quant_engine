@@ -31,7 +31,7 @@ from quant_engine.config import (
     CONFIDENCE_THRESHOLD,
     CPCV_PARTITIONS, CPCV_TEST_PARTITIONS, SPA_BOOTSTRAPS,
     SURVIVORSHIP_UNIVERSE_NAME,
-    FEATURE_MODE_DEFAULT, WF_MAX_TRAIN_DATES,
+    FEATURE_MODE_DEFAULT, WF_MAX_TRAIN_DATES, LOOKBACK_YEARS,
 )
 from quant_engine.data.loader import load_universe, load_survivorship_universe, warn_if_survivorship_biased
 from quant_engine.data.survivorship import filter_panel_by_point_in_time_universe
@@ -62,7 +62,8 @@ def main():
     parser.add_argument("--tickers", nargs="+", help="Specific tickers")
     parser.add_argument("--horizon", type=int, default=10, help="Prediction/holding horizon (days)")
     parser.add_argument("--no-validate", action="store_true", help="Skip walk-forward validation")
-    parser.add_argument("--years", type=int, default=15, help="Years of data for backtest")
+    parser.add_argument("--years", type=int, default=LOOKBACK_YEARS,
+                        help=f"Years of data for backtest (default: {LOOKBACK_YEARS})")
     parser.add_argument(
         "--feature-mode",
         choices=["minimal", "core", "full"],
@@ -106,6 +107,7 @@ def main():
     manifest = build_run_manifest(
         run_type="backtest",
         config_snapshot=vars(args),
+        script_name="run_backtest",
     )
 
     if args.tickers:

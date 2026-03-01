@@ -5,10 +5,25 @@ A comprehensive library of technical indicators that can be combined
 into trading strategies.
 """
 
+import logging
+
 import numpy as np
 import pandas as pd
 from typing import Optional, Tuple
 from abc import ABC, abstractmethod
+
+logger = logging.getLogger(__name__)
+
+
+def _sanitize_output(result: pd.Series) -> pd.Series:
+    """Replace inf/-inf with NaN in indicator output."""
+    if hasattr(result, 'values'):
+        inf_mask = np.isinf(result.values)
+        inf_count = inf_mask.sum()
+        if inf_count > 0:
+            logger.debug("Replaced %d inf values with NaN in indicator output", inf_count)
+            return result.replace([np.inf, -np.inf], np.nan)
+    return result
 
 
 class Indicator(ABC):
@@ -24,6 +39,11 @@ class Indicator(ABC):
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Calculate indicator values. Returns a Series."""
         pass
+
+    def compute(self, df: pd.DataFrame) -> pd.Series:
+        """Calculate indicator values with inf sanitization."""
+        result = self.calculate(df)
+        return _sanitize_output(result)
 
 
 # =============================================================================
@@ -456,11 +476,14 @@ class Aroon(Indicator):
         """Compute indicator values from the provided OHLCV dataframe."""
         period = self.period
 
+        # Standard Aroon: 100 when most recent bar is the high/low, 0 when oldest bar is.
+        # np.argmax returns index from start of window (0 = oldest, period = newest).
+        # Aroon Up = (np.argmax(x) / period) * 100
         def aroon_up(x):
-            return ((period - np.argmax(x)) / period) * 100
+            return (np.argmax(x) / period) * 100
 
         def aroon_down(x):
-            return ((period - np.argmin(x)) / period) * 100
+            return (np.argmin(x) / period) * 100
 
         aroon_u = df['High'].rolling(window=period + 1).apply(aroon_up, raw=True)
         aroon_d = df['Low'].rolling(window=period + 1).apply(aroon_down, raw=True)
@@ -1022,17 +1045,17 @@ class PivotHigh(Indicator):
         return f"PivotHi_{self.left_bars}_{self.right_bars}"
 
     def calculate(self, df: pd.DataFrame) -> pd.Series:
-        """Compute indicator values from the provided OHLCV dataframe."""
+        """Compute indicator values from the provided OHLCV dataframe.
+
+        PivotHigh uses a trailing window (causal). A pivot is identified when
+        the current bar is the highest in the last N bars (no future data used).
+        """
         high = df['High']
         pivot_window = self.left_bars + self.right_bars + 1
-        left = self.left_bars
 
-        # Find pivot highs using raw numpy arrays
-        pivots = high.rolling(window=pivot_window, center=True).apply(
-            lambda x: x[left] if len(x) == pivot_window and
-                      x[left] == x.max() else np.nan,
-            raw=True
-        )
+        # Causal trailing window: current bar is highest in trailing window
+        rolling_max = high.rolling(window=pivot_window, center=False).max()
+        pivots = high.where(high == rolling_max, np.nan)
 
         # Current high vs most recent pivot high
         pivot_high_level = pivots.ffill()
@@ -1058,17 +1081,17 @@ class PivotLow(Indicator):
         return f"PivotLo_{self.left_bars}_{self.right_bars}"
 
     def calculate(self, df: pd.DataFrame) -> pd.Series:
-        """Compute indicator values from the provided OHLCV dataframe."""
+        """Compute indicator values from the provided OHLCV dataframe.
+
+        PivotLow uses a trailing window (causal). A pivot is identified when
+        the current bar is the lowest in the last N bars (no future data used).
+        """
         low = df['Low']
         pivot_window = self.left_bars + self.right_bars + 1
-        left = self.left_bars
 
-        # Find pivot lows using raw numpy arrays
-        pivots = low.rolling(window=pivot_window, center=True).apply(
-            lambda x: x[left] if len(x) == pivot_window and
-                      x[left] == x.min() else np.nan,
-            raw=True
-        )
+        # Causal trailing window: current bar is lowest in trailing window
+        rolling_min = low.rolling(window=pivot_window, center=False).min()
+        pivots = low.where(low == rolling_min, np.nan)
 
         # Current low vs most recent pivot low
         pivot_low_level = pivots.ffill()
@@ -2716,7 +2739,9 @@ class RegimePersistence(Indicator):
         """Compute indicator values from the provided OHLCV dataframe."""
         close = df['Close']
         sma = close.rolling(window=self.period).mean()
-        above = (close > sma).astype(int)
+        # Use float to preserve NaN where sma is NaN
+        above = (close > sma).astype(float)
+        above[sma.isna()] = np.nan
 
         n = len(df)
         result = np.full(n, np.nan)
@@ -2725,8 +2750,11 @@ class RegimePersistence(Indicator):
 
         for i in range(self.period - 1, n):
             current_state = above.iloc[i]
-            if np.isnan(current_state):
+            # Check NaN BEFORE int conversion (NaN regime → NaN persistence)
+            if pd.isna(current_state):
+                result[i] = np.nan
                 continue
+            current_state = int(current_state)
             if current_state == prev_state:
                 count += 1
             else:
@@ -2897,8 +2925,15 @@ INDICATOR_ALIASES = {
 
 
 def create_indicator(name: str, **kwargs) -> Indicator:
-    """Create an indicator by name with given parameters."""
-    indicators = get_all_indicators()
-    if name not in indicators:
-        raise ValueError(f"Unknown indicator: {name}")
-    return indicators[name](**kwargs)
+    """Create an indicator by name with given parameters.
+
+    Checks the main registry first, then INDICATOR_ALIASES.
+    """
+    registry = get_all_indicators()
+    if name in registry:
+        return registry[name](**kwargs)
+    # Check aliases before raising error
+    canonical = INDICATOR_ALIASES.get(name)
+    if canonical is not None:
+        return canonical(**kwargs)
+    raise ValueError(f"Unknown indicator: {name}")

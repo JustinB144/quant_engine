@@ -77,8 +77,16 @@ CONTRACT_FILES = {
 
 
 def load_edges():
-    """Load dependency edges from Job 2 output."""
-    edges_path = ROOT / "docs" / "audit" / "DEPENDENCY_EDGES.json"
+    """Load dependency edges from Job 2 output.
+
+    Canonical audit data layout:
+    docs/audit/data/DEPENDENCY_EDGES.json  — Job 2 output
+    docs/audit/data/INTERFACE_CONTRACTS.yaml — Job 3 output
+    """
+    edges_path = ROOT / "docs" / "audit" / "data" / "DEPENDENCY_EDGES.json"
+    if not edges_path.exists():
+        # Fallback to legacy path for backward compatibility
+        edges_path = ROOT / "docs" / "audit" / "DEPENDENCY_EDGES.json"
     with open(edges_path) as f:
         data = json.load(f)
     return data["edges"]

@@ -96,6 +96,10 @@ class RetrainTrigger:
         with open(self.metadata_file, 'w') as f:
             json.dump(self.metadata, f, indent=2, default=str)
 
+    def save_metadata(self) -> None:
+        """Public API for persisting retrain metadata."""
+        return self._save_metadata()
+
     def add_trade_result(
         self,
         is_winner: bool,

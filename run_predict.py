@@ -44,11 +44,13 @@ def main():
     parser.add_argument("--tickers", nargs="+", help="Specific symbols (resolved to PERMNO)")
     parser.add_argument("--horizon", type=int, default=10, help="Prediction horizon (days)")
     parser.add_argument("--version", type=str, default="latest", help="Model version to use")
+    parser.add_argument("--years", type=int, default=2,
+                        help="Data lookback years for prediction (default: 2)")
     parser.add_argument(
         "--feature-mode",
-        choices=["core", "full"],
+        choices=["minimal", "core", "full"],
         default=FEATURE_MODE_DEFAULT,
-        help="Feature profile: core (reduced complexity) or full",
+        help="Feature profile: minimal (~20 indicators), core (reduced complexity), or full",
     )
     parser.add_argument("--output", type=str, help="Save predictions to CSV")
     parser.add_argument("--top", type=int, default=20, help="Show top N signals")
@@ -77,6 +79,7 @@ def main():
     manifest = build_run_manifest(
         run_type="predict",
         config_snapshot=vars(args),
+        script_name="run_predict",
     )
 
     if args.tickers:
@@ -94,7 +97,7 @@ def main():
     # ── Load data ──
     if verbose:
         print(f"\n── Loading data ({len(tickers)} tickers) ──")
-    data = load_universe(tickers, years=2, verbose=verbose)
+    data = load_universe(tickers, years=args.years, verbose=verbose)
 
     if not data:
         print("ERROR: No data loaded.")

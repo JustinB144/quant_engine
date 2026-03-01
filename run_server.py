@@ -17,6 +17,9 @@ import logging
 import sys
 from pathlib import Path
 
+# Ensure quant_engine is importable regardless of CWD
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 logger = logging.getLogger(__name__)
 
 FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
@@ -38,8 +41,8 @@ def main() -> None:
 
     import uvicorn
 
-    from api.config import ApiSettings
-    from api.main import create_app
+    from quant_engine.api.config import ApiSettings
+    from quant_engine.api.main import create_app
 
     settings = ApiSettings(host=args.host, port=args.port, log_level=args.log_level)
     app = create_app(settings)

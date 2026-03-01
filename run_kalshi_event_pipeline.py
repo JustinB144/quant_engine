@@ -4,9 +4,12 @@ Run the integrated Kalshi event-time pipeline inside quant_engine.
 """
 import argparse
 import json
+import logging
 from pathlib import Path
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 from quant_engine.config import (
     KALSHI_DB_PATH,
@@ -218,6 +221,19 @@ def main():
                 "reasons": list(decision.reasons),
                 "metrics": dict(decision.metrics),
             }
+
+    # ── Write reproducibility manifest ──
+    try:
+        from quant_engine.reproducibility import build_run_manifest, write_run_manifest
+        manifest = build_run_manifest(
+            run_type="kalshi_event_pipeline",
+            config_snapshot=vars(args),
+            script_name="run_kalshi_event_pipeline",
+        )
+        manifest["extra"] = report
+        write_run_manifest(manifest, output_dir=RESULTS_DIR)
+    except Exception as e:
+        logger.warning("Could not write reproducibility manifest: %s", e)
 
     if verbose:
         print(json.dumps(report, indent=2, default=str))

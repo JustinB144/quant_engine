@@ -80,6 +80,7 @@ def main():
     manifest = build_run_manifest(
         run_type="autopilot",
         config_snapshot=vars(args),
+        script_name="run_autopilot",
     )
 
     if args.tickers:

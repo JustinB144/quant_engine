@@ -2546,7 +2546,10 @@ def build_contracts():
 def main():
     data = build_contracts()
 
-    output_path = Path(__file__).resolve().parent.parent / "docs" / "audit" / "INTERFACE_CONTRACTS.yaml"
+    # Canonical audit data layout:
+    # docs/audit/data/DEPENDENCY_EDGES.json  — Job 2 output
+    # docs/audit/data/INTERFACE_CONTRACTS.yaml — Job 3 output
+    output_path = Path(__file__).resolve().parent.parent / "docs" / "audit" / "data" / "INTERFACE_CONTRACTS.yaml"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(output_path, "w") as f:

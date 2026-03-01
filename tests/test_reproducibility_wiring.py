@@ -221,11 +221,16 @@ class TestWriteRunManifest:
         result_path = write_run_manifest(manifest, output_dir=tmp_path)
 
         assert result_path.exists()
-        assert result_path.name == "run_manifest.json"
+        assert result_path.name.startswith("run_manifest_")
+        assert result_path.name.endswith(".json")
 
         loaded = json.loads(result_path.read_text())
         assert loaded["run_type"] == "backtest"
         assert loaded["config"]["horizon"] == 10
+
+        # Verify the "latest" symlink was created
+        latest = tmp_path / "run_manifest_latest.json"
+        assert latest.exists() or latest.is_symlink()
 
     def test_creates_output_dir_if_missing(self, tmp_path):
         from quant_engine.reproducibility import build_run_manifest, write_run_manifest

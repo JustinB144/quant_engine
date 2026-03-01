@@ -566,7 +566,10 @@ def main():
     }
 
     # Write JSON
-    output_dir = ROOT / "docs" / "audit"
+    # Canonical audit data layout:
+    # docs/audit/data/DEPENDENCY_EDGES.json  — Job 2 output
+    # docs/audit/data/INTERFACE_CONTRACTS.yaml — Job 3 output
+    output_dir = ROOT / "docs" / "audit" / "data"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     json_path = output_dir / "DEPENDENCY_EDGES.json"

@@ -13,11 +13,14 @@ Usage:
     python3 run_wrds_daily_refresh.py --delisted        # Download all delisted stocks
 """
 import argparse
+import logging
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List
+
+logger = logging.getLogger(__name__)
 
 import pandas as pd
 import yaml
@@ -909,6 +912,23 @@ def main():
     print(f"  Elapsed: {elapsed:.1f}s")
     print(f"\n  Features unlocked: ~15 (ATR, NATR, Parkinson Vol, GK Vol, YZ Vol,")
     print(f"    Stochastic, Williams %R, CCI, Candlestick Body, Gap %, etc.)")
+
+    # ── Write reproducibility manifest ──
+    try:
+        from quant_engine.reproducibility import build_run_manifest, write_run_manifest
+        from quant_engine.config import RESULTS_DIR as _RESULTS_DIR
+        manifest = build_run_manifest(
+            run_type="wrds_daily_refresh",
+            config_snapshot=vars(args),
+            script_name="run_wrds_daily_refresh",
+            extra={
+                "tickers_refreshed": len(downloaded),
+                "refresh_date": datetime.now().isoformat(),
+            },
+        )
+        write_run_manifest(manifest, output_dir=_RESULTS_DIR)
+    except Exception as e:
+        logger.warning("Could not write reproducibility manifest: %s", e)
 
 
 if __name__ == "__main__":

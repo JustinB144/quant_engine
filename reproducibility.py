@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import platform
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -50,6 +52,7 @@ def build_run_manifest(
     datasets: Optional[Dict[str, pd.DataFrame]] = None,
     mapping_version: Optional[str] = None,
     extra: Optional[Dict[str, Any]] = None,
+    script_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Build a reproducibility manifest for a pipeline run.
@@ -60,13 +63,26 @@ def build_run_manifest(
         datasets: Optional dict of name -> DataFrame for row counts/checksums.
         mapping_version: Current event-market mapping version.
         extra: Additional metadata to include.
+        script_name: Name of the entry-point script (e.g. "run_backtest").
     """
     manifest: Dict[str, Any] = {
         "run_type": run_type,
+        "script": script_name or run_type,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "git_commit": _get_git_commit(),
+        "python_version": sys.version,
+        "platform": platform.platform(),
         "mapping_version": mapping_version or "unknown",
     }
+
+    # Add resolved runtime provenance if available
+    try:
+        from quant_engine.config import RESULTS_DIR
+        model_version_path = Path(RESULTS_DIR) / "model_version.txt"
+        if model_version_path.exists():
+            manifest["model_version"] = model_version_path.read_text().strip()
+    except Exception:
+        pass
 
     # Config snapshot (convert non-serializable values)
     safe_config: Dict[str, Any] = {}
@@ -99,13 +115,30 @@ def build_run_manifest(
 def write_run_manifest(
     manifest: Dict[str, Any],
     output_dir: Path,
-    filename: str = "run_manifest.json",
+    filename: Optional[str] = None,
 ) -> Path:
-    """Write manifest to JSON file. Returns the output path."""
+    """Write manifest to JSON file. Returns the output path.
+
+    When *filename* is ``None`` (the default), a timestamped filename is
+    generated so that successive runs never overwrite each other.  A
+    ``run_manifest_latest.json`` symlink is also created/updated for
+    convenience.
+    """
+    if filename is None:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"run_manifest_{ts}.json"
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / filename
     with open(path, "w") as f:
         json.dump(manifest, f, indent=2, default=str)
+    # Also write/overwrite a "latest" symlink for convenience
+    latest = output_dir / "run_manifest_latest.json"
+    try:
+        if latest.is_symlink() or latest.exists():
+            latest.unlink()
+        latest.symlink_to(path.name)
+    except OSError:
+        pass  # Symlinks may not be supported on all platforms
     return path
 
 

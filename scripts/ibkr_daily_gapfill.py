@@ -49,8 +49,8 @@ except RuntimeError:
 
 from quant_engine.config import UNIVERSE_FULL
 from quant_engine.data.local_cache import (
-    _normalize_ohlcv_columns,
-    _write_cache_meta,
+    normalize_ohlcv_columns,
+    write_cache_meta,
     load_ohlcv_with_meta,
 )
 
@@ -202,7 +202,7 @@ def merge_and_save(
     if existing_path is not None and existing_path.exists():
         try:
             wrds_df = pd.read_parquet(existing_path)
-            wrds_df = _normalize_ohlcv_columns(wrds_df)
+            wrds_df = normalize_ohlcv_columns(wrds_df)
             if not isinstance(wrds_df.index, pd.DatetimeIndex):
                 wrds_df.index = pd.DatetimeIndex(
                     pd.to_datetime(wrds_df.index, errors="coerce")
@@ -256,7 +256,7 @@ def merge_and_save(
 
     # Write meta.json
     source = "wrds+ibkr" if wrds_df is not None and len(wrds_df) > 0 else "ibkr"
-    _write_cache_meta(
+    write_cache_meta(
         data_path=out_path,
         ticker=ticker,
         df=merged,

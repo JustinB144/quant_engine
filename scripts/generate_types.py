@@ -10,6 +10,8 @@ backend schema definitions.
 from __future__ import annotations
 
 import importlib
+import logging
+import pkgutil
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -19,13 +21,32 @@ from typing import Any, Dict, List, Optional, Set, get_args, get_origin
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+logger = logging.getLogger(__name__)
+
 from pydantic import BaseModel
 
-# Pydantic model modules to introspect
-SCHEMA_MODULES = [
-    "api.schemas.envelope",
-    "api.schemas.compute",
-]
+
+def discover_schema_modules() -> list:
+    """Auto-discover all modules in api.schemas package."""
+    import api.schemas as schemas_pkg
+    modules = []
+    for importer, modname, ispkg in pkgutil.iter_modules(schemas_pkg.__path__):
+        if modname.startswith("_"):
+            continue  # Skip __init__.py etc.
+        full_name = f"api.schemas.{modname}"
+        modules.append(full_name)
+    return sorted(modules)
+
+
+try:
+    SCHEMA_MODULES = discover_schema_modules()
+    logger.info("Auto-discovered schema modules: %s", SCHEMA_MODULES)
+except Exception:
+    logger.warning("Auto-discovery failed; using fallback schema list")
+    SCHEMA_MODULES = [
+        "api.schemas.envelope",
+        "api.schemas.compute",
+    ]
 
 
 def python_type_to_ts(annotation: Any, seen: Set[str] | None = None) -> str:
