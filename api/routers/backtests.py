@@ -85,6 +85,10 @@ async def run_backtest(
     from ..jobs.backtest_job import execute_backtest_job
 
     rec = await store.create_job("backtest", req.model_dump())
-    await runner.submit(rec.job_id, execute_backtest_job, req.model_dump())
-    invalidate_on_backtest(cache)
+    await runner.submit(
+        rec.job_id,
+        execute_backtest_job,
+        req.model_dump(),
+        on_success=lambda: invalidate_on_backtest(cache),
+    )
     return ApiResponse.success({"job_id": rec.job_id, "job_type": "backtest", "status": "queued"})

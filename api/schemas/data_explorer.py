@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class UniverseInfo(BaseModel):
@@ -33,5 +33,5 @@ class TickerDetail(BaseModel):
     ticker: str
     permno: Optional[str] = None
     found: bool = False
-    bars: List[OHLCVBar] = []
+    bars: List[OHLCVBar] = Field(default_factory=list)
     total_bars: Optional[int] = None

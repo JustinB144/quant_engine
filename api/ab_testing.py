@@ -300,6 +300,33 @@ class ABTest:
         p_value = float(np.mean(np.abs(bootstrap_diffs) >= abs(observed_diff)))
         return p_value
 
+    @staticmethod
+    def _newey_west_variance(centered: np.ndarray, max_lag: int) -> float:
+        """Compute Newey-West HAC variance estimate for a single series.
+
+        Parameters
+        ----------
+        centered : np.ndarray
+            Mean-centered return series.
+        max_lag : int
+            Maximum lag for Bartlett kernel.
+
+        Returns
+        -------
+        float
+            HAC-consistent variance estimate (non-negative).
+        """
+        T = len(centered)
+        gamma_0 = float(np.var(centered, ddof=0))
+        nw_var = gamma_0
+
+        for lag in range(1, min(max_lag + 1, T)):
+            weight = 1.0 - lag / (max_lag + 1)  # Bartlett kernel
+            gamma_lag = float(np.mean(centered[lag:] * centered[:-lag]))
+            nw_var += 2.0 * weight * gamma_lag
+
+        return max(nw_var, 1e-20)
+
     def _newey_west_test(
         self,
         returns_a: np.ndarray,
@@ -308,30 +335,24 @@ class ABTest:
     ) -> Tuple[float, float]:
         """HAC-consistent t-test using Newey-West standard errors.
 
+        Computes Newey-West variance separately for each arm, then
+        combines them for the two-sample t-test.
+
         Returns
         -------
         t_stat : float
         p_value : float
         """
         diff = returns_a.mean() - returns_b.mean()
-        combined = np.concatenate([
-            returns_a - returns_a.mean(),
-            returns_b - returns_b.mean(),
-        ])
 
-        T = len(combined)
-        gamma_0 = float(np.var(combined, ddof=0))
-        nw_var = gamma_0
+        nw_var_a = self._newey_west_variance(
+            returns_a - returns_a.mean(), max_lag
+        )
+        nw_var_b = self._newey_west_variance(
+            returns_b - returns_b.mean(), max_lag
+        )
 
-        for lag in range(1, min(max_lag + 1, T)):
-            weight = 1.0 - lag / (max_lag + 1)  # Bartlett kernel
-            gamma_lag = float(np.mean(combined[lag:] * combined[:-lag]))
-            nw_var += 2.0 * weight * gamma_lag
-
-        # Ensure non-negative variance
-        nw_var = max(nw_var, 1e-20)
-
-        se = np.sqrt(nw_var * (1.0 / len(returns_a) + 1.0 / len(returns_b)))
+        se = np.sqrt(nw_var_a / len(returns_a) + nw_var_b / len(returns_b))
         if se < 1e-20:
             return 0.0, 1.0
         t_stat = diff / se

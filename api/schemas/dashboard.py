@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DashboardKPIs(BaseModel):
@@ -26,7 +26,7 @@ class RegimeInfo(BaseModel):
 
     current_label: str = "Unavailable"
     as_of: str = "---"
-    current_probs: Dict[str, float] = {}
+    current_probs: Dict[str, float] = Field(default_factory=dict)
     transition_matrix: Optional[List[List[float]]] = None
     prob_history: Optional[List[Dict[str, Any]]] = None
 

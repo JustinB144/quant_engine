@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CycleReport(BaseModel):
@@ -18,9 +18,9 @@ class StrategyInfo(BaseModel):
 
     strategy_id: str
     promoted_at: Optional[str] = None
-    params: Dict[str, Any] = {}
+    params: Dict[str, Any] = Field(default_factory=dict)
     score: float = 0.0
-    metrics: Dict[str, Any] = {}
+    metrics: Dict[str, Any] = Field(default_factory=dict)
     status: str = "active"
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SignalRow(BaseModel):
@@ -22,5 +22,5 @@ class SignalsSummary(BaseModel):
 
     available: bool = False
     horizon: int = 10
-    signals: List[Dict[str, Any]] = []
+    signals: List[Dict[str, Any]] = Field(default_factory=list)
     total: int = 0

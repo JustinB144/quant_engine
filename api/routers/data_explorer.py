@@ -9,7 +9,8 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query
+from pydantic import BaseModel
 
 from ..cache.manager import CacheManager
 from ..deps.auth import require_auth
@@ -21,6 +22,13 @@ from ..services.data_service import DataService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/data", tags=["data"])
+
+
+class BatchIndicatorRequest(BaseModel):
+    """Request body for batch indicator computation."""
+
+    timeframe: str = "1d"
+    indicators: List[str] = ["rsi_14", "macd", "bollinger_20"]
 
 # ── Timeframe mapping ──────────────────────────────────────────────────
 
@@ -53,12 +61,14 @@ def _find_cached_parquet(cache_dir: Path, ticker: str, timeframe: str) -> Option
             if p.stem.split("_")[0].upper() == ticker_upper:
                 return p
         # Range-based pattern: TICKER_TIMEFRAME_START_END.parquet
-        for p in sorted(cache_dir.glob(f"{ticker_upper}_{pat}_*.parquet")):
-            return p
+        matches = list(cache_dir.glob(f"{ticker_upper}_{pat}_*.parquet"))
+        if matches:
+            return max(matches, key=lambda p: p.stat().st_mtime)
         # Also try: TICKER_daily_START_END.parquet for 1d
         if pat == "daily":
-            for p in sorted(cache_dir.glob(f"{ticker_upper}_daily_*.parquet")):
-                return p
+            matches = list(cache_dir.glob(f"{ticker_upper}_daily_*.parquet"))
+            if matches:
+                return max(matches, key=lambda p: p.stat().st_mtime)
 
     return None
 
@@ -462,11 +472,12 @@ async def get_ticker_indicators(
 @router.post("/ticker/{ticker}/indicators/batch", dependencies=[Depends(require_auth)])
 async def batch_indicators(
     ticker: str,
-    timeframe: str = Query("1d"),
-    indicators: List[str] = Query(default=["rsi_14", "macd", "bollinger_20"]),
+    body: BatchIndicatorRequest = Body(),
     cache: CacheManager = Depends(get_cache),
 ) -> ApiResponse:
     """Compute multiple indicators in one pass over the OHLCV data."""
+    timeframe = body.timeframe
+    indicators = body.indicators
     cache_key = f"indicators_batch:{ticker.upper()}:{timeframe}:{','.join(sorted(indicators))}"
     cached = cache.get(cache_key)
     if cached is not None:

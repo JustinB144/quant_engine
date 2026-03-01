@@ -29,13 +29,26 @@ class JobRunner:
         job_id: str,
         fn: Callable[..., Any],
         *args: Any,
+        on_success: Optional[Callable[[], None]] = None,
         **kwargs: Any,
     ) -> None:
-        """Schedule *fn* to run in a thread for *job_id*."""
-        task = asyncio.create_task(self._run(job_id, fn, *args, **kwargs))
+        """Schedule *fn* to run in a thread for *job_id*.
+
+        Parameters
+        ----------
+        on_success : optional callback invoked after the job succeeds.
+        """
+        task = asyncio.create_task(self._run(job_id, fn, *args, on_success=on_success, **kwargs))
         self._active_tasks[job_id] = task
 
-    async def _run(self, job_id: str, fn: Callable, *args, **kwargs) -> None:
+    async def _run(
+        self,
+        job_id: str,
+        fn: Callable,
+        *args: Any,
+        on_success: Optional[Callable[[], None]] = None,
+        **kwargs: Any,
+    ) -> None:
         async with self._sem:
             now = datetime.now(timezone.utc).isoformat()
             await self._store.update_status(job_id, JobStatus.running, started_at=now)
@@ -57,6 +70,8 @@ class JobRunner:
                     job_id, JobStatus.succeeded, completed_at=now, result=result or {}
                 )
                 await self._store.update_progress(job_id, 1.0, "Done")
+                if on_success is not None:
+                    on_success()
                 await self._emit(job_id, {"event": "completed", "job_id": job_id})
             except asyncio.CancelledError:
                 now = datetime.now(timezone.utc).isoformat()

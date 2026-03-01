@@ -19,6 +19,7 @@ class ResponseMeta(BaseModel):
     predictor_type: Optional[str] = None
     walk_forward_mode: Optional[str] = None
     regime_suppressed: Optional[bool] = None
+    regime_trade_policy: Optional[str] = None
     feature_pipeline_version: Optional[str] = None
     model_version: Optional[str] = None
     sizing_method: Optional[str] = None

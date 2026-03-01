@@ -503,5 +503,52 @@ class TestVariantMetrics(unittest.TestCase):
         self.assertGreater(v.profit_factor, 1.0)
 
 
+class TestNeweyWestPerArm(unittest.TestCase):
+    """T7 (SPEC_AUDIT_FIX_03): Newey-West computes variance per arm."""
+
+    def test_known_difference_significant(self):
+        """Two arms with clearly different means should be significant."""
+        np.random.seed(123)
+        test = _make_test(min_trades=30)
+
+        # Arm A: mean ~0, Arm B: mean ~0.05 (large gap, small std)
+        returns_a = np.random.randn(200) * 0.01
+        returns_b = np.random.randn(200) * 0.01 + 0.05
+
+        t_stat, p_value = test._newey_west_test(returns_a, returns_b)
+
+        self.assertTrue(np.isfinite(t_stat))
+        self.assertLess(p_value, 0.01, "Known large difference should be significant")
+        # t-stat should be negative because mean_a < mean_b
+        self.assertLess(t_stat, 0.0)
+
+    def test_identical_arms_not_significant(self):
+        """Two arms drawn from the same distribution should not be significant."""
+        np.random.seed(456)
+        test = _make_test(min_trades=30)
+
+        returns_a = np.random.randn(200) * 0.01
+        returns_b = np.random.randn(200) * 0.01
+
+        _, p_value = test._newey_west_test(returns_a, returns_b)
+
+        self.assertGreater(p_value, 0.05, "Same distribution should not be significant")
+
+    def test_per_arm_variance_differs_from_pooled(self):
+        """Per-arm variance should differ from pooled when arms have different volatility."""
+        np.random.seed(789)
+        test = _make_test()
+
+        # Arm A: low vol, Arm B: high vol (same mean)
+        returns_a = np.random.randn(100) * 0.005
+        returns_b = np.random.randn(100) * 0.050
+
+        nw_a = test._newey_west_variance(returns_a - returns_a.mean(), 10)
+        nw_b = test._newey_west_variance(returns_b - returns_b.mean(), 10)
+
+        # The two variances should be very different (factor ~100x)
+        self.assertGreater(nw_b / max(nw_a, 1e-30), 10.0)
+
+
 if __name__ == "__main__":
     unittest.main()

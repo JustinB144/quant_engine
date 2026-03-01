@@ -3,14 +3,14 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class QuickStatus(BaseModel):
     """Lightweight health check response."""
 
     status: str = "healthy"
-    checks: Dict[str, str] = {}
+    checks: Dict[str, str] = Field(default_factory=dict)
     timestamp: Optional[str] = None
 
 
@@ -35,13 +35,13 @@ class SystemHealthDetail(BaseModel):
     wf_score: float = 0.0
     execution_score: float = 0.0
     complexity_score: float = 0.0
-    survivorship_checks: List[AlertEvent] = []
-    data_quality_checks: List[AlertEvent] = []
-    promotion_checks: List[AlertEvent] = []
-    wf_checks: List[AlertEvent] = []
-    execution_checks: List[AlertEvent] = []
-    complexity_checks: List[AlertEvent] = []
-    strengths: List[AlertEvent] = []
-    promotion_funnel: Dict[str, int] = {}
-    feature_inventory: Dict[str, int] = {}
-    knob_inventory: List[Dict[str, str]] = []
+    survivorship_checks: List[AlertEvent] = Field(default_factory=list)
+    data_quality_checks: List[AlertEvent] = Field(default_factory=list)
+    promotion_checks: List[AlertEvent] = Field(default_factory=list)
+    wf_checks: List[AlertEvent] = Field(default_factory=list)
+    execution_checks: List[AlertEvent] = Field(default_factory=list)
+    complexity_checks: List[AlertEvent] = Field(default_factory=list)
+    strengths: List[AlertEvent] = Field(default_factory=list)
+    promotion_funnel: Dict[str, int] = Field(default_factory=dict)
+    feature_inventory: Dict[str, int] = Field(default_factory=dict)
+    knob_inventory: List[Dict[str, str]] = Field(default_factory=list)

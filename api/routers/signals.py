@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 
 from fastapi import APIRouter, Depends
@@ -23,7 +24,9 @@ def _get_signal_meta_fields() -> dict:
         meta_fields["regime_suppressed"] = any(
             not p["enabled"] for p in REGIME_TRADE_POLICY.values()
         )
-        meta_fields["regime_trade_policy"] = REGIME_TRADE_POLICY
+        meta_fields["regime_trade_policy"] = json.dumps(
+            REGIME_TRADE_POLICY, default=str
+        )
     except (ImportError, AttributeError):
         pass
     try:

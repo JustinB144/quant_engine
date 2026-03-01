@@ -7,9 +7,10 @@ Endpoints:
 from __future__ import annotations
 
 import logging
-from typing import Dict
 
 from fastapi import APIRouter
+
+from ..schemas.envelope import ApiResponse, ResponseMeta
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ router = APIRouter(prefix="/api/diagnostics", tags=["diagnostics"])
 
 
 @router.get("")
-async def get_diagnostics() -> Dict:
+async def get_diagnostics() -> ApiResponse:
     """Run system self-diagnostic analysis.
 
     Correlates health metrics with recent performance to identify
@@ -38,7 +39,7 @@ async def get_diagnostics() -> Dict:
             trade_history={},
         )
 
-        return {
+        data = {
             "status": report.status,
             "primary_cause": report.primary_cause,
             "diagnostics": [
@@ -56,10 +57,14 @@ async def get_diagnostics() -> Dict:
             "recent_sharpe": report.recent_sharpe,
             "timestamp": report.timestamp,
         }
+
+        # No live data connected — return placeholder with ok=False
+        return ApiResponse(
+            ok=False,
+            error="No live data connected. Showing schema only.",
+            data=data,
+            meta=ResponseMeta(data_mode="placeholder"),
+        )
     except Exception as e:
         logger.warning("Diagnostics computation failed: %s", e)
-        return {
-            "status": "error",
-            "message": str(e),
-            "diagnostics": [],
-        }
+        return ApiResponse.fail(f"Diagnostics computation failed: {e}")

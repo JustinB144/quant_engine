@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query'
-import { get } from '@/api/client'
-import { DATA_UNIVERSE, DATA_STATUS, DATA_TICKER, DATA_TICKER_BARS, DATA_TICKER_INDICATORS } from '@/api/endpoints'
+import { useQuery, useMutation } from '@tanstack/react-query'
+import { get, post } from '@/api/client'
+import { DATA_UNIVERSE, DATA_STATUS, DATA_TICKER, DATA_TICKER_BARS, DATA_TICKER_INDICATORS, DATA_TICKER_INDICATORS_BATCH } from '@/api/endpoints'
 import type { UniverseInfo, TickerDetail } from '@/types/data'
 
 export interface TickerCacheEntry {
@@ -100,5 +100,13 @@ export function useTickerIndicators(
       ),
     enabled: !!ticker && indicators.length > 0,
     staleTime: 300_000,
+  })
+}
+
+/** Batch indicator computation (POST with JSON body) */
+export function useBatchIndicators(ticker: string) {
+  return useMutation({
+    mutationFn: (body: { timeframe?: string; indicators?: string[] }) =>
+      post<IndicatorsResponse>(DATA_TICKER_INDICATORS_BATCH(ticker), body),
   })
 }
