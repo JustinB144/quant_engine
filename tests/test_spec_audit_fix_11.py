@@ -10,7 +10,7 @@ from indicators.indicators import (
     PivotLow,
     RegimePersistence,
     create_indicator,
-    INDICATOR_ALIASES,
+    get_all_indicators,
     _sanitize_output,
 )
 from indicators.tail_risk import TailRiskAnalyzer
@@ -211,18 +211,20 @@ class TestRegimePersistenceNaN:
 
 
 # =============================================================================
-# T5: INDICATOR_ALIASES in create_indicator()
+# T5: Indicator registry in create_indicator()
+# (INDICATOR_ALIASES removed per SPEC_AUDIT_FIX_24 T3 — all aliases are now
+#  in get_all_indicators() registry directly)
 # =============================================================================
 
 class TestIndicatorAliases:
-    """create_indicator() should resolve aliases."""
+    """create_indicator() should resolve registry entries."""
 
-    def test_alias_resolution(self):
-        """All aliases should create valid indicators."""
-        for alias_name, alias_cls in INDICATOR_ALIASES.items():
-            ind = create_indicator(alias_name)
-            assert isinstance(ind, alias_cls), (
-                f"Alias '{alias_name}' did not create {alias_cls.__name__}"
+    def test_registry_resolution(self):
+        """All registry entries should create valid indicators."""
+        for name, cls in get_all_indicators().items():
+            ind = create_indicator(name)
+            assert isinstance(ind, cls), (
+                f"Registry entry '{name}' did not create {cls.__name__}"
             )
 
     def test_unknown_indicator_raises(self):

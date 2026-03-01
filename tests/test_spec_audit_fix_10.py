@@ -304,86 +304,9 @@ class TestFeatureCollisionLogging(unittest.TestCase):
 
 
 # ===========================================================================
-# T7: FeatureVersion frozen dataclass
+# T7/T8: FeatureVersion tests removed — features/version.py was deleted
+# as dead code per SPEC_AUDIT_FIX_24 T3.
 # ===========================================================================
-
-class TestFeatureVersionFrozen(unittest.TestCase):
-    """T7: FeatureVersion should be truly immutable."""
-
-    def test_frozen_instance(self):
-        from quant_engine.features.version import FeatureVersion
-        v = FeatureVersion(feature_names=("b", "a", "c"))
-        # Should be sorted
-        self.assertEqual(v.feature_names, ("a", "b", "c"))
-        # Should raise on mutation
-        with self.assertRaises(AttributeError):
-            v.feature_names = ("x",)
-
-    def test_feature_names_is_tuple(self):
-        from quant_engine.features.version import FeatureVersion
-        v = FeatureVersion(feature_names=["z", "a"])
-        self.assertIsInstance(v.feature_names, tuple)
-        self.assertEqual(v.feature_names, ("a", "z"))
-
-    def test_hash_and_dict(self):
-        from quant_engine.features.version import FeatureVersion
-        v = FeatureVersion(feature_names=["b", "a"])
-        d = v.to_dict()
-        self.assertIsInstance(d["feature_names"], list)
-        self.assertEqual(d["feature_names"], ["a", "b"])
-        self.assertEqual(d["n_features"], 2)
-        self.assertTrue(len(d["version_hash"]) > 0)
-
-
-# ===========================================================================
-# T8: Compatibility check reports extra features
-# ===========================================================================
-
-class TestCompatibilityCheck(unittest.TestCase):
-    """T8: check_compatibility should report extra features and drift_warning."""
-
-    def test_feature_version_check_compatibility(self):
-        from quant_engine.features.version import FeatureVersion
-        current = FeatureVersion(feature_names=["a", "b", "c", "d"])
-        model = FeatureVersion(feature_names=["a", "b", "c"])
-        result = current.check_compatibility(model)
-        self.assertTrue(result["compatible"])
-        self.assertEqual(result["missing_features"], [])
-        self.assertEqual(result["extra_features"], ["d"])
-        self.assertTrue(result["drift_warning"])
-
-    def test_feature_version_missing_features(self):
-        from quant_engine.features.version import FeatureVersion
-        current = FeatureVersion(feature_names=["a", "b"])
-        model = FeatureVersion(feature_names=["a", "b", "c"])
-        result = current.check_compatibility(model)
-        self.assertFalse(result["compatible"])
-        self.assertEqual(result["missing_features"], ["c"])
-        self.assertFalse(result["drift_warning"])
-
-    def test_registry_check_compatibility_drift(self):
-        from quant_engine.features.version import FeatureVersion, FeatureRegistry
-        import tempfile, os
-        with tempfile.TemporaryDirectory() as tmpdir:
-            path = os.path.join(tmpdir, "versions.json")
-            registry = FeatureRegistry(storage_path=__import__("pathlib").Path(path))
-            v = FeatureVersion(feature_names=["a", "b", "c"])
-            version_hash = registry.register(v)
-
-            result = registry.check_compatibility(version_hash, ["a", "b", "c", "d"])
-            self.assertTrue(result["compatible"])
-            self.assertTrue(result["drift_warning"])
-            self.assertIn("d", result["extra"])
-
-    def test_exact_match_no_drift(self):
-        from quant_engine.features.version import FeatureVersion
-        current = FeatureVersion(feature_names=["a", "b"])
-        model = FeatureVersion(feature_names=["a", "b"])
-        result = current.check_compatibility(model)
-        self.assertTrue(result["compatible"])
-        self.assertFalse(result["drift_warning"])
-        self.assertEqual(result["extra_features"], [])
-        self.assertEqual(result["missing_features"], [])
 
 
 if __name__ == "__main__":

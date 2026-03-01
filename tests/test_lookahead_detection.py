@@ -9,12 +9,16 @@ This test is designed for CI — any new lookahead leak in any feature will
 cause a failure.
 """
 
+import ast
+import inspect
 import unittest
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from quant_engine.features.pipeline import FeaturePipeline
+from quant_engine.indicators.indicators import Indicator
 
 
 def _make_synthetic_ohlcv(n: int = 300, seed: int = 42) -> pd.DataFrame:
@@ -138,6 +142,68 @@ class TestLookaheadDetection(unittest.TestCase):
                 f"Lookahead bias (trim={trim}) in {len(lookahead)} features: "
                 f"{list(lookahead.index[:10])}",
             )
+
+
+class TestPrefixReplay(unittest.TestCase):
+    """Prefix-replay tests catch center=True and other subtle lookahead leaks."""
+
+    def test_prefix_replay_all_features(self):
+        """Every feature at time t must be identical whether computed on
+        data[:t+1] (prefix) or data[:t+N] (extended).
+
+        This catches center=True rolling windows, forward-fill from future
+        data, and any other look-ahead leak.
+        """
+        full_data = _make_synthetic_ohlcv(n=300, seed=42)
+        pipe = FeaturePipeline(
+            feature_mode="full",
+            include_interactions=False,
+            include_cross_asset_factors=False,
+            include_options_factors=False,
+            include_research_factors=True,
+        )
+        full_features, _ = pipe.compute(full_data, compute_targets_flag=False)
+
+        # Check multiple truncation points
+        for cut_point in [100, 150, 200, 250]:
+            prefix_data = full_data.iloc[:cut_point].copy()
+            prefix_features, _ = pipe.compute(prefix_data, compute_targets_flag=False)
+
+            # Features at the last bar of the prefix must match
+            check_idx = prefix_features.index[-1]
+            common_cols = prefix_features.columns.intersection(full_features.columns)
+            for col in common_cols:
+                prefix_val = prefix_features.loc[check_idx, col]
+                full_val = full_features.loc[check_idx, col]
+                if pd.notna(prefix_val) and pd.notna(full_val):
+                    self.assertAlmostEqual(
+                        prefix_val,
+                        full_val,
+                        places=10,
+                        msg=(
+                            f"Look-ahead detected in '{col}' at bar {cut_point}: "
+                            f"prefix={prefix_val}, full={full_val}"
+                        ),
+                    )
+
+
+class TestNoCenterTrue(unittest.TestCase):
+    """AST-based detection of center=True in rolling windows."""
+
+    def test_no_center_true_in_indicators(self):
+        """Verify no indicator uses center=True rolling windows."""
+        for cls in Indicator.__subclasses__():
+            source = inspect.getsource(cls)
+            tree = ast.parse(source)
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.keyword) and
+                    node.arg == "center" and
+                    isinstance(node.value, ast.Constant) and
+                    node.value.value is True):
+                    self.fail(
+                        f"{cls.__name__} uses center=True in rolling() — "
+                        f"this creates look-ahead bias"
+                    )
 
 
 if __name__ == "__main__":

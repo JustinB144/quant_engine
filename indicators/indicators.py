@@ -852,29 +852,6 @@ class VolatilitySqueeze(Indicator):
 # ADVANCED VOLUME INDICATORS
 # =============================================================================
 
-class RVOL(Indicator):
-    """
-    Relative Volume - current volume vs same time period average.
-    High RVOL = unusual activity = potential move.
-    """
-
-    def __init__(self, period: int = 20):
-        """Initialize RVOL."""
-        self.period = period
-
-    @property
-    def name(self) -> str:
-        """Return the indicator's output column name."""
-        return f"RVOL_{self.period}"
-
-    def calculate(self, df: pd.DataFrame) -> pd.Series:
-        """Compute indicator values from the provided OHLCV dataframe."""
-        avg_vol = df['Volume'].rolling(window=self.period).mean()
-        avg_vol = avg_vol.replace(0, np.nan)  # Guard zero-volume periods
-        rvol = df['Volume'] / avg_vol
-        return rvol
-
-
 class NetVolumeTrend(Indicator):
     """
     Net Volume Trend - accumulation/distribution pressure.
@@ -2867,7 +2844,6 @@ def get_all_indicators() -> dict:
         'MFI': MFI,
 
         # Volume - Advanced
-        'RVOL': RVOL,
         'NetVol': NetVolumeTrend,
         'VForce': VolumeForce,
         'ADSlope': AccumulationDistribution,
@@ -2960,31 +2936,9 @@ def get_all_indicators() -> dict:
     }
 
 
-# Aliases for compound indicator names (for easier parsing)
-INDICATOR_ALIASES = {
-    'PriceVsAVWAP': PriceVsAnchoredVWAP,
-    'PriceVsVWAP': PriceVsVWAP,
-    'PriceVsPOC': PriceVsPOC,
-    'EMAAlign': EMAAlignment,
-    'PivotHi': PivotHigh,
-    'PivotLo': PivotLow,
-    'ATRStop': ATRTrailingStop,
-    'RiskATR': RiskPerATR,
-    'BBWPct': BBWidthPercentile,
-    'NATRPct': NATRPercentile,
-}
-
-
 def create_indicator(name: str, **kwargs) -> Indicator:
-    """Create an indicator by name with given parameters.
-
-    Checks the main registry first, then INDICATOR_ALIASES.
-    """
+    """Create an indicator by name with given parameters."""
     registry = get_all_indicators()
     if name in registry:
         return registry[name](**kwargs)
-    # Check aliases before raising error
-    canonical = INDICATOR_ALIASES.get(name)
-    if canonical is not None:
-        return canonical(**kwargs)
     raise ValueError(f"Unknown indicator: {name}")

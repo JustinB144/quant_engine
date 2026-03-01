@@ -33,7 +33,7 @@ from ..indicators import (
     EMAAlignment, TrendStrength, PriceVsEMAStack,
     MarketRegime, VolatilityRegime,
     # Volume
-    VolumeRatio, OBV, OBVSlope, MFI, RVOL,
+    VolumeRatio, OBV, OBVSlope, MFI,
     NetVolumeTrend, VolumeForce, AccumulationDistribution,
     # Price Action
     HigherHighs, LowerLows, CandleBody, CandleDirection, GapPercent,
@@ -137,7 +137,7 @@ FEATURE_METADATA: Dict[str, Dict[str, str]] = {
     "OBV": {"type": "CAUSAL", "category": "volume"},
     "OBVSlope_14": {"type": "CAUSAL", "category": "volume"},
     "MFI_14": {"type": "CAUSAL", "category": "volume"},
-    "RVOL_20": {"type": "CAUSAL", "category": "volume"},
+    "RVOL_20": {"type": "CAUSAL", "category": "volume", "alias_of": "VolRatio_20"},
     "NetVol_14": {"type": "CAUSAL", "category": "volume"},
     "VForce_13": {"type": "CAUSAL", "category": "volume"},
     "ADSlope_10": {"type": "CAUSAL", "category": "volume"},
@@ -399,6 +399,15 @@ FEATURE_METADATA: Dict[str, Dict[str, str]] = {
     "realized_vol_5m": {"type": "END_OF_DAY", "category": "microstructure"},
     "microstructure_noise": {"type": "END_OF_DAY", "category": "microstructure"},
 
+    # ── Intraday indicators v1 — END_OF_DAY (from run_intraday_indicators.py) ─
+    "close_location_value": {"type": "END_OF_DAY", "category": "microstructure"},
+    "intraday_momentum": {"type": "END_OF_DAY", "category": "microstructure"},
+    "volume_clock_skew": {"type": "END_OF_DAY", "category": "microstructure"},
+    "bid_ask_spread_proxy": {"type": "END_OF_DAY", "category": "microstructure"},
+    "parkinson_vol": {"type": "END_OF_DAY", "category": "microstructure"},
+    "garman_klass_vol": {"type": "END_OF_DAY", "category": "microstructure"},
+    "volume_weighted_return": {"type": "END_OF_DAY", "category": "microstructure"},
+
     # ── Rolling VWAP features (CAUSAL — rolling window) ────────────
     "rolling_vwap_20": {"type": "CAUSAL", "category": "vwap"},
     "rolling_vwap_deviation_20": {"type": "CAUSAL", "category": "vwap"},
@@ -534,7 +543,7 @@ def _build_indicator_set() -> list:
 
         # ── Volume ─────────────────────────────────
         VolumeRatio(20), OBV(), OBVSlope(14), MFI(14),
-        RVOL(20), NetVolumeTrend(14),
+        NetVolumeTrend(14),
         VolumeForce(13), AccumulationDistribution(10),
 
         # ── Price Action ───────────────────────────
@@ -609,7 +618,7 @@ def _build_minimal_indicator_set() -> list:
         SMASlope(50),
 
         # Volume (2) — relative volume, Amihud illiquidity
-        RVOL(20),
+        VolumeRatio(20),
         AmihudIlliquidity(20),
 
         # Mean-reversion (3) — z-score, Hurst, autocorrelation
@@ -1238,6 +1247,10 @@ class FeaturePipeline:
 
         # Replace any infinities introduced by interactions
         features = features.replace([np.inf, -np.inf], np.nan)
+
+        # Backward-compatible alias: RVOL_20 was removed (identical to VolRatio_20)
+        if "VolRatio_20" in features.columns and "RVOL_20" not in features.columns:
+            features["RVOL_20"] = features["VolRatio_20"]
 
         # Deduplicate columns (e.g. RSI_5 from both indicator set and
         # multiscale features) — keep the first occurrence.

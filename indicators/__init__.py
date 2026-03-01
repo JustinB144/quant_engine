@@ -18,7 +18,7 @@ from .indicators import (
     EMAAlignment, TrendStrength, PriceVsEMAStack,
     MarketRegime, VolatilityRegime,
     # Volume
-    VolumeRatio, OBV, OBVSlope, MFI, RVOL,
+    VolumeRatio, OBV, OBVSlope, MFI,
     NetVolumeTrend, VolumeForce, AccumulationDistribution,
     # Price Action
     HigherHighs, LowerLows, CandleBody, CandleDirection, GapPercent,
@@ -56,6 +56,14 @@ from .indicators import (
     get_all_indicators,
 )
 
+# The following indicators are available for external consumers and
+# research notebooks but are NOT included in the production feature
+# pipeline. To add them, instantiate in pipeline.py's indicator list.
+__RESEARCH_INDICATORS__ = [
+    "AnchoredVWAP", "PriceVsAnchoredVWAP", "MultiVWAPPosition",
+    "Beast666Proximity", "Beast666Distance",
+]
+
 __all__ = [
     "Indicator",
     "ATR", "NATR", "BollingerBandWidth", "HistoricalVolatility",
@@ -65,7 +73,7 @@ __all__ = [
     "SMA", "EMA", "PriceVsSMA", "SMASlope", "ADX", "Aroon",
     "EMAAlignment", "TrendStrength", "PriceVsEMAStack",
     "MarketRegime", "VolatilityRegime",
-    "VolumeRatio", "OBV", "OBVSlope", "MFI", "RVOL",
+    "VolumeRatio", "OBV", "OBVSlope", "MFI",
     "NetVolumeTrend", "VolumeForce", "AccumulationDistribution",
     "HigherHighs", "LowerLows", "CandleBody", "CandleDirection", "GapPercent",
     "DistanceFromHigh", "DistanceFromLow", "PricePercentile",

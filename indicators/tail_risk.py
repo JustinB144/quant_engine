@@ -9,7 +9,6 @@ All features are CAUSAL — they use only past and current data.
 """
 
 import numpy as np
-import pandas as pd
 
 
 _SRM_CAP = 10.0  # Maximum semi-relative modulus value

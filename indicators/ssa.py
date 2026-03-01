@@ -9,7 +9,6 @@ All features are CAUSAL — they use only past and current data.
 """
 
 import numpy as np
-import pandas as pd
 
 
 class SSADecomposer:

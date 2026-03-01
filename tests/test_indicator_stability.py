@@ -13,7 +13,7 @@ import pytest
 from indicators.tail_risk import TailRiskAnalyzer, _SRM_CAP
 from indicators.indicators import (
     Stochastic, WilliamsR, CandleBody, AccumulationDistribution,
-    VolumeRatio, RVOL, VWAP, MFI, ADX, VolatilityRegime,
+    VolumeRatio, VWAP, MFI, ADX, VolatilityRegime,
     NetVolumeTrend, CCI, PriceVsSMA, SMASlope, GapPercent,
     DistanceFromHigh, DistanceFromLow, ATRTrailingStop, ATRChannel,
     RiskPerATR, PriceVsVWAP, VWAPBands, PriceVsPOC, ValueAreaPosition,
@@ -139,8 +139,9 @@ class TestFlatBarGuards:
         self._assert_no_inf(result, "VolumeRatio")
 
     def test_rvol_flat(self, flat_df):
-        result = RVOL(20).compute(flat_df)
-        self._assert_no_inf(result, "RVOL")
+        """RVOL removed (duplicate of VolumeRatio); test VolumeRatio instead."""
+        result = VolumeRatio(20).compute(flat_df)
+        self._assert_no_inf(result, "VolumeRatio")
 
     def test_vwap_flat(self, flat_df):
         result = VWAP(20).compute(flat_df)
@@ -277,7 +278,7 @@ class TestNormalDataNoInf:
         """All guarded indicators should produce finite output on normal data."""
         indicators = [
             Stochastic(14), WilliamsR(14), CandleBody(), ADX(14),
-            VolumeRatio(20), RVOL(20), VWAP(20), MFI(14),
+            VolumeRatio(20), VWAP(20), MFI(14),
             CCI(20), PriceVsSMA(50), ATRChannel(14), RiskPerATR(14, 5),
             ParkinsonVolatility(20), GarmanKlassVolatility(20),
             YangZhangVolatility(20), NATR(14), BollingerBandWidth(20),
