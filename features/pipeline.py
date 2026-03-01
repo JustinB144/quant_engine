@@ -411,14 +411,36 @@ FEATURE_METADATA: Dict[str, Dict[str, str]] = {
     "price_impact_asymmetry": {"type": "END_OF_DAY", "category": "microstructure"},
     "queue_imbalance": {"type": "END_OF_DAY", "category": "microstructure"},
     "fill_probability_proxy": {"type": "END_OF_DAY", "category": "microstructure"},
+
+    # ── Correlation regime features (from regime/correlation.py) ──────
+    "avg_pairwise_corr": {"type": "CAUSAL", "category": "correlation"},
+    "corr_regime": {"type": "CAUSAL", "category": "correlation"},
+    "corr_z_score": {"type": "CAUSAL", "category": "correlation"},
+
+    # ── HARX spillover features (from features/harx_spillovers.py) ────
+    "harx_spillover_from": {"type": "CAUSAL", "category": "spillover"},
+    "harx_spillover_to": {"type": "CAUSAL", "category": "spillover"},
+    "harx_net_spillover": {"type": "CAUSAL", "category": "spillover"},
+
+    # ── Macro features (from features/macro.py) ──────────────────────
+    "macro_vix": {"type": "CAUSAL", "category": "macro"},
+    "macro_vix_mom": {"type": "CAUSAL", "category": "macro"},
+    "macro_term_spread": {"type": "CAUSAL", "category": "macro"},
+    "macro_term_spread_mom": {"type": "CAUSAL", "category": "macro"},
+    "macro_credit_spread": {"type": "CAUSAL", "category": "macro"},
+    "macro_credit_spread_mom": {"type": "CAUSAL", "category": "macro"},
+    "macro_initial_claims": {"type": "CAUSAL", "category": "macro"},
+    "macro_initial_claims_mom": {"type": "CAUSAL", "category": "macro"},
+    "macro_consumer_sentiment": {"type": "CAUSAL", "category": "macro"},
+    "macro_consumer_sentiment_mom": {"type": "CAUSAL", "category": "macro"},
 }
 
 
 def get_feature_type(feature_name: str) -> str:
     """Return the causality type for a feature.
 
-    Returns ``'UNKNOWN'`` for any feature not explicitly registered
-    (fail-closed: unknown features are excluded from strict modes).
+    Returns ``'RESEARCH_ONLY'`` for any feature not explicitly registered
+    (fail-closed: unknown features are blocked from production models).
     """
     entry = FEATURE_METADATA.get(feature_name)
     if entry is not None:
@@ -426,9 +448,13 @@ def get_feature_type(feature_name: str) -> str:
     # Interaction features (prefixed X_) inherit CAUSAL from their inputs
     if feature_name.startswith("X_"):
         return "CAUSAL"
-    # Fail-closed: unknown features are not assumed causal
-    logger.warning("Feature '%s' has no causality metadata, treating as UNKNOWN", feature_name)
-    return "UNKNOWN"
+    # Fail-closed: unknown features default to RESEARCH_ONLY
+    # to prevent unregistered features from reaching production models.
+    logger.warning(
+        "Feature '%s' not in FEATURE_METADATA — defaulting to RESEARCH_ONLY",
+        feature_name,
+    )
+    return "RESEARCH_ONLY"
 
 
 def _filter_causal_features(
@@ -438,9 +464,9 @@ def _filter_causal_features(
     """Filter features based on causality mode.
 
     Modes:
-        CAUSAL        — strictest: only causally safe features (excludes UNKNOWN)
-        RESEARCH_ONLY — includes CAUSAL + RESEARCH_ONLY, excludes END_OF_DAY (excludes UNKNOWN)
-        END_OF_DAY    — all features available after market close (includes UNKNOWN)
+        CAUSAL        — strictest: only causally safe features
+        RESEARCH_ONLY — includes CAUSAL + RESEARCH_ONLY, excludes END_OF_DAY
+        END_OF_DAY    — all features available after market close
     """
     if causality_filter == "RESEARCH_ONLY":
         allowed_types = {"CAUSAL", "RESEARCH_ONLY"}
@@ -448,7 +474,7 @@ def _filter_causal_features(
     elif causality_filter == "CAUSAL":
         return features[[c for c in features.columns if get_feature_type(c) == "CAUSAL"]]
     elif causality_filter == "END_OF_DAY":
-        # All types allowed after market close (permissive, includes UNKNOWN)
+        # All types allowed after market close (permissive)
         return features
     else:
         raise ValueError(f"Unknown causality_filter: {causality_filter}")

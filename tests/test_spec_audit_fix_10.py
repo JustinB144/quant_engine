@@ -101,12 +101,12 @@ class TestCausalityFilter(unittest.TestCase):
 # ===========================================================================
 
 class TestUnknownFeatureFailClosed(unittest.TestCase):
-    """T2: Unknown features return UNKNOWN and are excluded from strict modes."""
+    """T2: Unknown features return RESEARCH_ONLY and are excluded from strict modes."""
 
-    def test_unknown_feature_returns_unknown(self):
+    def test_unknown_feature_returns_research_only(self):
         from quant_engine.features.pipeline import get_feature_type
         result = get_feature_type("completely_made_up_feature_xyz")
-        self.assertEqual(result, "UNKNOWN")
+        self.assertEqual(result, "RESEARCH_ONLY")
 
     def test_interaction_features_are_causal(self):
         from quant_engine.features.pipeline import get_feature_type
@@ -129,7 +129,8 @@ class TestUnknownFeatureFailClosed(unittest.TestCase):
         self.assertIn("RSI_14", result.columns)
         self.assertNotIn("unknown_feature_abc", result.columns)
 
-    def test_unknown_excluded_from_research_mode(self):
+    def test_unknown_included_in_research_mode(self):
+        """Unknown features default to RESEARCH_ONLY, so they pass RESEARCH_ONLY filter."""
         from quant_engine.features.pipeline import _filter_causal_features
         df = pd.DataFrame({
             "RSI_14": [1.0],
@@ -137,7 +138,7 @@ class TestUnknownFeatureFailClosed(unittest.TestCase):
         })
         result = _filter_causal_features(df, causality_filter="RESEARCH_ONLY")
         self.assertIn("RSI_14", result.columns)
-        self.assertNotIn("unknown_feature_abc", result.columns)
+        self.assertIn("unknown_feature_abc", result.columns)
 
     def test_unknown_included_in_eod_mode(self):
         from quant_engine.features.pipeline import _filter_causal_features

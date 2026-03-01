@@ -1006,8 +1006,8 @@ class TestPredictorCausalityEnforcement:
         result = predictor.predict(features, regimes, confidence)
         assert "predicted_return" in result.columns
 
-    def test_unlisted_features_pass(self):
-        """Features not in FEATURE_METADATA should default to CAUSAL and pass."""
+    def test_unlisted_features_blocked(self):
+        """Features not in FEATURE_METADATA default to RESEARCH_ONLY and are blocked."""
         predictor = self._make_mock_predictor()
         features = self._make_features(extra_columns={
             "some_custom_feature": [1.0, 2.0, 3.0],
@@ -1015,9 +1015,9 @@ class TestPredictorCausalityEnforcement:
         regimes = pd.Series([0, 0, 1], index=features.index)
         confidence = pd.Series([0.8, 0.7, 0.6], index=features.index)
 
-        # Should not raise — unlisted features default to CAUSAL
-        result = predictor.predict(features, regimes, confidence)
-        assert "predicted_return" in result.columns
+        # Should raise — unlisted features default to RESEARCH_ONLY (fail-closed)
+        with pytest.raises(ValueError, match="RESEARCH_ONLY"):
+            predictor.predict(features, regimes, confidence)
 
     def test_interaction_features_pass(self):
         """Interaction features (X_ prefix) should default to CAUSAL and pass."""
@@ -1063,8 +1063,8 @@ class TestPredictorCausalityEnforcement:
                 regime_confidence=0.8,
             )
 
-    def test_error_message_suggests_production_mode(self):
-        """Error message should guide user to use production_mode or filter features."""
+    def test_error_message_suggests_override(self):
+        """Error message should guide user to disable causality enforcement."""
         predictor = self._make_mock_predictor()
         features = self._make_features(extra_columns={
             "relative_mom_10": [0.1, 0.2, 0.3],
@@ -1072,7 +1072,7 @@ class TestPredictorCausalityEnforcement:
         regimes = pd.Series([0, 0, 1], index=features.index)
         confidence = pd.Series([0.8, 0.7, 0.6], index=features.index)
 
-        with pytest.raises(ValueError, match="production_mode=True"):
+        with pytest.raises(ValueError, match="TRUTH_LAYER_ENFORCE_CAUSALITY"):
             predictor.predict(features, regimes, confidence)
 
     def test_mixed_causal_and_research_features_caught(self):

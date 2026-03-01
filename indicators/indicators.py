@@ -1047,17 +1047,20 @@ class PivotHigh(Indicator):
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Compute indicator values from the provided OHLCV dataframe.
 
-        PivotHigh uses a trailing window (causal). A pivot is identified when
-        the current bar is the highest in the last N bars (no future data used).
+        Strictly causal: only look back ``left_bars + right_bars`` bars.
+        A pivot high is confirmed when the bar at position ``left_bars``
+        from the end of the window is the maximum of the entire window.
+        This means we wait ``right_bars`` bars after the candidate pivot
+        before confirming it — using only past data.
         """
         high = df['High']
         pivot_window = self.left_bars + self.right_bars + 1
 
-        # Causal trailing window: current bar is highest in trailing window
-        rolling_max = high.rolling(window=pivot_window, center=False).max()
-        pivots = high.where(high == rolling_max, np.nan)
+        pivots = high.rolling(window=pivot_window, min_periods=pivot_window).apply(
+            lambda x: x[self.left_bars] if x[self.left_bars] == x.max() else np.nan,
+            raw=True,
+        )
 
-        # Current high vs most recent pivot high
         pivot_high_level = pivots.ffill()
         breakout = (high > pivot_high_level).astype(int)
 
@@ -1083,17 +1086,20 @@ class PivotLow(Indicator):
     def calculate(self, df: pd.DataFrame) -> pd.Series:
         """Compute indicator values from the provided OHLCV dataframe.
 
-        PivotLow uses a trailing window (causal). A pivot is identified when
-        the current bar is the lowest in the last N bars (no future data used).
+        Strictly causal: only look back ``left_bars + right_bars`` bars.
+        A pivot low is confirmed when the bar at position ``left_bars``
+        from the end of the window is the minimum of the entire window.
+        This means we wait ``right_bars`` bars after the candidate pivot
+        before confirming it — using only past data.
         """
         low = df['Low']
         pivot_window = self.left_bars + self.right_bars + 1
 
-        # Causal trailing window: current bar is lowest in trailing window
-        rolling_min = low.rolling(window=pivot_window, center=False).min()
-        pivots = low.where(low == rolling_min, np.nan)
+        pivots = low.rolling(window=pivot_window, min_periods=pivot_window).apply(
+            lambda x: x[self.left_bars] if x[self.left_bars] == x.min() else np.nan,
+            raw=True,
+        )
 
-        # Current low vs most recent pivot low
         pivot_low_level = pivots.ffill()
         breakdown = (low < pivot_low_level).astype(int)
 

@@ -9,6 +9,7 @@ Anti-leakage measures:
     - Uses joblib for safe deserialization (matching trainer)
     - Feature causality enforcement (blocks RESEARCH_ONLY features at runtime)
 """
+import hashlib
 import logging
 import json
 from pathlib import Path
@@ -18,13 +19,22 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from ..config import MODEL_DIR, REGIME_NAMES, REGIME_SUPPRESS_ID, TRUTH_LAYER_ENFORCE_CAUSALITY
+from ..config import MODEL_DIR, REGIME_NAMES, REGIME_SUPPRESS_ID, TRUTH_LAYER_ENFORCE_CAUSALITY, PREDICTION_MODE, VERIFY_MODEL_CHECKSUMS
 from ..features.pipeline import get_feature_type
 from .conformal import ConformalPredictor
 from .governance import ModelGovernance
 from .versioning import ModelRegistry
 
 logger = logging.getLogger(__name__)
+
+
+def _compute_checksum(filepath: Path) -> str:
+    """Compute SHA-256 checksum of a file."""
+    sha = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            sha.update(chunk)
+    return sha.hexdigest()
 
 
 def _prepare_features(
@@ -119,17 +129,40 @@ class EnsemblePredictor:
         return self.model_dir
 
     def _load(self):
-        """Load all model artifacts from disk."""
+        """Load all model artifacts from disk.
+
+        SECURITY NOTE: joblib.load() is equivalent to pickle.load() and can
+        execute arbitrary code during deserialization. Model artifacts MUST
+        only be sourced from trusted, operator-controlled directories.
+        See: https://joblib.readthedocs.io/en/latest/persistence.html
+        """
         resolved_dir = self._resolve_model_dir()
         prefix = resolved_dir / f"ensemble_{self.horizon}d"
 
-        # Global model (joblib for safe deserialization)
-        self.global_model = joblib.load(f"{prefix}_global_model.pkl")
-        self.global_scaler = joblib.load(f"{prefix}_global_scaler.pkl")
-
-        # Metadata
+        # Metadata (load first so checksums are available for verification)
         with open(f"{prefix}_meta.json", "r") as f:
             self.meta = json.load(f)
+
+        # Checksum verification (defense-in-depth against artifact tampering)
+        artifact_checksums = self.meta.get("artifact_checksums", {})
+
+        def _verify_and_load(path: Path):
+            """Verify checksum (if available) then load via joblib."""
+            if VERIFY_MODEL_CHECKSUMS and artifact_checksums:
+                expected = artifact_checksums.get(path.name)
+                if expected:
+                    actual = _compute_checksum(path)
+                    if actual != expected:
+                        raise ValueError(
+                            f"Checksum mismatch for {path.name}: "
+                            f"expected {expected}, got {actual}. "
+                            f"Model artifact may be corrupted or tampered with."
+                        )
+            return joblib.load(str(path))
+
+        # Global model
+        self.global_model = _verify_and_load(Path(f"{prefix}_global_model.pkl"))
+        self.global_scaler = _verify_and_load(Path(f"{prefix}_global_scaler.pkl"))
         self.global_features = self.meta["global_features"]
 
         # Median imputation values (from training data)
@@ -142,7 +175,7 @@ class EnsemblePredictor:
         calibrator_path = resolved_dir / f"ensemble_{self.horizon}d_calibrator.pkl"
         if calibrator_path.exists():
             try:
-                self.calibrator = joblib.load(str(calibrator_path))
+                self.calibrator = _verify_and_load(calibrator_path)
             except (OSError, ValueError):
                 self.calibrator = None
 
@@ -168,11 +201,11 @@ class EnsemblePredictor:
         for code_str, info in self.meta.get("regime_models", {}).items():
             code = int(code_str)
             try:
-                self.regime_models[code] = joblib.load(
-                    f"{prefix}_regime{code}_model.pkl"
+                self.regime_models[code] = _verify_and_load(
+                    Path(f"{prefix}_regime{code}_model.pkl")
                 )
-                self.regime_scalers[code] = joblib.load(
-                    f"{prefix}_regime{code}_scaler.pkl"
+                self.regime_scalers[code] = _verify_and_load(
+                    Path(f"{prefix}_regime{code}_scaler.pkl")
                 )
                 self.regime_features[code] = info["features"]
                 # Reliability = holdout Spearman correlation (clamped to 0-1)
@@ -210,24 +243,36 @@ class EnsemblePredictor:
                 blend_alpha: weight given to regime model
         """
         # ── Feature causality enforcement ──
-        # Block RESEARCH_ONLY and UNKNOWN features from reaching live
-        # predictions.  RESEARCH_ONLY features may use future or
-        # cross-sectional data; UNKNOWN features have no causality
-        # metadata and cannot be assumed safe.
-        # (Coordinates with SPEC_10 T2: get_feature_type defaults to UNKNOWN)
+        # Block RESEARCH_ONLY features from reaching live predictions.
+        # RESEARCH_ONLY features may use future or cross-sectional data.
         if TRUTH_LAYER_ENFORCE_CAUSALITY:
-            blocked_types = {"RESEARCH_ONLY", "UNKNOWN"}
-            blocked = {
-                col: get_feature_type(col) for col in features.columns
-                if get_feature_type(col) in blocked_types
+            research_only = {
+                col for col in features.columns
+                if get_feature_type(col) == "RESEARCH_ONLY"
             }
-            if blocked:
+            if research_only:
                 raise ValueError(
-                    f"Blocked features in prediction: "
-                    f"{sorted(f'{col} ({typ})' for col, typ in blocked.items())}. "
-                    f"Only explicitly tagged CAUSAL features are allowed. "
-                    f"Use production_mode=True in FeaturePipeline or filter "
-                    f"them before calling predict()."
+                    f"RESEARCH_ONLY features in prediction: {sorted(research_only)}. "
+                    f"Set TRUTH_LAYER_ENFORCE_CAUSALITY=False to override."
+                )
+
+            # Warn about END_OF_DAY features (safe for daily, unsafe for intraday)
+            end_of_day = {
+                col for col in features.columns
+                if get_feature_type(col) == "END_OF_DAY"
+            }
+            if end_of_day:
+                logger.info(
+                    "Prediction includes %d END_OF_DAY features: %s. "
+                    "These require same-day close data and are only valid for "
+                    "end-of-day predictions.",
+                    len(end_of_day), sorted(end_of_day)[:5],
+                )
+
+            if PREDICTION_MODE == "intraday" and end_of_day:
+                raise ValueError(
+                    f"END_OF_DAY features in intraday prediction: {sorted(end_of_day)}. "
+                    f"Remove these features or switch to daily mode."
                 )
 
         n = len(features)
