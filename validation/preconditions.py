@@ -62,8 +62,15 @@ def enforce_preconditions() -> None:
 
     Called from ``Backtester.__init__()`` and ``ModelTrainer.__init__()``
     when ``TRUTH_LAYER_STRICT_PRECONDITIONS`` is True.
+
+    When strict mode is off, validation still runs but violations are
+    logged as warnings instead of raising exceptions.
     """
     if not TRUTH_LAYER_STRICT_PRECONDITIONS:
+        # Warn-only mode: still validate but log instead of raising
+        ok, msg = validate_execution_contract()
+        if not ok:
+            logger.warning("Precondition violation (non-strict mode): %s", msg)
         return
 
     ok, msg = validate_execution_contract()

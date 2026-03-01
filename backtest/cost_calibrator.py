@@ -23,6 +23,10 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# Maximum history sizes to prevent unbounded memory growth.
+MAX_CALIBRATION_HISTORY = 5000
+MAX_FEEDBACK_HISTORY = 5000
+
 
 class CostCalibrator:
     """Per-market-cap-segment impact coefficient calibrator.
@@ -161,6 +165,7 @@ class CostCalibrator:
         market_cap: float,
         participation_rate: float,
         realized_cost_bps: float,
+        effective_spread_bps: Optional[float] = None,
     ) -> None:
         """Record a historical trade for future calibration.
 
@@ -174,6 +179,9 @@ class CostCalibrator:
             Fraction of daily volume executed.
         realized_cost_bps : float
             Total realized slippage in basis points (spread + market impact).
+        effective_spread_bps : float, optional
+            The actual spread including all multipliers (structural, event, etc.).
+            If None, uses base spread (backward-compatible).
         """
         if participation_rate <= 0 or not np.isfinite(participation_rate):
             return
@@ -188,8 +196,13 @@ class CostCalibrator:
             "symbol": symbol,
             "participation_rate": float(participation_rate),
             "realized_cost_bps": float(realized_cost_bps),
+            "effective_spread_bps": float(effective_spread_bps) if effective_spread_bps is not None else None,
         })
         self._total_trades += 1
+
+        # Prune per-segment history to prevent unbounded growth
+        if len(self._trade_history[segment]) > MAX_CALIBRATION_HISTORY:
+            self._trade_history[segment] = self._trade_history[segment][-MAX_CALIBRATION_HISTORY:]
 
     # ── Calibration ───────────────────────────────────────────────────
 
@@ -237,8 +250,12 @@ class CostCalibrator:
                 sqrt_part = np.sqrt(part)
                 if sqrt_part < 1e-9:
                     continue
-                # impact = realized_cost - half_spread
-                net_impact = max(0.0, cost - 0.5 * self._spread_bps)
+                # Use effective spread (including multipliers) when available,
+                # otherwise fall back to base spread. This prevents
+                # over-attributing to impact during stressed periods.
+                eff_spread = t.get("effective_spread_bps")
+                spread = eff_spread if eff_spread is not None else 0.5 * self._spread_bps
+                net_impact = max(0.0, cost - spread)
                 coeff = net_impact / sqrt_part
                 if np.isfinite(coeff) and coeff > 0:
                     coefficients.append(coeff)
@@ -330,6 +347,10 @@ class CostCalibrator:
             "regime": int(regime),
             "timestamp": ts,
         })
+
+        # Prune feedback history to prevent unbounded growth
+        if len(self._actual_fills) > MAX_FEEDBACK_HISTORY:
+            self._actual_fills = self._actual_fills[-MAX_FEEDBACK_HISTORY:]
 
     def compute_cost_surprise(self) -> Dict[str, Dict]:
         """Compute cost surprise distribution: predicted minus actual, by regime.
@@ -472,6 +493,9 @@ class CostCalibrator:
                 last_dt = datetime.fromisoformat(
                     self._last_feedback_recalibration
                 )
+                # Ensure timezone-aware comparison (Python 3.12+ requires it)
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
                 elapsed = (datetime.now(timezone.utc) - last_dt).days
                 if elapsed < self._feedback_interval_days:
                     logger.debug(

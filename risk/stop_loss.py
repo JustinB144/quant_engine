@@ -114,6 +114,7 @@ class StopLossManager:
         bars_held: int,
         entry_regime: int,
         current_regime: int,
+        side: str = "long",
     ) -> StopResult:
         """
         Evaluate all stop conditions for an open position.
@@ -131,11 +132,16 @@ class StopLossManager:
             bars_held: number of bars held
             entry_regime: regime at time of entry
             current_regime: current detected regime
+            side: "long" or "short". Defaults to "long".
+                  # TODO: full short support when system expands beyond long-only
 
         Returns:
             StopResult with exit decision and details
         """
-        unrealized = (current_price - entry_price) / entry_price
+        if side == "short":
+            unrealized = (entry_price - current_price) / entry_price
+        else:
+            unrealized = (current_price - entry_price) / entry_price
 
         # Spread buffer: half the expected spread (stop fills at bid)
         spread_buf = self._spread_buffer(entry_price)

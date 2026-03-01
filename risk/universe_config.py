@@ -77,6 +77,18 @@ class UniverseConfig:
                     f"Sector '{sector_name}' must map to a list of tickers, got {type(tickers).__name__}"
                 )
 
+        # Check for duplicate tickers across sectors
+        all_tickers: list = []
+        for sector_name, tickers in sectors.items():
+            all_tickers.extend(str(t).upper() for t in tickers)
+        seen: set = set()
+        for t in all_tickers:
+            if t in seen:
+                logger.warning(
+                    "Duplicate ticker '%s' found in universe.yaml sectors", t
+                )
+            seen.add(t)
+
         # Validate constraint_base
         cb = self._raw["constraint_base"]
         required_constraints = [

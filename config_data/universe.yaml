@@ -70,7 +70,6 @@ sectors:
     - LEN
     - LUV
     - MAR
-    - NKE
   financial:
     - JPM
     - BAC

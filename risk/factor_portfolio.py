@@ -107,19 +107,12 @@ def compute_factor_exposures(
     X = np.column_stack([np.ones(len(factor_returns)), factor_returns.values])
     # X is (T, 1 + n_factors)
 
-    # Compute (X'X)^{-1} X' once for all assets
-    try:
-        XtX_inv = np.linalg.inv(X.T @ X)
-    except np.linalg.LinAlgError:
-        # Add small ridge penalty for numerical stability
-        XtX_inv = np.linalg.inv(X.T @ X + 1e-8 * np.eye(X.shape[1]))
-
-    XtX_inv_Xt = XtX_inv @ X.T  # (1 + n_factors, T)
-
+    # Use numerically stable least-squares solver instead of explicit
+    # matrix inversion (handles ill-conditioned / rank-deficient matrices).
     betas = {}
     for asset in clean_returns.columns:
         y = clean_returns[asset].values
-        coeffs = XtX_inv_Xt @ y  # (1 + n_factors,)
+        coeffs, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
         # coeffs[0] is intercept (alpha), coeffs[1:] are factor betas
         betas[asset] = coeffs[1:]
 

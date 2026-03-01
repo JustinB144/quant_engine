@@ -1045,6 +1045,20 @@ class PaperTrader:
             struct_state = self._extract_structural_state(pred_row)
             vol_trend = self._adv_tracker.get_volume_trend(permno) if daily_vol > 0 else None
 
+            # SPEC-32 T1: Shock-mode parity with backtest engine (exit path).
+            _exit_shock = self._get_current_shock_vector(
+                permno, pred_row, as_of=as_of,
+            )
+            _exit_shock_policy = self._compute_shock_policy(_exit_shock)
+            _exit_spread_mult = (
+                _exit_shock_policy.spread_multiplier
+                if _exit_shock_policy.is_active else 1.0
+            )
+            _exit_max_part = (
+                _exit_shock_policy.max_participation_override
+                if _exit_shock_policy.is_active else None
+            )
+
             exit_fill = self._execution_model.simulate(
                 side="sell",
                 reference_price=px,
@@ -1058,6 +1072,8 @@ class PaperTrader:
                 drift_score=struct_state["drift_score"],
                 systemic_stress=struct_state["systemic_stress"],
                 volume_trend=vol_trend,
+                event_spread_multiplier=_exit_spread_mult,
+                max_participation_override=_exit_max_part,
             )
 
             # SPEC-E04: Record fill for calibration feedback
@@ -1284,6 +1300,30 @@ class PaperTrader:
                         if entry_daily_vol > 0 else None
                     )
 
+                    # SPEC-32 T1: Shock-mode parity with backtest engine.
+                    _entry_shock = self._get_current_shock_vector(
+                        permno, row.to_dict(), as_of=as_of,
+                    )
+                    _entry_shock_policy = self._compute_shock_policy(_entry_shock)
+                    if _entry_shock_policy.is_active:
+                        if confidence < _entry_shock_policy.min_confidence_override:
+                            logger.info(
+                                "Skipping entry for %s: confidence %.2f "
+                                "< shock minimum %.2f",
+                                permno, confidence,
+                                _entry_shock_policy.min_confidence_override,
+                            )
+                            continue
+
+                    _entry_spread_mult = (
+                        _entry_shock_policy.spread_multiplier
+                        if _entry_shock_policy.is_active else 1.0
+                    )
+                    _entry_max_part = (
+                        _entry_shock_policy.max_participation_override
+                        if _entry_shock_policy.is_active else None
+                    )
+
                     entry_fill = self._execution_model.simulate(
                         side="buy",
                         reference_price=px,
@@ -1297,6 +1337,8 @@ class PaperTrader:
                         drift_score=entry_struct["drift_score"],
                         systemic_stress=entry_struct["systemic_stress"],
                         volume_trend=entry_vol_trend,
+                        event_spread_multiplier=_entry_spread_mult,
+                        max_participation_override=_entry_max_part,
                     )
 
                     # No-trade gate or fill rejection

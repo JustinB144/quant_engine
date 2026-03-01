@@ -122,6 +122,21 @@ def compare_survivorship_impact(
     )
 
 
+def _classify_bias_risk(dropped_count: int, universe_size: int) -> str:
+    """Classify survivorship bias risk using percentage-based thresholds.
+
+    Uses proportional thresholds instead of absolute counts so the
+    classification is meaningful regardless of universe size.
+    """
+    pct_dropped = dropped_count / max(universe_size, 1)
+    if pct_dropped > 0.05:  # >5% of universe
+        return "HIGH"
+    elif pct_dropped > 0.01:  # >1%
+        return "MEDIUM"
+    else:
+        return "LOW"
+
+
 def quick_survivorship_check(
     predictions: Optional[pd.DataFrame],
     price_data_full: Dict[str, pd.DataFrame],
@@ -161,11 +176,7 @@ def quick_survivorship_check(
         "full_universe_bars": full_bars,
         "survivors_only_bars": surv_bars,
         "bar_coverage_ratio": surv_bars / max(1, full_bars),
-        "estimated_bias_risk": (
-            "HIGH" if len(dropped) > 10
-            else "MEDIUM" if len(dropped) > 3
-            else "LOW"
-        ),
+        "estimated_bias_risk": _classify_bias_risk(len(dropped), len(full_tickers)),
     }
 
     # Prediction coverage check: flag tickers in prices but missing from

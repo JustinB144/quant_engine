@@ -20,7 +20,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from ..config import IC_ROLLING_WINDOW, RISK_FREE_RATE
+from ..config import IC_ROLLING_WINDOW, RISK_FREE_RATE, VALIDATION_FDR_FLOOR_ENABLED
 from .sharpe_utils import compute_sharpe
 try:
     from scipy import stats
@@ -492,14 +492,23 @@ def run_statistical_tests(
     # - Long signal return positive AND p-value < FDR threshold
     # - IC mean > 0 AND IC p-value < FDR threshold
     # - Sharpe p-value < 0.10 (relaxed, not FDR-corrected, as it's confirmatory)
-    passes = (
-        corr_pval < max(fdr_threshold, 0.001)  # at least some threshold
-        and long_pval < max(fdr_threshold, 0.001)
-        and long_mean > 0
-        and sharpe_pval < 0.10
-        and ic_mean > 0
-        and ic_pval < max(fdr_threshold, 0.001)
-    )
+    if fdr_threshold <= 0 and not VALIDATION_FDR_FLOOR_ENABLED:
+        # BH says nothing is significant — respect that decision
+        passes = False
+    else:
+        # When VALIDATION_FDR_FLOOR_ENABLED (deprecated), apply old 0.001 floor
+        effective_fdr = (
+            max(fdr_threshold, 0.001) if VALIDATION_FDR_FLOOR_ENABLED
+            else fdr_threshold
+        )
+        passes = (
+            corr_pval < effective_fdr
+            and long_pval < effective_fdr
+            and long_mean > 0
+            and sharpe_pval < 0.10
+            and ic_mean > 0
+            and ic_pval < effective_fdr
+        )
 
     return StatisticalTests(
         pred_actual_corr=float(corr),

@@ -327,6 +327,10 @@ class Backtester:
         # Keyed by (ticker_str, bar_date) → ShockVector.
         self._shock_vectors: Dict[tuple, ShockVector] = {}
 
+        # Track which (ticker, date) combos have been counted for ADV
+        # to prevent double-counting on multi-bar residual exits.
+        self._adv_counted: set = set()
+
         # SPEC-W03: Uncertainty gate scales position sizes down when
         # regime detection entropy is high (regime transitions).
         self._uncertainty_gate = UncertaintyGate()
@@ -364,6 +368,113 @@ class Backtester:
             normal_spread_mult=1.0,
             normal_min_confidence=self.confidence_threshold,
         )
+
+    def _evaluate_shock_confidence(
+        self,
+        shock_policy: ShockModePolicy,
+        confidence: float,
+        ticker: str,
+        dt: object,
+    ) -> bool:
+        """Check if shock-mode confidence requirements are met.
+
+        Returns True if the signal should be skipped, False if OK to proceed.
+        """
+        if not shock_policy.is_active:
+            return False
+
+        if confidence < shock_policy.min_confidence_override:
+            logger.debug(
+                "Shock mode (%s): skipping %s on %s — confidence %.2f "
+                "< min_confidence %.2f",
+                shock_policy.tier, ticker, dt,
+                confidence, shock_policy.min_confidence_override,
+            )
+            return True
+
+        logger.info(
+            "Shock mode (%s) active for %s on %s: "
+            "max_participation=%.4f, spread_mult=%.1f, "
+            "min_confidence=%.2f",
+            shock_policy.tier, ticker, dt,
+            shock_policy.max_participation_override,
+            shock_policy.spread_multiplier,
+            shock_policy.min_confidence_override,
+        )
+        return False
+
+    def _evaluate_edge_cost_gate(
+        self,
+        ohlcv: pd.DataFrame,
+        entry_idx: int,
+        predicted_return: float,
+        position_size: float,
+        shock_policy: ShockModePolicy,
+        shock: Optional[ShockVector],
+    ) -> tuple:
+        """Evaluate whether a trade's predicted edge exceeds expected costs.
+
+        Returns:
+            (should_skip, reason_str) — should_skip=True means do not trade.
+        """
+        if not EDGE_COST_GATE_ENABLED:
+            return False, ""
+
+        entry_vol = (
+            float(ohlcv["Volume"].iloc[entry_idx])
+            if "Volume" in ohlcv.columns else 0.0
+        )
+        entry_ref_price = float(ohlcv["Open"].iloc[entry_idx])
+        context = self._execution_context(ohlcv=ohlcv, bar_idx=entry_idx)
+        desired_notional = self.assumed_capital_usd * position_size
+        uncertainty = (
+            shock.hmm_uncertainty
+            if shock is not None and shock.hmm_uncertainty is not None
+            else 0.0
+        )
+
+        _gate_max_part = (
+            shock_policy.max_participation_override
+            if shock_policy.is_active else None
+        )
+
+        expected_cost_bps = self.execution_model.estimate_cost(
+            daily_volume=entry_vol,
+            desired_notional=desired_notional,
+            realized_vol=context["realized_vol"],
+            structure_uncertainty=uncertainty,
+            overnight_gap=context["overnight_gap"],
+            intraday_range=context["intraday_range"],
+            reference_price=entry_ref_price,
+            event_spread_multiplier=(
+                shock_policy.spread_multiplier
+                if shock_policy.is_active else 1.0
+            ),
+            break_probability=(
+                shock.bocpd_changepoint_prob if shock else None
+            ),
+            drift_score=(
+                shock.structural_features.get("drift_score")
+                if shock else None
+            ),
+            systemic_stress=(
+                shock.structural_features.get("systemic_stress")
+                if shock else None
+            ),
+            max_participation_override=_gate_max_part,
+        )
+
+        predicted_edge_bps = abs(float(predicted_return)) * 10000
+        cost_buffer_bps = EDGE_COST_BUFFER_BASE_BPS * (1.0 + uncertainty)
+
+        if predicted_edge_bps <= expected_cost_bps + cost_buffer_bps:
+            reason = (
+                f"edge {predicted_edge_bps:.1f} bps <= "
+                f"cost {expected_cost_bps:.1f} + buffer {cost_buffer_bps:.1f} bps"
+            )
+            return True, reason
+
+        return False, ""
 
     def _init_risk_components(self):
         """Initialize risk management components."""
@@ -430,6 +541,7 @@ class Backtester:
         entry_idx: int,
         position_size: float,
         shock_policy: Optional[ShockModePolicy] = None,
+        ticker: str = "",
     ) -> Optional[dict]:
         """
         Simulate entry execution with participation and impact constraints.
@@ -443,24 +555,35 @@ class Backtester:
         shock_policy : ShockModePolicy, optional
             SPEC-E03: If provided, overrides max participation and applies
             shock spread multiplier to the execution simulation.
+        ticker : str
+            Ticker or PERMNO identifier for ADV tracking and shock vector
+            lookup.  Falls back to ohlcv.attrs if empty.
         """
         ref_price = float(ohlcv["Open"].iloc[entry_idx])
         vol = float(ohlcv["Volume"].iloc[entry_idx]) if "Volume" in ohlcv.columns else 0.0
         context = self._execution_context(ohlcv=ohlcv, bar_idx=entry_idx)
         desired_notional = self.assumed_capital_usd * max(0.0, float(position_size))
 
-        # Spec 06: update ADV tracker and get volume trend
-        ticker_id = ohlcv.attrs.get("ticker", ohlcv.attrs.get("permno", ""))
-        if vol > 0 and ticker_id:
+        # Use explicit ticker parameter, falling back to ohlcv.attrs
+        ticker_id = ticker if ticker else ohlcv.attrs.get("ticker", ohlcv.attrs.get("permno", ""))
+        bar_date = ohlcv.index[entry_idx]
+        # Track ADV at most once per (ticker, date) to prevent double-counting
+        adv_key = (ticker_id, str(bar_date))
+        if vol > 0 and ticker_id and adv_key not in self._adv_counted:
             self._adv_tracker.update(ticker_id, vol)
+            self._adv_counted.add(adv_key)
         volume_trend = (
             self._adv_tracker.get_volume_trend(ticker_id)
             if ticker_id and vol > 0 else None
         )
 
         # SPEC-W01: look up pre-computed shock vector for this bar
-        bar_date = ohlcv.index[entry_idx]
         shock = self._shock_vectors.get((str(ticker_id), bar_date))
+        if self._shock_vectors and shock is None:
+            logger.debug(
+                "No shock vector found for %s; structural cost multipliers not applied",
+                ticker_id,
+            )
 
         # SPEC-W02: get per-segment calibrated impact coefficient
         impact_coeff_override = None
@@ -545,6 +668,7 @@ class Backtester:
                 market_cap=estimated_market_cap,
                 participation_rate=fill.participation_rate,
                 realized_cost_bps=float(total_slippage),
+                effective_spread_bps=float(fill.spread_bps),
             )
 
         # SPEC-W02: include market cap segment in return dict for TCA
@@ -571,6 +695,7 @@ class Backtester:
         shares: float,
         force_full: bool = True,
         shock_policy: Optional[ShockModePolicy] = None,
+        ticker: str = "",
     ) -> dict:
         """Simulate exit execution, upgrading to Almgren-Chriss for large positions.
 
@@ -579,24 +704,35 @@ class Backtester:
         shock_policy : ShockModePolicy, optional
             SPEC-E03: If provided, applies shock mode spread multiplier and
             participation override to the exit execution simulation.
+        ticker : str
+            Ticker or PERMNO identifier for ADV tracking and shock vector
+            lookup.  Falls back to ohlcv.attrs if empty.
         """
         ref_price = float(ohlcv["Close"].iloc[exit_idx])
         vol = float(ohlcv["Volume"].iloc[exit_idx]) if "Volume" in ohlcv.columns else 0.0
         context = self._execution_context(ohlcv=ohlcv, bar_idx=exit_idx)
         desired_notional = max(0.0, float(shares) * ref_price)
 
-        # Spec 06: update ADV tracker and get volume trend
-        ticker_id = ohlcv.attrs.get("ticker", ohlcv.attrs.get("permno", ""))
-        if vol > 0 and ticker_id:
+        # Use explicit ticker parameter, falling back to ohlcv.attrs
+        ticker_id = ticker if ticker else ohlcv.attrs.get("ticker", ohlcv.attrs.get("permno", ""))
+        bar_date = ohlcv.index[exit_idx]
+        # Track ADV at most once per (ticker, date) to prevent double-counting
+        adv_key = (ticker_id, str(bar_date))
+        if vol > 0 and ticker_id and adv_key not in self._adv_counted:
             self._adv_tracker.update(ticker_id, vol)
+            self._adv_counted.add(adv_key)
         volume_trend = (
             self._adv_tracker.get_volume_trend(ticker_id)
             if ticker_id and vol > 0 else None
         )
 
         # SPEC-W01: look up pre-computed shock vector for this bar
-        bar_date = ohlcv.index[exit_idx]
         shock = self._shock_vectors.get((str(ticker_id), bar_date))
+        if self._shock_vectors and shock is None:
+            logger.debug(
+                "No shock vector found for %s; structural cost multipliers not applied",
+                ticker_id,
+            )
 
         # SPEC-W02: get per-segment calibrated impact coefficient
         impact_coeff_override = None
@@ -681,6 +817,7 @@ class Backtester:
                 market_cap=estimated_market_cap,
                 participation_rate=fill.participation_rate,
                 realized_cost_bps=float(total_slippage),
+                effective_spread_bps=float(fill.spread_bps),
             )
 
         return {
@@ -905,6 +1042,9 @@ class Backtester:
                 else:
                     self._regime_lookup[idx] = int(row["regime"])
 
+        # Reset per-run ADV dedup set
+        self._adv_counted = set()
+
         # SPEC-W01: Pre-compute shock vectors for structural state conditioning.
         # This runs BOCPD + jump detection + drift/stress estimation per ticker
         # once, so the execution simulator can condition costs on structural
@@ -1088,33 +1228,13 @@ class Backtester:
                 if exit_idx >= len(close):
                     continue
 
-                # SPEC-E01: Edge-after-costs trade gate.
-                # Skip trades where predicted edge does not exceed expected
-                # round-trip cost plus an uncertainty-scaled buffer.
+                # SPEC-E01 / E03: Shock policy + edge-after-costs gate.
                 shock = self._shock_vectors.get((permno, dt))
-
-                # SPEC-E03: Compute unified shock-mode execution policy.
                 shock_policy = self._compute_shock_policy(shock)
-                if shock_policy.is_active:
-                    # Confidence filter: require higher conviction during shocks
-                    if float(signal["confidence"]) < shock_policy.min_confidence_override:
-                        logger.debug(
-                            "Shock mode (%s): skipping %s on %s — confidence %.2f "
-                            "< min_confidence %.2f",
-                            shock_policy.tier, permno, dt,
-                            float(signal["confidence"]),
-                            shock_policy.min_confidence_override,
-                        )
-                        continue
-                    logger.info(
-                        "Shock mode (%s) active for %s on %s: "
-                        "max_participation=%.4f, spread_mult=%.1f, "
-                        "min_confidence=%.2f",
-                        shock_policy.tier, permno, dt,
-                        shock_policy.max_participation_override,
-                        shock_policy.spread_multiplier,
-                        shock_policy.min_confidence_override,
-                    )
+                if self._evaluate_shock_confidence(
+                    shock_policy, float(signal["confidence"]), permno, dt,
+                ):
+                    continue
 
                 # SPEC-W03: Apply uncertainty gate to position size.
                 # Compute adjusted size BEFORE the cost gate so the gate
@@ -1126,69 +1246,27 @@ class Backtester:
                     )
                     adjusted_size *= size_mult
 
-                if EDGE_COST_GATE_ENABLED:
-                    entry_vol = (
-                        float(ohlcv["Volume"].iloc[entry_idx])
-                        if "Volume" in ohlcv.columns else 0.0
+                should_skip, reason = self._evaluate_edge_cost_gate(
+                    ohlcv=ohlcv,
+                    entry_idx=entry_idx,
+                    predicted_return=float(signal["predicted_return"]),
+                    position_size=adjusted_size,
+                    shock_policy=shock_policy,
+                    shock=shock,
+                )
+                if should_skip:
+                    logger.debug(
+                        "Edge-cost gate: skipping %s on %s — %s",
+                        permno, dt, reason,
                     )
-                    entry_ref_price = float(ohlcv["Open"].iloc[entry_idx])
-                    context = self._execution_context(ohlcv=ohlcv, bar_idx=entry_idx)
-                    desired_notional = self.assumed_capital_usd * adjusted_size
-                    uncertainty = (
-                        shock.hmm_uncertainty
-                        if shock is not None and shock.hmm_uncertainty is not None
-                        else 0.0
-                    )
-
-                    # SPEC-E03: pass shock mode overrides to cost estimator
-                    _gate_max_part = (
-                        shock_policy.max_participation_override
-                        if shock_policy.is_active else None
-                    )
-
-                    expected_cost_bps = self.execution_model.estimate_cost(
-                        daily_volume=entry_vol,
-                        desired_notional=desired_notional,
-                        realized_vol=context["realized_vol"],
-                        structure_uncertainty=uncertainty,
-                        overnight_gap=context["overnight_gap"],
-                        intraday_range=context["intraday_range"],
-                        reference_price=entry_ref_price,
-                        event_spread_multiplier=(
-                            shock_policy.spread_multiplier
-                            if shock_policy.is_active else 1.0
-                        ),
-                        break_probability=(
-                            shock.bocpd_changepoint_prob if shock else None
-                        ),
-                        drift_score=(
-                            shock.structural_features.get("drift_score")
-                            if shock else None
-                        ),
-                        systemic_stress=(
-                            shock.structural_features.get("systemic_stress")
-                            if shock else None
-                        ),
-                        max_participation_override=_gate_max_part,
-                    )
-
-                    predicted_edge_bps = abs(float(signal["predicted_return"])) * 10000
-                    cost_buffer_bps = EDGE_COST_BUFFER_BASE_BPS * (1.0 + uncertainty)
-
-                    if predicted_edge_bps <= expected_cost_bps + cost_buffer_bps:
-                        logger.debug(
-                            "Edge-cost gate: skipping %s on %s — edge %.1f bps "
-                            "<= cost %.1f + buffer %.1f bps",
-                            permno, dt, predicted_edge_bps,
-                            expected_cost_bps, cost_buffer_bps,
-                        )
-                        continue
+                    continue
 
                 entry_fill = self._simulate_entry(
                     ohlcv=ohlcv,
                     entry_idx=entry_idx,
                     position_size=adjusted_size,
                     shock_policy=shock_policy,
+                    ticker=permno,
                 )
                 if entry_fill is None:
                     continue
@@ -1201,6 +1279,7 @@ class Backtester:
                     shares=entry_fill["shares"],
                     force_full=True,
                     shock_policy=shock_policy,
+                    ticker=permno,
                 )
 
                 entry_price = float(entry_fill["entry_price"])
@@ -1314,6 +1393,7 @@ class Backtester:
                 exit_fill = self._simulate_exit(
                     ohlcv=ohlcv, exit_idx=dt_idx,
                     shares=shares_this_bar, force_full=True,
+                    ticker=ticker,
                 )
 
                 res["exit_fills"].append((float(exit_fill["exit_price"]), float(shares_this_bar)))
@@ -1459,6 +1539,7 @@ class Backtester:
                         exit_idx=dt_idx,
                         shares=shares_this_bar,
                         force_full=True,
+                        ticker=ticker,
                     )
 
                     entry_idx_val = int(pos.get("entry_idx", max(0, dt_idx - max(1, pos.get("bars_held", 1)))))
@@ -1592,6 +1673,7 @@ class Backtester:
                         exit_idx=exit_idx,
                         shares=shares_this_bar,
                         force_full=True,
+                        ticker=ticker,
                     )
 
                     cb_entry_idx = int(pos.get("entry_idx", max(0, exit_idx - max(1, pos.get("bars_held", 1)))))
@@ -1694,30 +1776,13 @@ class Backtester:
                 entry_price = float(ohlcv["Open"].iloc[entry_idx])
                 entry_date = close.index[entry_idx]
 
-                # SPEC-E01: Edge-after-costs trade gate (risk-managed mode).
+                # SPEC-E01 / E03: Shock policy + edge-after-costs gate (risk-managed).
                 shock = self._shock_vectors.get((ticker, dt))
-
-                # SPEC-E03: Compute unified shock-mode execution policy.
                 shock_policy = self._compute_shock_policy(shock)
-                if shock_policy.is_active:
-                    if float(signal["confidence"]) < shock_policy.min_confidence_override:
-                        logger.debug(
-                            "Shock mode (%s): skipping %s on %s — confidence %.2f "
-                            "< min_confidence %.2f",
-                            shock_policy.tier, ticker, dt,
-                            float(signal["confidence"]),
-                            shock_policy.min_confidence_override,
-                        )
-                        continue
-                    logger.info(
-                        "Shock mode (%s) active for %s on %s: "
-                        "max_participation=%.4f, spread_mult=%.1f, "
-                        "min_confidence=%.2f",
-                        shock_policy.tier, ticker, dt,
-                        shock_policy.max_participation_override,
-                        shock_policy.spread_multiplier,
-                        shock_policy.min_confidence_override,
-                    )
+                if self._evaluate_shock_confidence(
+                    shock_policy, float(signal["confidence"]), ticker, dt,
+                ):
+                    continue
 
                 # Compute preliminary adjusted size for cost gate evaluation.
                 # Use uncertainty gate so the gate evaluates the actual
@@ -1729,62 +1794,20 @@ class Backtester:
                     )
                     _gate_adjusted_size *= _gate_size_mult
 
-                if EDGE_COST_GATE_ENABLED:
-                    entry_vol = (
-                        float(ohlcv["Volume"].iloc[entry_idx])
-                        if "Volume" in ohlcv.columns else 0.0
+                should_skip, reason = self._evaluate_edge_cost_gate(
+                    ohlcv=ohlcv,
+                    entry_idx=entry_idx,
+                    predicted_return=float(signal["predicted_return"]),
+                    position_size=_gate_adjusted_size,
+                    shock_policy=shock_policy,
+                    shock=shock,
+                )
+                if should_skip:
+                    logger.debug(
+                        "Edge-cost gate (risk): skipping %s on %s — %s",
+                        ticker, dt, reason,
                     )
-                    context = self._execution_context(ohlcv=ohlcv, bar_idx=entry_idx)
-                    desired_notional = self.assumed_capital_usd * _gate_adjusted_size
-                    uncertainty = (
-                        shock.hmm_uncertainty
-                        if shock is not None and shock.hmm_uncertainty is not None
-                        else 0.0
-                    )
-
-                    # SPEC-E03: pass shock mode overrides to cost estimator
-                    _gate_max_part = (
-                        shock_policy.max_participation_override
-                        if shock_policy.is_active else None
-                    )
-
-                    expected_cost_bps = self.execution_model.estimate_cost(
-                        daily_volume=entry_vol,
-                        desired_notional=desired_notional,
-                        realized_vol=context["realized_vol"],
-                        structure_uncertainty=uncertainty,
-                        overnight_gap=context["overnight_gap"],
-                        intraday_range=context["intraday_range"],
-                        reference_price=entry_price,
-                        event_spread_multiplier=(
-                            shock_policy.spread_multiplier
-                            if shock_policy.is_active else 1.0
-                        ),
-                        break_probability=(
-                            shock.bocpd_changepoint_prob if shock else None
-                        ),
-                        drift_score=(
-                            shock.structural_features.get("drift_score")
-                            if shock else None
-                        ),
-                        systemic_stress=(
-                            shock.structural_features.get("systemic_stress")
-                            if shock else None
-                        ),
-                        max_participation_override=_gate_max_part,
-                    )
-
-                    predicted_edge_bps = abs(float(signal["predicted_return"])) * 10000
-                    cost_buffer_bps = EDGE_COST_BUFFER_BASE_BPS * (1.0 + uncertainty)
-
-                    if predicted_edge_bps <= expected_cost_bps + cost_buffer_bps:
-                        logger.debug(
-                            "Edge-cost gate (risk): skipping %s on %s — edge %.1f bps "
-                            "<= cost %.1f + buffer %.1f bps",
-                            ticker, dt, predicted_edge_bps,
-                            expected_cost_bps, cost_buffer_bps,
-                        )
-                        continue
+                    continue
 
                 # ── Dynamic position sizing ──
                 # Compute recent volatility and ATR
@@ -1864,6 +1887,7 @@ class Backtester:
                     entry_idx=entry_idx,
                     position_size=position_size,
                     shock_policy=shock_policy,
+                    ticker=ticker,
                 )
                 if entry_fill is None:
                     continue
@@ -1901,6 +1925,7 @@ class Backtester:
                 exit_idx=last_idx,
                 shares=pos.get("shares", 0.0),
                 force_full=True,
+                ticker=ticker,
             )
             last_price = float(exit_fill["exit_price"])
             exit_ref = float(ohlcv["Close"].iloc[last_idx])
@@ -1948,6 +1973,7 @@ class Backtester:
                 exit_idx=last_idx,
                 shares=res["remaining_shares"],
                 force_full=True,
+                ticker=ticker,
             )
             # Add final fill to the existing fill list and compute VWAP
             res["exit_fills"].append((float(exit_fill["exit_price"]), float(res["remaining_shares"])))

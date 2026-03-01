@@ -28,6 +28,9 @@ from ..regime.uncertainty_gate import UncertaintyGate
 
 logger = logging.getLogger(__name__)
 
+# Maximum length for turnover history to prevent unbounded memory growth.
+MAX_TURNOVER_HISTORY = 504  # ~2 years of trading days
+
 
 @dataclass
 class PositionSize:
@@ -677,6 +680,8 @@ class PositionSizer:
 
         # Record this turnover event
         self._turnover_history.append(position_turnover)
+        if len(self._turnover_history) > MAX_TURNOVER_HISTORY:
+            self._turnover_history = self._turnover_history[-MAX_TURNOVER_HISTORY:]
 
         return proposed_size
 
@@ -686,6 +691,8 @@ class PositionSizer:
         Called externally (e.g., by paper trader) after position changes.
         """
         self._turnover_history.append(turnover_amount)
+        if len(self._turnover_history) > MAX_TURNOVER_HISTORY:
+            self._turnover_history = self._turnover_history[-MAX_TURNOVER_HISTORY:]
 
     def reset_turnover_tracking(self) -> None:
         """Reset turnover tracking history."""
@@ -706,6 +713,9 @@ class PositionSizer:
         """
         if avg_loss >= -1e-9 or win_rate <= 0.0 or win_rate >= 1.0:
             return 0.0  # Invalid inputs — refuse to size
+
+        if avg_win <= 0:
+            return 0.0  # No winning trades — no edge to exploit
 
         p = win_rate
         q = 1.0 - p
@@ -927,14 +937,17 @@ class PositionSizer:
 
         if not incremental:
             # Reset counters before recomputing to prevent double-counting
+            self._bayesian_wins = 0
+            self._bayesian_losses = 0
             for regime_id in self._bayesian_regime:
                 self._bayesian_regime[regime_id] = {"wins": 0, "losses": 0}
 
         returns = trades["net_return"].dropna()
 
-        # Update global counters (always full replacement for global)
-        self._bayesian_wins = int((returns > 0).sum())
-        self._bayesian_losses = int((returns <= 0).sum())
+        # Update global counters — accumulate to match per-regime pattern.
+        # When incremental=False, counters were already reset above.
+        self._bayesian_wins += int((returns > 0).sum())
+        self._bayesian_losses += int((returns <= 0).sum())
 
         # Update per-regime counters
         if regime_col in trades.columns:
