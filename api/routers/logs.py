@@ -26,10 +26,26 @@ class _BufferHandler(logging.Handler):
         })
 
 
-# Attach the handler to the root quant_engine logger.
 _handler = _BufferHandler()
 _handler.setLevel(logging.INFO)
-logging.getLogger("quant_engine").addHandler(_handler)
+
+
+def setup_log_buffer() -> None:
+    """Attach the buffer handler to the ``quant_engine`` logger.
+
+    Safe to call multiple times — a duplicate-attachment guard prevents
+    adding the handler more than once.  Call this from the app lifespan.
+    """
+    qe_logger = logging.getLogger("quant_engine")
+    if not any(isinstance(h, _BufferHandler) for h in qe_logger.handlers):
+        qe_logger.addHandler(_handler)
+
+
+def teardown_log_buffer() -> None:
+    """Detach the buffer handler.  Useful for test cleanup."""
+    qe_logger = logging.getLogger("quant_engine")
+    qe_logger.removeHandler(_handler)
+    _LOG_BUFFER.clear()
 
 
 @router.get("")

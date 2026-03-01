@@ -7,6 +7,7 @@ import traceback
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from .jobs.runner import JobQueueFullError
 from .schemas.envelope import ApiResponse
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ _EXCEPTION_STATUS = {
     DataNotFoundError: 404,
     JobNotFoundError: 404,
     ConfigValidationError: 422,
+    JobQueueFullError: 429,
     TrainingFailedError: 500,
     ServiceUnavailableError: 503,
 }

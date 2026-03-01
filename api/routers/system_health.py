@@ -48,7 +48,7 @@ async def health_history() -> ApiResponse:
     """Return recent health score snapshots with rolling averages and trend."""
     t0 = time.monotonic()
     svc = HealthService()
-    data = svc.get_health_history_with_trends(limit=90)
+    data = await asyncio.to_thread(svc.get_health_history_with_trends, limit=90)
     elapsed = (time.monotonic() - t0) * 1000
     return ApiResponse.success(data, elapsed_ms=elapsed)
 
@@ -74,7 +74,9 @@ async def model_age() -> ApiResponse:
                 train_date_str = latest.get("training_date", None)
                 if train_date_str:
                     train_date = datetime.fromisoformat(train_date_str)
-                    age_days = (datetime.now() - train_date).days
+                    if train_date.tzinfo is None:
+                        train_date = train_date.replace(tzinfo=timezone.utc)
+                    age_days = (datetime.now(timezone.utc) - train_date).days
                 else:
                     age_days = None
                 data = {

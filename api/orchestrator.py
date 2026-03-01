@@ -245,6 +245,7 @@ class PipelineOrchestrator:
         available_permnos = set(state.features.index.get_level_values(0))
 
         all_preds = []
+        failed_tickers: list = []
         total = len(state.data)
         for i, (permno, df) in enumerate(state.data.items()):
             if permno not in available_permnos:
@@ -259,13 +260,22 @@ class PipelineOrchestrator:
                 preds["permno"] = str(permno)
                 preds["ticker"] = str(df.attrs.get("ticker", ""))
                 all_preds.append(preds)
-            except (ValueError, KeyError, TypeError):
-                pass
+            except (ValueError, KeyError, TypeError) as exc:
+                ticker = str(df.attrs.get("ticker", permno))
+                logger.warning("Prediction failed for %s: %s", ticker, exc)
+                failed_tickers.append({"ticker": ticker, "error": str(exc)})
             if progress_callback and i % 5 == 0:
                 progress_callback(0.6 + 0.3 * (i / total), f"Predicting {i+1}/{total}")
 
+        attempted = len(all_preds) + len(failed_tickers)
+        if attempted > 0 and len(failed_tickers) / attempted > 0.5:
+            logger.error(
+                "Majority prediction failure: %d/%d tickers failed",
+                len(failed_tickers), attempted,
+            )
+
         if not all_preds:
-            return {"signals": [], "total": 0}
+            return {"signals": [], "total": 0, "failed_tickers": failed_tickers}
 
         predictions = pd.concat(all_preds, ignore_index=True)
         latest = predictions.groupby("permno").last().reset_index()
@@ -287,6 +297,7 @@ class PipelineOrchestrator:
             "total_permnos": len(latest),
             "actionable_signals": len(signals),
             "output_path": str(out_path),
+            "failed_tickers": failed_tickers,
         }
 
     def backtest(
@@ -312,8 +323,9 @@ class PipelineOrchestrator:
         available_permnos = set(state.features.index.get_level_values(0))
 
         all_preds = []
+        failed_tickers: list = []
         total = len(state.data)
-        for i, (permno, _) in enumerate(state.data.items()):
+        for i, (permno, df_bt) in enumerate(state.data.items()):
             if permno not in available_permnos:
                 continue
             features = state.features.loc[permno]
@@ -326,13 +338,22 @@ class PipelineOrchestrator:
                 preds["permno"] = permno
                 preds = preds.set_index("permno", append=True).reorder_levels([1, 0])
                 all_preds.append(preds)
-            except (ValueError, KeyError, TypeError):
-                pass
+            except (ValueError, KeyError, TypeError) as exc:
+                ticker = str(df_bt.attrs.get("ticker", permno))
+                logger.warning("Backtest prediction failed for %s: %s", ticker, exc)
+                failed_tickers.append({"ticker": ticker, "error": str(exc)})
             if progress_callback and i % 5 == 0:
                 progress_callback(0.6 + 0.2 * (i / total), f"Predicting {i+1}/{total}")
 
+        attempted = len(all_preds) + len(failed_tickers)
+        if attempted > 0 and len(failed_tickers) / attempted > 0.5:
+            logger.error(
+                "Majority backtest prediction failure: %d/%d tickers failed",
+                len(failed_tickers), attempted,
+            )
+
         if not all_preds:
-            return {"error": "No predictions generated"}
+            return {"error": "No predictions generated", "failed_tickers": failed_tickers}
 
         predictions = pd.concat(all_preds)
 
@@ -416,4 +437,5 @@ class PipelineOrchestrator:
             "win_rate": result.win_rate,
             "sharpe": result.sharpe_ratio,
             "max_drawdown": result.max_drawdown,
+            "failed_tickers": failed_tickers,
         }

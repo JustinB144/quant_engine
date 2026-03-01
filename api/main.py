@@ -84,6 +84,10 @@ async def _lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Config validation could not run: %s", e)
 
+    # Attach log buffer handler
+    from .routers.logs import setup_log_buffer, teardown_log_buffer
+    setup_log_buffer()
+
     # Initialise async resources
     store = get_job_store()
     await store.initialize()
@@ -95,6 +99,7 @@ async def _lifespan(app: FastAPI):
 
     # Cleanup
     monitor_task.cancel()
+    teardown_log_buffer()
     logger.info("Shutting down quant_engine API")
 
 

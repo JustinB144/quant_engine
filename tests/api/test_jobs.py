@@ -84,7 +84,7 @@ async def test_get_nonexistent_job(store):
 
 @pytest.mark.asyncio
 async def test_job_runner_succeeds(store, runner):
-    def my_job(progress_callback=None):
+    def my_job(progress_callback=None, cancel_event=None):
         if progress_callback:
             progress_callback(0.5, "half")
         return {"answer": 42}
@@ -100,7 +100,7 @@ async def test_job_runner_succeeds(store, runner):
 
 @pytest.mark.asyncio
 async def test_job_runner_failure(store, runner):
-    def failing_job(progress_callback=None):
+    def failing_job(progress_callback=None, cancel_event=None):
         raise ValueError("boom")
 
     rec = await store.create_job("test")
@@ -113,7 +113,7 @@ async def test_job_runner_failure(store, runner):
 
 @pytest.mark.asyncio
 async def test_sse_events(store, runner):
-    def slow_job(progress_callback=None):
+    def slow_job(progress_callback=None, cancel_event=None):
         import time
         time.sleep(0.1)
         if progress_callback:
