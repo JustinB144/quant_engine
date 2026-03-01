@@ -4,12 +4,26 @@ Event-time storage layer for Kalshi + macro event research.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, List, Mapping, Optional, Sequence
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+# T4 (SPEC_39): Schema version tracking and migration registry.
+CURRENT_SCHEMA_VERSION = 2
+
+_MIGRATIONS = {
+    # version: (description, sql_statements)
+    2: ("Differentiate outcome table schemas", [
+        "ALTER TABLE event_outcomes ADD COLUMN revision_number INTEGER DEFAULT 0",
+        "ALTER TABLE event_outcomes_first_print ADD COLUMN print_type TEXT DEFAULT 'first_print'",
+    ]),
+}
 
 
 _TS_COLUMNS = {
@@ -63,6 +77,35 @@ class EventTimeStore:
             self._sqlite_conn.execute("PRAGMA synchronous=NORMAL")
 
         self.init_schema()
+
+    # T5 (SPEC_39): Resource management — close() and context manager support.
+    def close(self) -> None:
+        """Close the database connection and release locks."""
+        if self._duckdb_conn is not None:
+            try:
+                self._duckdb_conn.close()
+            except Exception:
+                pass
+            self._duckdb_conn = None
+        if self._sqlite_conn is not None:
+            try:
+                self._sqlite_conn.close()
+            except Exception:
+                pass
+            self._sqlite_conn = None
+
+    def __enter__(self) -> "EventTimeStore":
+        return self
+
+    def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> bool:
+        self.close()
+        return False
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def _execute(self, sql: str, params: Optional[Iterable[object]] = None):
         """Internal helper for execute."""
@@ -310,6 +353,7 @@ class EventTimeStore:
         )
 
         # Legacy unified outcomes (kept for compatibility).
+        # T6 (SPEC_39): revision_number differentiates from first_print.
         self._execute(
             """
             CREATE TABLE IF NOT EXISTS event_outcomes (
@@ -319,11 +363,13 @@ class EventTimeStore:
                 asof_ts TEXT NOT NULL,
                 source TEXT,
                 learned_at_ts TEXT,
+                revision_number INTEGER DEFAULT 0,
                 PRIMARY KEY (event_id, asof_ts)
             )
             """,
         )
 
+        # T6 (SPEC_39): print_type with CHECK constraint differentiates from event_outcomes.
         self._execute(
             """
             CREATE TABLE IF NOT EXISTS event_outcomes_first_print (
@@ -333,6 +379,8 @@ class EventTimeStore:
                 asof_ts TEXT NOT NULL,
                 source TEXT,
                 learned_at_ts TEXT,
+                print_type TEXT NOT NULL DEFAULT 'first_print'
+                    CHECK(print_type = 'first_print'),
                 PRIMARY KEY (event_id, asof_ts)
             )
             """,
@@ -533,6 +581,66 @@ class EventTimeStore:
         self._execute("CREATE INDEX IF NOT EXISTS idx_map_window ON event_market_map_versions(effective_start_ts, effective_end_ts)")
         self._execute("CREATE INDEX IF NOT EXISTS idx_ingestion_logs_date ON kalshi_ingestion_logs(asof_date)")
 
+        # T4 (SPEC_39): Schema version tracking and migration.
+        self._init_schema_version_table()
+        self._apply_migrations()
+
+    # T4 (SPEC_39): Schema migration infrastructure.
+    def _init_schema_version_table(self) -> None:
+        """Create the schema version tracking table."""
+        self._execute("""
+            CREATE TABLE IF NOT EXISTS _schema_version (
+                version INTEGER NOT NULL,
+                applied_at TEXT NOT NULL,
+                description TEXT
+            )
+        """)
+
+    def _get_schema_version(self) -> int:
+        """Return the current schema version from the tracking table."""
+        try:
+            df = self.query_df("SELECT MAX(version) as v FROM _schema_version")
+            if len(df) and df["v"].iloc[0] is not None:
+                return int(df["v"].iloc[0])
+            return 0
+        except Exception:
+            return 0
+
+    def _apply_migrations(self) -> None:
+        """Apply any pending schema migrations."""
+        current = self._get_schema_version()
+        if current == 0 and not _MIGRATIONS:
+            # Brand-new database: stamp with current version.
+            self._execute(
+                "INSERT INTO _schema_version (version, applied_at, description) VALUES (?, ?, ?)",
+                [CURRENT_SCHEMA_VERSION, datetime.now(timezone.utc).isoformat(), "Initial schema"],
+            )
+            return
+        if current == 0 and _MIGRATIONS:
+            # Existing database seeing migrations for the first time — stamp v1.
+            self._execute(
+                "INSERT INTO _schema_version (version, applied_at, description) VALUES (?, ?, ?)",
+                [1, datetime.now(timezone.utc).isoformat(), "Initial schema"],
+            )
+            current = 1
+        for version in sorted(_MIGRATIONS.keys()):
+            if version > current:
+                desc, statements = _MIGRATIONS[version]
+                for stmt in statements:
+                    try:
+                        self._execute(stmt)
+                    except Exception as exc:
+                        # Column may already exist (re-open of migrated DB).
+                        if "duplicate" in str(exc).lower() or "already" in str(exc).lower():
+                            logger.debug("Migration v%d statement skipped (already applied): %s", version, exc)
+                        else:
+                            raise
+                self._execute(
+                    "INSERT INTO _schema_version (version, applied_at, description) VALUES (?, ?, ?)",
+                    [version, datetime.now(timezone.utc).isoformat(), desc],
+                )
+                logger.info("Applied schema migration v%d: %s", version, desc)
+
     def upsert_markets(self, rows: Iterable[Mapping[str, object]]):
         """Upsert markets into storage."""
         self._insert_or_replace("kalshi_markets", rows)
@@ -593,11 +701,15 @@ class EventTimeStore:
         self._insert_or_replace("event_outcomes", payload)
 
     def upsert_event_outcomes_first_print(self, rows: Iterable[Mapping[str, object]]):
-        """Upsert first-print event outcomes into storage."""
+        """Upsert first-print event outcomes into storage.
+
+        T6 (SPEC_39): Automatically sets ``print_type='first_print'`` on each row.
+        """
         payload = list(rows)
         if not payload:
             return
-        self._insert_or_replace("event_outcomes_first_print", payload)
+        enriched = [{**row, "print_type": "first_print"} for row in payload]
+        self._insert_or_replace("event_outcomes_first_print", enriched)
 
     def upsert_event_outcomes_revised(self, rows: Iterable[Mapping[str, object]]):
         """Upsert event outcomes revised into storage."""

@@ -4,6 +4,7 @@ Versioned event-to-market mapping persistence.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Iterable, Optional
 
 import pandas as pd
@@ -53,14 +54,30 @@ class EventMarketMappingStore:
         """asof."""
         return self.store.get_event_market_map_asof(asof_ts)
 
-    def current_version(self) -> str:
-        """Return the latest mapping_version string from the store."""
-        df = self.store.get_event_market_map_asof(
-            pd.Timestamp.now(tz="UTC").isoformat()
+    def current_version(self, asof: Optional[str] = None) -> str:
+        """Return the globally latest mapping version as of the given timestamp.
+
+        T7 (SPEC_39): Uses an explicit global-max query instead of relying on
+        row ordering of ``get_event_market_map_asof`` (which is ordered by
+        event_id/market_id, not by global recency).
+        """
+        if asof is None:
+            asof = datetime.now(timezone.utc).isoformat()
+        df = self.store.query_df(
+            """
+            SELECT mapping_version, MAX(effective_start_ts) as latest_ts
+            FROM event_market_map_versions
+            WHERE effective_start_ts <= ?
+              AND (effective_end_ts IS NULL OR effective_end_ts > ?)
+            GROUP BY mapping_version
+            ORDER BY latest_ts DESC
+            LIMIT 1
+            """,
+            params=[asof, asof],
         )
         if df.empty or "mapping_version" not in df.columns:
             return "v1"
-        return str(df["mapping_version"].iloc[-1])
+        return str(df["mapping_version"].iloc[0])
 
     @staticmethod
     def assert_consistent_mapping_version(panel: pd.DataFrame) -> None:

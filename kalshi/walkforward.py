@@ -3,11 +3,14 @@ Walk-forward evaluation for event-centric Kalshi feature panels.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 from ..backtest.advanced_validation import deflated_sharpe_ratio, monte_carlo_validation
 
@@ -400,32 +403,49 @@ def run_event_walkforward(
             start += int(cfg.step_events)
             continue
 
-        # Nested selection inside training window.
+        # Nested selection inside training window with purge gap (T2, SPEC_39).
         train_events_sorted = train_events.sort_values("release_ts")
         inner_cut = int(max(5, round(len(train_events_sorted) * 0.8)))
-        inner_train_ids = set(train_events_sorted.iloc[:inner_cut]["event_id"].astype(str).tolist())
-        inner_val_ids = set(train_events_sorted.iloc[inner_cut:]["event_id"].astype(str).tolist())
-        if not inner_val_ids:
-            inner_val_ids = inner_train_ids
 
-        inner_train = train_df[train_df["event_id"].isin(inner_train_ids)]
-        inner_val = train_df[train_df["event_id"].isin(inner_val_ids)]
+        # Apply purge gap between inner-train and inner-val
+        inner_purge_events = max(1, int(cfg.embargo_events) or 1)
+        inner_cut_purged = max(inner_cut - inner_purge_events, 5)
 
-        X_it = inner_train[numeric_cols].fillna(0.0).to_numpy(dtype=float)
-        y_it = inner_train[label_col].to_numpy(dtype=float)
-        X_iv = inner_val[numeric_cols].fillna(0.0).to_numpy(dtype=float)
-        y_iv = inner_val[label_col].to_numpy(dtype=float)
+        inner_train_ids = set(
+            train_events_sorted.iloc[:inner_cut_purged]["event_id"].astype(str).tolist()
+        )
+        inner_val_ids = set(
+            train_events_sorted.iloc[inner_cut:]["event_id"].astype(str).tolist()
+        )
+        logger.debug(
+            "Fold inner split: train=%d, purge_gap=%d, val=%d",
+            len(inner_train_ids), inner_purge_events, len(inner_val_ids),
+        )
 
-        best_alpha = float(cfg.alphas[0]) if cfg.alphas else 1.0
-        best_is = -np.inf
-        for alpha in cfg.alphas:
-            beta = _fit_ridge(X_it, y_it, alpha=float(alpha))
-            pred_iv = _predict(X_iv, beta)
-            score = _corr(pred_iv, y_iv)
-            n_trials_total += 1
-            if np.isfinite(score) and score > best_is:
-                best_is = float(score)
-                best_alpha = float(alpha)
+        # If purge gap makes inner sets too small, use default alpha
+        if len(inner_train_ids) < 5 or not inner_val_ids:
+            best_alpha = float(cfg.alphas[len(cfg.alphas) // 2])
+            logger.debug("Insufficient data for inner validation; using default alpha=%.2f", best_alpha)
+            best_is = np.nan
+        else:
+            inner_train = train_df[train_df["event_id"].isin(inner_train_ids)]
+            inner_val = train_df[train_df["event_id"].isin(inner_val_ids)]
+
+            X_it = inner_train[numeric_cols].fillna(0.0).to_numpy(dtype=float)
+            y_it = inner_train[label_col].to_numpy(dtype=float)
+            X_iv = inner_val[numeric_cols].fillna(0.0).to_numpy(dtype=float)
+            y_iv = inner_val[label_col].to_numpy(dtype=float)
+
+            best_alpha = float(cfg.alphas[0]) if cfg.alphas else 1.0
+            best_is = -np.inf
+            for alpha in cfg.alphas:
+                beta = _fit_ridge(X_it, y_it, alpha=float(alpha))
+                pred_iv = _predict(X_iv, beta)
+                score = _corr(pred_iv, y_iv)
+                n_trials_total += 1
+                if np.isfinite(score) and score > best_is:
+                    best_is = float(score)
+                    best_alpha = float(alpha)
 
         X_tr = train_df[numeric_cols].fillna(0.0).to_numpy(dtype=float)
         y_tr = train_df[label_col].to_numpy(dtype=float)

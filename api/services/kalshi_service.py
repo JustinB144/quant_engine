@@ -23,15 +23,15 @@ class KalshiService:
             from quant_engine.config import KALSHI_DB_PATH
             from quant_engine.kalshi.storage import EventTimeStore
 
-            store = EventTimeStore(KALSHI_DB_PATH)
-            if event_type:
-                df = store.query_df(
-                    "SELECT * FROM kalshi_markets WHERE event_type LIKE ? LIMIT 200",
-                    params=[f"%{event_type}%"],
-                )
-            else:
-                df = store.query_df("SELECT * FROM kalshi_markets LIMIT 200")
-            records = df.to_dict(orient="records")
+            with EventTimeStore(KALSHI_DB_PATH) as store:
+                if event_type:
+                    df = store.query_df(
+                        "SELECT * FROM kalshi_markets WHERE event_type LIKE ? LIMIT 200",
+                        params=[f"%{event_type}%"],
+                    )
+                else:
+                    df = store.query_df("SELECT * FROM kalshi_markets LIMIT 200")
+                records = df.to_dict(orient="records")
             return {"enabled": True, "events": records, "total": len(records)}
         except Exception as exc:
             logger.warning("Kalshi query failed: %s", exc)
@@ -45,12 +45,12 @@ class KalshiService:
             from quant_engine.config import KALSHI_DB_PATH
             from quant_engine.kalshi.storage import EventTimeStore
 
-            store = EventTimeStore(KALSHI_DB_PATH)
-            df = store.query_df(
-                "SELECT * FROM kalshi_distributions WHERE market_id = ?",
-                params=[market_id],
-            )
-            records = df.to_dict(orient="records") if len(df) else []
+            with EventTimeStore(KALSHI_DB_PATH) as store:
+                df = store.query_df(
+                    "SELECT * FROM kalshi_distributions WHERE market_id = ?",
+                    params=[market_id],
+                )
+                records = df.to_dict(orient="records") if len(df) else []
             return {"enabled": True, "market_id": market_id, "distributions": records}
         except Exception as exc:
             logger.warning("Kalshi distribution query failed: %s", exc)

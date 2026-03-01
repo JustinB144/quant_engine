@@ -3,6 +3,7 @@ Contract -> probability distribution builder for Kalshi markets.
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
@@ -15,7 +16,10 @@ from .quality import (
     StalePolicy,
     compute_quality_dimensions,
     dynamic_stale_cutoff_minutes,
+    passes_hard_gates,
 )
+
+logger = logging.getLogger(__name__)
 
 _EPS = 1e-12
 
@@ -58,6 +62,7 @@ _EMPTY_SNAPSHOT_TEMPLATE: Dict[str, object] = {
     "isotonic_l1": 0.0,
     "isotonic_l2": 0.0,
     "quality_low": 1,
+    "hard_gate_failed": 1,
     "quality_flags": [],
     "_support": [],
     "_mass": [],
@@ -746,6 +751,27 @@ def build_distribution_snapshot(
         quality_low = 1
         quality_flags.append("invalid_bin_structure")
 
+    # T1 (SPEC_39): Wire hard quality gates into snapshot output
+    hard_gate_pass = passes_hard_gates(
+        quality=quality_dims,
+        stale_cutoff_seconds=stale_minutes * 60.0,
+    )
+    hard_gate_failed = 0
+    if not hard_gate_pass:
+        mean = np.nan
+        var = np.nan
+        skew = np.nan
+        entropy = np.nan
+        quality_low = 1
+        hard_gate_failed = 1
+        logger.debug(
+            "Hard gate failed for snapshot at %s: coverage=%.2f, age=%.0fs, spread=%.3f",
+            asof_ts,
+            quality_dims.coverage_ratio,
+            quality_dims.median_quote_age_seconds,
+            quality_dims.median_spread,
+        )
+
     # Resolve direction confidence (B1)
     if not has_bins and len(m) > 0:
         dir_result = _resolve_threshold_direction_with_confidence(m.iloc[0].to_dict())
@@ -787,7 +813,7 @@ def build_distribution_snapshot(
         "renormalization_delta": float(renorm_delta),
         "violated_constraints_pre": int(monotonic_violations_pre),
         "violated_constraints_post": int(
-            0 if isotonic_l1 < _EPS else monotonic_violations_pre
+            monotonic_violations_pre if isotonic_l1 < _EPS else 0
         ),
         # Legacy aliases retained for backward compatibility
         "monotonic_violations_pre": int(monotonic_violations_pre),
@@ -796,6 +822,7 @@ def build_distribution_snapshot(
         "isotonic_l1": float(isotonic_l1),
         "isotonic_l2": float(isotonic_l2),
         "quality_low": int(quality_low),
+        "hard_gate_failed": int(hard_gate_failed),
         "quality_flags": quality_flags,  # T8
         "_support": support.tolist(),
         "_mass": mass.tolist(),
