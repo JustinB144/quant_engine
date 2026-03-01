@@ -22,6 +22,10 @@ export interface BacktestResult {
   model_version: string | null
   sizing_method: string
   walk_forward_mode: string
+  sharpe_pvalue?: number
+  spa_pvalue?: number
+  dsr_pvalue?: number
+  ic_pvalue?: number
 }
 
 /** Matches actual /api/backtests/latest/trades response.data */

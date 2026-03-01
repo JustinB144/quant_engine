@@ -46,7 +46,7 @@ export default function DataProvenanceBadge({ meta }: { meta?: ResponseMeta }) {
             {meta.elapsed_ms != null && <div>Elapsed: {meta.elapsed_ms.toFixed(0)}ms</div>}
             {meta.model_version && <div>Model: {meta.model_version}</div>}
             {meta.source_summary && <div>Source: {meta.source_summary}</div>}
-            {meta.warnings.length > 0 && (
+            {(meta?.warnings?.length ?? 0) > 0 && (
               <div style={{ color: 'var(--accent-amber)', marginTop: 4 }}>
                 {meta.warnings.map((w, i) => (
                   <div key={i}>Warning: {w}</div>

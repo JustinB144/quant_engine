@@ -3,6 +3,7 @@ import ChartContainer from '@/components/charts/ChartContainer'
 import MetricCard from '@/components/ui/MetricCard'
 import LineChart from '@/components/charts/LineChart'
 import { usePaperState } from '@/api/queries/useAutopilot'
+import type { PaperPosition, PaperTrade } from '@/types/autopilot'
 
 export default function PaperPnLTracker() {
   const { data, isLoading } = usePaperState()
@@ -11,14 +12,14 @@ export default function PaperPnLTracker() {
   if (!paper?.available) return null
 
   const positions = paper.positions ?? []
-  const totalUnrealized = positions.reduce((sum: number, p: any) => sum + (p.pnl ?? 0), 0)
-  const totalValue = paper.cash + positions.reduce((sum: number, p: any) => sum + (p.shares ?? 0) * (p.current_price ?? 0), 0)
+  const totalUnrealized = positions.reduce((sum: number, p: PaperPosition) => sum + (p.pnl ?? 0), 0)
+  const totalValue = paper.cash + positions.reduce((sum: number, p: PaperPosition) => sum + (p.shares ?? 0) * (p.current_price ?? 0), 0)
   const totalReturn = ((totalValue - (paper.initial_capital ?? 1_000_000)) / (paper.initial_capital ?? 1_000_000) * 100)
 
   // Build equity curve from trade history if available
   const tradeHistory = paper.trade_history ?? []
-  const equityPoints = tradeHistory.map((t: any, i: number) => ({
-    date: t.exit_date ?? t.date ?? `Trade ${i + 1}`,
+  const equityPoints = tradeHistory.map((t: PaperTrade, i: number) => ({
+    date: t.exit_date ?? `Trade ${i + 1}`,
     value: t.cumulative_pnl ?? paper.realized_pnl,
   }))
 
@@ -54,11 +55,11 @@ export default function PaperPnLTracker() {
       {equityPoints.length > 2 && (
         <ChartContainer title="Cumulative P&L" isLoading={isLoading}>
           <LineChart
-            categories={equityPoints.map((p: any) => p.date)}
+            categories={equityPoints.map((p) => p.date)}
             series={[
               {
                 name: 'Cumulative P&L',
-                data: equityPoints.map((p: any) => p.value),
+                data: equityPoints.map((p) => p.value),
                 color: '#58a6ff',
               },
             ]}
@@ -79,8 +80,8 @@ export default function PaperPnLTracker() {
           </div>
           <div className="grid gap-1">
             {positions
-              .sort((a: any, b: any) => (b.pnl ?? 0) - (a.pnl ?? 0))
-              .map((pos: any) => (
+              .sort((a: PaperPosition, b: PaperPosition) => (b.pnl ?? 0) - (a.pnl ?? 0))
+              .map((pos: PaperPosition) => (
                 <div
                   key={pos.ticker}
                   className="flex items-center justify-between px-3 py-2 rounded"

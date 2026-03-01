@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useRef } from 'react'
 import { useJobProgress } from '@/hooks/useJobProgress'
 import JobProgressBar from './JobProgressBar'
 import JobStatusBadge from './JobStatusBadge'
@@ -10,9 +10,16 @@ interface JobMonitorProps {
 
 export default function JobMonitor({ jobId, onComplete }: JobMonitorProps) {
   const { progress, message, status, result, error, isActive } = useJobProgress(jobId)
+  const completedRef = useRef(false)
+
+  // Reset when a new job starts
+  React.useEffect(() => {
+    completedRef.current = false
+  }, [jobId])
 
   React.useEffect(() => {
-    if (status === 'completed' && result && onComplete) {
+    if (status === 'completed' && result && onComplete && !completedRef.current) {
+      completedRef.current = true
       onComplete(result)
     }
   }, [status, result, onComplete])

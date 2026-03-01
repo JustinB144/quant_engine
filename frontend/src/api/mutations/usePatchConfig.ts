@@ -9,6 +9,7 @@ export function usePatchConfig() {
     mutationFn: (values: Partial<RuntimeConfigValues>) => patch<RuntimeConfigValues>(CONFIG, values),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['config'] })
+      qc.invalidateQueries({ queryKey: ['config-status'] })
     },
   })
 }

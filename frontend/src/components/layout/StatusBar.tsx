@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useClock } from '@/hooks/useClock'
+import { get } from '@/api/client'
+import { HEALTH_QUICK } from '@/api/endpoints'
 
 interface ModelAge {
   age_days: number | null
@@ -27,9 +29,9 @@ export default function StatusBar() {
     const fetchStatus = async () => {
       try {
         const [modelRes, dataRes, healthRes] = await Promise.allSettled([
-          fetch('/api/v1/system/model-age').then(r => r.json()),
-          fetch('/api/v1/system/data-mode').then(r => r.json()),
-          fetch('/api/health').then(r => r.json()),
+          get<ModelAge>('/v1/system/model-age'),
+          get<DataMode>('/v1/system/data-mode'),
+          get<HealthStatus>(HEALTH_QUICK),
         ])
         if (modelRes.status === 'fulfilled') setModelAge(modelRes.value?.data)
         if (dataRes.status === 'fulfilled') setDataMode(dataRes.value?.data)
@@ -94,7 +96,7 @@ export default function StatusBar() {
             {health?.status?.toUpperCase() ?? 'CONNECTED'}
           </span>
         </div>
-        <span>API: localhost:8000</span>
+        <span>API: Connected</span>
         <span style={{ color: modelAgeColor }}>{modelAgeLabel}</span>
         <span style={{ color: dataModeColor }}>{dataModeLabel}</span>
       </div>

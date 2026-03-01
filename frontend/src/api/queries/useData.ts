@@ -48,7 +48,7 @@ export function useDataStatus() {
 export function useTickerDetail(ticker: string, years: number = 2) {
   return useQuery({
     queryKey: ['data', 'ticker', ticker, years],
-    queryFn: () => get<TickerDetail>(`${DATA_TICKER(ticker)}?years=${years}`),
+    queryFn: () => get<TickerDetail>(`${DATA_TICKER(ticker)}?years=${encodeURIComponent(String(years))}`),
     enabled: !!ticker,
   })
 }
@@ -72,7 +72,7 @@ export interface BarsResponse {
 export function useTickerBars(ticker: string, timeframe: string = '1d', bars: number = 500) {
   return useQuery({
     queryKey: ['data', 'bars', ticker, timeframe, bars],
-    queryFn: () => get<BarsResponse>(`${DATA_TICKER_BARS(ticker)}?timeframe=${timeframe}&bars=${bars}`),
+    queryFn: () => get<BarsResponse>(`${DATA_TICKER_BARS(ticker)}?timeframe=${encodeURIComponent(timeframe)}&bars=${encodeURIComponent(String(bars))}`),
     enabled: !!ticker,
     staleTime: 60_000,
   })
@@ -96,7 +96,7 @@ export function useTickerIndicators(
     queryKey: ['data', 'indicators', ticker, timeframe, indicatorStr],
     queryFn: () =>
       get<IndicatorsResponse>(
-        `${DATA_TICKER_INDICATORS(ticker)}?timeframe=${timeframe}&indicators=${indicatorStr}`,
+        `${DATA_TICKER_INDICATORS(ticker)}?timeframe=${encodeURIComponent(timeframe)}&indicators=${encodeURIComponent(indicatorStr)}`,
       ),
     enabled: !!ticker && indicators.length > 0,
     staleTime: 300_000,

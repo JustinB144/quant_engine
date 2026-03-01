@@ -47,7 +47,10 @@ export default function ScatterChart({
         {
           type: 'scatter' as const,
           data: data.map((p) => [p.x, p.y]),
-          symbolSize: data.map((p) => p.size ?? 8),
+          symbolSize: (_value: number[], params: { dataIndex: number }) => {
+            const point = data[params.dataIndex]
+            return point?.size ?? 8
+          },
           itemStyle: {
             color: (params: { dataIndex: number }) =>
               data[params.dataIndex]?.color || CHART_COLORS[0],

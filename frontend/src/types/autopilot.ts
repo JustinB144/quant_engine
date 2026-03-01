@@ -67,6 +67,8 @@ export interface PaperState {
   trades: PaperTrade[]
   last_update: string
   available: boolean
+  trade_history?: PaperTrade[]
+  initial_capital?: number
 }
 
 export interface PaperPosition {
@@ -84,4 +86,5 @@ export interface PaperTrade {
   entry_price: number
   exit_price: number
   pnl: number
+  cumulative_pnl?: number
 }

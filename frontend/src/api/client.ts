@@ -7,6 +7,7 @@ export class ApiError extends Error {
     message: string,
     public status: number,
     public meta?: ResponseMeta,
+    public data?: unknown,
   ) {
     super(message)
     this.name = 'ApiError'
@@ -18,23 +19,38 @@ async function request<T>(
   options: RequestInit = {},
 ): Promise<{ data: T; meta: ResponseMeta }> {
   const url = `${BASE_URL}${path}`
+  const headers: Record<string, string> = {}
+  if (options.body) {
+    headers['Content-Type'] = 'application/json'
+  }
   const res = await fetch(url, {
     ...options,
     headers: {
-      'Content-Type': 'application/json',
+      ...headers,
       ...options.headers,
     },
   })
 
   if (!res.ok) {
-    const text = await res.text().catch(() => 'Unknown error')
-    throw new ApiError(text, res.status)
+    try {
+      const errorJson = await res.json()
+      throw new ApiError(
+        errorJson.error || errorJson.message || res.statusText,
+        res.status,
+        errorJson.meta,
+        errorJson,
+      )
+    } catch (e) {
+      if (e instanceof ApiError) throw e
+      const text = await res.text().catch(() => 'Unknown error')
+      throw new ApiError(text, res.status)
+    }
   }
 
   const json: ApiResponse<T> = await res.json()
 
   if (!json.ok) {
-    throw new ApiError(json.error || 'Request failed', res.status, json.meta)
+    throw new ApiError(json.error || 'Request failed', res.status, json.meta, json)
   }
 
   return { data: json.data as T, meta: json.meta }

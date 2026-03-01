@@ -32,7 +32,7 @@ export const MODELS_FEATURE_CORRELATIONS = '/models/features/correlations'
 // Data
 export const DATA_UNIVERSE = '/data/universe'
 export const DATA_STATUS = '/data/status'
-export const DATA_TICKER = (ticker: string) => `/data/ticker/${ticker}`
+export const DATA_TICKER = (ticker: string) => `/data/ticker/${encodeURIComponent(ticker)}`
 
 // Benchmark
 export const BENCHMARK_COMPARISON = '/benchmark/comparison'
@@ -50,9 +50,9 @@ export const AUTOPILOT_RUN_CYCLE = '/autopilot/run-cycle'
 
 // Jobs
 export const JOBS_LIST = '/jobs'
-export const JOBS_GET = (id: string) => `/jobs/${id}`
-export const JOBS_EVENTS = (id: string) => `/jobs/${id}/events`
-export const JOBS_CANCEL = (id: string) => `/jobs/${id}/cancel`
+export const JOBS_GET = (id: string) => `/jobs/${encodeURIComponent(id)}`
+export const JOBS_EVENTS = (id: string) => `/jobs/${encodeURIComponent(id)}/events`
+export const JOBS_CANCEL = (id: string) => `/jobs/${encodeURIComponent(id)}/cancel`
 
 // Config
 export const CONFIG = '/config'
@@ -65,9 +65,9 @@ export const REGIME_METADATA = '/regime/metadata'
 export const IV_SURFACE_ARB_FREE = '/iv-surface/arb-free-svi'
 
 // Data: bars & indicators (timeframe-aware)
-export const DATA_TICKER_BARS = (ticker: string) => `/data/ticker/${ticker}/bars`
-export const DATA_TICKER_INDICATORS = (ticker: string) => `/data/ticker/${ticker}/indicators`
-export const DATA_TICKER_INDICATORS_BATCH = (ticker: string) => `/data/ticker/${ticker}/indicators/batch`
+export const DATA_TICKER_BARS = (ticker: string) => `/data/ticker/${encodeURIComponent(ticker)}/bars`
+export const DATA_TICKER_INDICATORS = (ticker: string) => `/data/ticker/${encodeURIComponent(ticker)}/indicators`
+export const DATA_TICKER_INDICATORS_BATCH = (ticker: string) => `/data/ticker/${encodeURIComponent(ticker)}/indicators/batch`
 
 // Health history
 export const HEALTH_HISTORY = '/health/history'

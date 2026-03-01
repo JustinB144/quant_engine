@@ -37,4 +37,5 @@ export interface ModelHealth {
 export interface FeatureImportance {
   global_importance: Record<string, number>
   regime_heatmap: Record<string, Record<string, number>>
+  previous_importance?: Record<string, number>
 }

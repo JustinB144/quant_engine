@@ -6,7 +6,7 @@ import type { SignalsResponse } from '@/types/signals'
 export function useLatestSignals(horizon: number = 10) {
   return useQuery({
     queryKey: ['signals', 'latest', horizon],
-    queryFn: () => get<SignalsResponse>(`${SIGNALS_LATEST}?horizon=${horizon}`),
+    queryFn: () => get<SignalsResponse>(`${SIGNALS_LATEST}?horizon=${encodeURIComponent(String(horizon))}`),
     staleTime: 120_000,
   })
 }
